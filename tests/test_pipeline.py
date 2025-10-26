@@ -56,8 +56,11 @@ def test_pipeline_executes_alt8_steps(tmp_path, monkeypatch):
         nemo_local,
         force_float32: bool,
         prefer_gpu: bool,
+        run_logger=None,
     ):
         outputs.append((preprocessed, srt_path, fps, nemo_local, force_float32, prefer_gpu))
+        if run_logger is not None:
+            run_logger.log("fake_parakeet invoked")
         srt_path.write_text("1\n00:00:00,000 --> 00:00:01,000\nHello\n\n")
         return [{"start": 0.0, "end": 1.0, "text": "Hello"}]
 
@@ -81,4 +84,5 @@ def test_pipeline_executes_alt8_steps(tmp_path, monkeypatch):
     assert result.output_path == output_path
     assert result.output_path.exists()
     assert not result.skipped
+    assert result.run_id
     assert result.output_path.read_text().startswith("1\n00:00:00,000")

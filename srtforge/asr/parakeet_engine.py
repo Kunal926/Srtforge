@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional, TYPE_CHECKING
 import sys
@@ -24,6 +25,7 @@ if str(POST_DIR) not in sys.path:
     sys.path.insert(0, str(POST_DIR))
 
 from srt_utils import postprocess_segments, write_srt  # type: ignore  # noqa: E402
+from ..logging import RunLogger
 
 
 if TYPE_CHECKING:  # pragma: no cover - type checking only
@@ -142,6 +144,7 @@ def parakeet_to_srt_with_alt8(
     *,
     force_float32: bool = True,
     prefer_gpu: bool = True,
+    run_logger: Optional[RunLogger] = None,
     max_chars_per_line: int = 42,
     pause_ms: int = 240,
     punct_pause_ms: int = 160,
@@ -156,38 +159,47 @@ def parakeet_to_srt_with_alt8(
 ) -> List[Dict[str, object]]:
     """Run Parakeet ASR and post-process using the original alt-8 pipeline."""
 
-    asr, _, _ = load_parakeet(
-        nemo_local=nemo_local,
-        force_float32=force_float32,
-        prefer_gpu=prefer_gpu,
-    )
-    results = asr.transcribe(
-        [str(audio_path)], timestamps=True, return_hypotheses=True
-    )
+    step = run_logger.step if run_logger else None
+
+    with (step("ASR: model load") if step else nullcontext()):
+        asr, _, use_cuda = load_parakeet(
+            nemo_local=nemo_local,
+            force_float32=force_float32,
+            prefer_gpu=prefer_gpu,
+        )
+    if run_logger:
+        device = "GPU" if use_cuda else "CPU"
+        run_logger.log(f"ASR device: {device}")
+
+    with (step("ASR: inference") if step else nullcontext()):
+        results = asr.transcribe(
+            [str(audio_path)], timestamps=True, return_hypotheses=True
+        )
     if not results or not results[0]:
         raise RuntimeError("Parakeet ASR did not return any hypotheses")
 
     hypothesis = results[0]
-    segments = _build_segments_from_hypothesis(hypothesis)
+    with (step("ASR: post-processing & cleanup") if step else nullcontext()):
+        segments = _build_segments_from_hypothesis(hypothesis)
 
-    processed = postprocess_segments(
-        segments,
-        max_chars_per_line=max_chars_per_line,
-        max_lines=2,
-        pause_ms=pause_ms,
-        punct_pause_ms=punct_pause_ms,
-        comma_pause_ms=comma_pause_ms,
-        cps_target=cps_target,
-        snap_fps=fps,
-        use_spacy=True,
-        coalesce_gap_ms=coalesce_gap_ms,
-        two_line_threshold=two_line_threshold,
-        min_readable=min_readable,
-        min_two_line_chars=min_two_line_chars,
-        max_block_duration_s=max_block_duration_s,
-        max_merge_gap_ms=max_merge_gap_ms,
-    )
-    write_srt(processed, str(srt_out))
+        processed = postprocess_segments(
+            segments,
+            max_chars_per_line=max_chars_per_line,
+            max_lines=2,
+            pause_ms=pause_ms,
+            punct_pause_ms=punct_pause_ms,
+            comma_pause_ms=comma_pause_ms,
+            cps_target=cps_target,
+            snap_fps=fps,
+            use_spacy=True,
+            coalesce_gap_ms=coalesce_gap_ms,
+            two_line_threshold=two_line_threshold,
+            min_readable=min_readable,
+            min_two_line_chars=min_two_line_chars,
+            max_block_duration_s=max_block_duration_s,
+            max_merge_gap_ms=max_merge_gap_ms,
+        )
+        write_srt(processed, str(srt_out))
     return processed
 
 
