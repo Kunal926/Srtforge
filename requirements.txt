@@ -1,0 +1,11 @@
+# Runtime libs (install Torch + NeMo via installer after Torch)
+typer[all]>=0.12.3
+rich>=13.7.1
+tqdm>=4.66.4
+pyyaml>=6.0.1
+requests>=2.32.3
+ffmpeg-python>=0.2.0
+numpy>=1.24.0
+soundfile>=0.12.1
+watchdog>=4.0.0
+audio-separator>=0.39.0
