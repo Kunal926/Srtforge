@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import shutil
 import tempfile
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterable, Optional
 
@@ -12,7 +14,7 @@ from rich.table import Table
 from .asr.parakeet_engine import parakeet_to_srt_with_alt8
 from .config import DEFAULT_OUTPUT_SUFFIX, FV4_CONFIG, FV4_MODEL, MODELS_DIR, PARAKEET_MODEL
 from .ffmpeg import DEFAULT_TOOLS, AudioStream, FFmpegTooling
-from .logging import get_console, status
+from .logging import RunLogger, get_console, status
 from .settings import settings
 from .utils import probe_video_fps
 
@@ -47,6 +49,7 @@ class PipelineResult:
     output_path: Optional[Path]
     skipped: bool
     reason: Optional[str] = None
+    run_id: Optional[str] = None
 
 
 class Pipeline:
@@ -72,91 +75,111 @@ class Pipeline:
 
         output_path = self._determine_output_path()
         tmp_kwargs: dict[str, str] = {"prefix": "srtforge_"}
+        run_id: Optional[str] = None
+
+        base_tmp_dir = Path(tempfile.gettempdir())
         if self.config.temp_dir:
             self.config.temp_dir.mkdir(parents=True, exist_ok=True)
             tmp_kwargs["dir"] = str(self.config.temp_dir)
+            base_tmp_dir = self.config.temp_dir
+
+        cleanup_run_directories(base_tmp_dir)
 
         try:
-            with tempfile.TemporaryDirectory(**tmp_kwargs) as tmp_dir:
-                tmp = Path(tmp_dir)
-                extracted = tmp / "english.wav"
-                vocals = tmp / "vocals.wav"
-                preprocessed = tmp / "preprocessed.wav"
+            with RunLogger.start() as run_logger:
+                run_id = run_logger.run_id
+                tmp_kwargs["prefix"] = f"srtforge_{run_id}_"
+                run_logger.log(f"Media: {media_path}")
+                run_logger.log(f"Output: {output_path}")
+                self.console.log(f"[cyan]Run ID[/cyan] {run_id}")
 
-                # Step 2: probe audio streams -------------------------------------------------
-                streams = self.config.tools.probe_audio_streams(media_path)
-                english_stream = self._select_english_stream(streams)
-                if not english_stream:
-                    reason = "no English audio stream"
-                    self.console.log(f"[yellow]Skipping[/yellow] {media_path} – {reason}")
-                    return PipelineResult(media_path, None, True, reason)
+                with tempfile.TemporaryDirectory(**tmp_kwargs) as tmp_dir:
+                    tmp = Path(tmp_dir)
+                    extracted = tmp / "english.wav"
+                    vocals = tmp / "vocals.wav"
+                    preprocessed = tmp / "preprocessed.wav"
 
-                # Step 3: extract PCM float 48 kHz stereo -----------------------------------
-                with status(
-                    f"Extracting English audio to PCM f32 {self.config.sample_rate} Hz"
-                ):
-                    self.config.tools.extract_audio_stream(
-                        media_path,
-                        english_stream.index,
-                        extracted,
-                        sample_rate=self.config.sample_rate,
-                        channels=2,
-                    )
+                    with run_logger.step("Probe audio streams"):
+                        streams = self.config.tools.probe_audio_streams(media_path)
+                        english_stream = self._select_english_stream(streams)
+                    if not english_stream:
+                        reason = "no English audio stream"
+                        run_logger.mark_skipped(reason)
+                        self.console.log(f"[yellow]Skipping[/yellow] {media_path} – {reason}")
+                        return PipelineResult(media_path, None, True, reason, run_id)
 
-                # Step 4: vocal separation ---------------------------------------------------
-                separated_source = extracted
-                backend = (self.config.separation_backend or "fv4").lower()
-                if backend == "fv4":
-                    with status("Running FV4 MelBand Roformer vocal separation"):
-                        self.config.tools.isolate_vocals(
+                    with status(
+                        f"Extracting English audio to PCM f32 {self.config.sample_rate} Hz"
+                    ), run_logger.step("Extract English audio"):
+                        self.config.tools.extract_audio_stream(
+                            media_path,
+                            english_stream.index,
                             extracted,
-                            vocals,
-                            self.config.fv4_model,
-                            self.config.fv4_config,
+                            sample_rate=self.config.sample_rate,
+                            channels=2,
                         )
-                    separated_source = vocals
-                elif backend in {"none", "skip"}:
+
                     separated_source = extracted
-                else:
-                    raise ValueError(f"Unsupported separation backend: {self.config.separation_backend}")
+                    backend = (self.config.separation_backend or "fv4").lower()
+                    if backend == "fv4":
+                        with status("Running FV4 MelBand Roformer vocal separation"), run_logger.step(
+                            "Vocal separation"
+                        ):
+                            self.config.tools.isolate_vocals(
+                                extracted,
+                                vocals,
+                                self.config.fv4_model,
+                                self.config.fv4_config,
+                            )
+                        separated_source = vocals
+                    elif backend in {"none", "skip"}:
+                        run_logger.log("Vocal separation skipped by configuration")
+                        separated_source = extracted
+                    else:
+                        message = f"Unsupported separation backend: {self.config.separation_backend}"
+                        run_logger.log_error(message)
+                        raise ValueError(message)
 
-                # Step 5: preprocessing filters ---------------------------------------------
-                filter_chain = self.config.ffmpeg_filter_chain
-                if (
-                    filter_chain
-                    and self.config.ffmpeg_prefer_center
-                    and english_stream.channels
-                    and english_stream.channels >= 3
-                    and "pan=" not in filter_chain
-                ):
-                    filter_chain = f"pan=mono|c0=c2,{filter_chain}"
-                with status("Applying FFmpeg preprocessing filters"):
-                    self.config.tools.preprocess_audio(
-                        separated_source,
-                        preprocessed,
-                        filter_chain=filter_chain,
-                    )
+                    filter_chain = self.config.ffmpeg_filter_chain
+                    if (
+                        filter_chain
+                        and self.config.ffmpeg_prefer_center
+                        and english_stream.channels
+                        and english_stream.channels >= 3
+                        and "pan=" not in filter_chain
+                    ):
+                        filter_chain = f"pan=mono|c0=c2,{filter_chain}"
+                    with status("Applying FFmpeg preprocessing filters"), run_logger.step(
+                        "FFmpeg preprocessing"
+                    ):
+                        self.config.tools.preprocess_audio(
+                            separated_source,
+                            preprocessed,
+                            filter_chain=filter_chain,
+                        )
 
-                # Step 6: ASR with Parakeet + alt-8 post-processing -------------------------
-                with status("Running Parakeet ASR with alt-8 post-processing"):
-                    fps = probe_video_fps(media_path)
-                    nemo_local = self._resolve_parakeet_checkpoint()
-                    output_path.parent.mkdir(parents=True, exist_ok=True)
-                    parakeet_to_srt_with_alt8(
-                        preprocessed,
-                        output_path,
-                        fps=fps,
-                        nemo_local=nemo_local,
-                        force_float32=self.config.force_float32,
-                        prefer_gpu=self.config.prefer_gpu,
-                    )
+                    with status("Running Parakeet ASR with alt-8 post-processing"), run_logger.step(
+                        "ASR pipeline"
+                    ):
+                        fps = probe_video_fps(media_path)
+                        nemo_local = self._resolve_parakeet_checkpoint()
+                        output_path.parent.mkdir(parents=True, exist_ok=True)
+                        parakeet_to_srt_with_alt8(
+                            preprocessed,
+                            output_path,
+                            fps=fps,
+                            nemo_local=nemo_local,
+                            force_float32=self.config.force_float32,
+                            prefer_gpu=self.config.prefer_gpu,
+                            run_logger=run_logger,
+                        )
 
         except Exception as exc:
             self.console.log(f"[bold red]Pipeline failed[/bold red] {media_path}: {exc}")
-            return PipelineResult(media_path, None, True, str(exc))
+            return PipelineResult(media_path, None, True, str(exc), run_id)
 
         self._show_summary(media_path, output_path)
-        return PipelineResult(media_path, output_path, False)
+        return PipelineResult(media_path, output_path, False, run_id=run_id)
 
     # ---- internal methods --------------------------------------------------------
     def _show_summary(self, media: Path, srt: Path) -> None:
@@ -203,3 +226,23 @@ def run_pipeline(config: PipelineConfig) -> PipelineResult:
 
     pipeline = Pipeline(config)
     return pipeline.run()
+
+
+def cleanup_run_directories(base_dir: Path) -> None:
+    """Remove leftover temporary run directories older than 24 hours."""
+
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
+    if not base_dir.exists():
+        return
+    for entry in base_dir.iterdir():
+        if not entry.is_dir() or not entry.name.startswith("srtforge_"):
+            continue
+        try:
+            modified = datetime.fromtimestamp(entry.stat().st_mtime, tz=timezone.utc)
+        except OSError:
+            continue
+        if modified < cutoff:
+            try:
+                shutil.rmtree(entry)
+            except OSError:
+                continue
