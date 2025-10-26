@@ -102,8 +102,19 @@ class FFmpegTooling:
         self._run(command)
         return output
 
-    def preprocess_audio(self, source: Path, destination: Path) -> Path:
+    def preprocess_audio(
+        self,
+        source: Path,
+        destination: Path,
+        *,
+        filter_chain: Optional[str] = None,
+    ) -> Path:
         """Apply preprocessing filters producing 16 kHz mono float output."""
+
+        chain = filter_chain or (
+            "highpass=f=60,lowpass=f=10000,aformat=sample_fmts=flt,"
+            "aresample=resampler=soxr:osf=flt:ocl=mono:osr=16000"
+        )
 
         command = [
             self.ffmpeg_bin,
@@ -112,7 +123,7 @@ class FFmpegTooling:
             str(source),
             "-vn",
             "-af",
-            "highpass=f=60,lowpass=f=10000,aformat=sample_fmts=flt,aresample=resampler=soxr:osf=flt:ocl=mono:osr=16000",
+            chain,
             "-acodec",
             "pcm_f32le",
             str(destination),
