@@ -98,3 +98,22 @@ srtforge series "/shows/My Anime/Season 1" --glob "**/*.mkv"
 
 Sonarr integration is available through `srtforge sonarr-hook`, which reads the
 standard Sonarr environment variables and invokes the same pipeline.
+
+## Sonarr custom script integration
+
+Add srtforge as a [Sonarr custom script](https://wiki.servarr.com/sonarr/settings#connect)
+so subtitles are generated automatically after downloads:
+
+1. Install srtforge in the same environment that Sonarr can access (for
+   example the `.venv` created by `./install.sh`).
+2. In **Settings → Connect**, create a new **Custom Script**.
+3. Set **Path** to either the `srtforge-sonarr` console script or the CLI
+   wrapper (`srtforge sonarr-hook`).
+4. Leave **Arguments** empty—the hook reads `EpisodeFile.Path` and
+   `EventType` from the environment.
+5. Enable the trigger events you care about (srtforge reacts to **On Import**
+   and **On Upgrade**).
+
+When Sonarr fires the custom script, srtforge resolves the episode file path,
+normalizes the event name, and runs the standard pipeline to produce the SRT in
+place.
