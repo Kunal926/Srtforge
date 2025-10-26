@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib
 import json
 import os
 import shutil
@@ -80,6 +81,7 @@ class FFmpegTooling:
     ) -> Path:
         """Extract an audio stream to PCM float at ``sample_rate`` and ``channels``."""
 
+        filter_chain = f"aresample=resampler=soxr:osf=flt:osr={sample_rate}:precision=33"
         command = [
             self.ffmpeg_bin,
             "-y",
@@ -87,6 +89,8 @@ class FFmpegTooling:
             str(media),
             "-map",
             f"0:{stream_index}",
+            "-af",
+            filter_chain,
             "-c:a",
             "pcm_f32le",
             "-ac",
@@ -137,8 +141,17 @@ class FFmpegTooling:
             output_dir=str(destination.parent),
             output_format="WAV",
             output_single_stem="vocals",
+            use_autocast=False,
         )
         separator.load_model(model_filename=str(model.name))
+        torch_spec = importlib.util.find_spec("torch")
+        if torch_spec is not None:
+            torch = importlib.import_module("torch")
+            model_instance = getattr(separator, "model_instance", None)
+            if model_instance is not None:
+                module = getattr(model_instance, "model", model_instance)
+                if hasattr(module, "to"):
+                    module.to(dtype=torch.float32)
         outputs = separator.separate(str(source))
         vocals_path = None
         for item in outputs or []:
