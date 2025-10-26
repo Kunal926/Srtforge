@@ -9,7 +9,12 @@ from typing import Iterable, Optional
 from .logging import get_console
 from .pipeline import PipelineConfig, run_pipeline
 
-TRIGGER_EVENTS = {"onimport", "onupgrade"}
+TRIGGER_EVENTS = {"download", "upgrade"}
+EVENT_ALIASES = {
+    "onimport": "download",
+    "manualimport": "download",
+    "onupgrade": "upgrade",
+}
 EPISODE_PATH_KEYS = [
     "episodefile_path",
     "episode_file_path",
@@ -38,14 +43,20 @@ def _resolve_episode_path() -> Optional[Path]:
 
 def _resolve_event_type() -> str:
     event = os.environ.get("sonarr_eventtype") or os.environ.get("SONARR_EVENTTYPE") or ""
-    return event.lower()
+    return event.strip()
+
+
+def _normalize_event_type(event: str) -> str:
+    normalized = event.lower()
+    return EVENT_ALIASES.get(normalized, normalized)
 
 
 def main() -> None:
     console = get_console()
-    event = _resolve_event_type()
+    raw_event = _resolve_event_type()
+    event = _normalize_event_type(raw_event)
     if event not in TRIGGER_EVENTS:
-        console.log(f"[yellow]Ignoring Sonarr event[/yellow] {event or 'unknown'}")
+        console.log(f"[yellow]Ignoring Sonarr event[/yellow] {raw_event or 'unknown'}")
         return
 
     episode_path = _resolve_episode_path()
@@ -53,7 +64,7 @@ def main() -> None:
         console.log("[bold red]EpisodeFile.Path missing in environment[/bold red]")
         return
 
-    console.log(f"Processing Sonarr episode file: {episode_path}")
+    console.log(f"Processing Sonarr event '{event}' for file: {episode_path}")
     config = PipelineConfig(media_path=episode_path)
     run_pipeline(config)
 
