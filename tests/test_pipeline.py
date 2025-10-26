@@ -32,8 +32,8 @@ class DummyTools:
         destination.write_bytes(b"vocals")
         return destination
 
-    def preprocess_audio(self, source: Path, destination: Path):
-        self.calls.append(("preprocess", source))
+    def preprocess_audio(self, source: Path, destination: Path, *, filter_chain: str | None = None):
+        self.calls.append(("preprocess", source, filter_chain))
         destination.write_bytes(b"preprocessed")
         return destination
 
@@ -63,13 +63,22 @@ def test_pipeline_executes_alt8_steps(tmp_path, monkeypatch):
 
     monkeypatch.setattr("srtforge.pipeline.parakeet_to_srt_with_alt8", fake_parakeet)
 
-    config = PipelineConfig(media_path=media, tools=tools, prefer_gpu=False)
+    output_path = media.with_suffix(".srt")
+    config = PipelineConfig(
+        media_path=media,
+        tools=tools,
+        prefer_gpu=False,
+        output_path=output_path,
+    )
     result = Pipeline(config).run()
 
     assert [name for name, *_ in tools.calls] == ["extract", "isolate", "preprocess"]
     assert outputs and outputs[0][2] == pytest.approx(23.976)
+    assert outputs[0][4] is config.force_float32
     assert outputs[0][5] is False
-    assert result.output_path == media.with_suffix(".srt")
+    preprocess_call = tools.calls[-1]
+    assert preprocess_call[2] == config.ffmpeg_filter_chain
+    assert result.output_path == output_path
     assert result.output_path.exists()
     assert not result.skipped
     assert result.output_path.read_text().startswith("1\n00:00:00,000")

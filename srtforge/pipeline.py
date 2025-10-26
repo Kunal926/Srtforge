@@ -13,6 +13,7 @@ from .asr.parakeet_engine import parakeet_to_srt_with_alt8
 from .config import DEFAULT_OUTPUT_SUFFIX, FV4_CONFIG, FV4_MODEL, MODELS_DIR, PARAKEET_MODEL
 from .ffmpeg import DEFAULT_TOOLS, AudioStream, FFmpegTooling
 from .logging import get_console, status
+from .settings import settings
 from .utils import probe_video_fps
 
 
@@ -25,8 +26,16 @@ class PipelineConfig:
     tools: FFmpegTooling = DEFAULT_TOOLS
     model_path: Path = PARAKEET_MODEL
     models_dir: Path = MODELS_DIR
-    fv4_model: Path = FV4_MODEL
-    fv4_config: Path = FV4_CONFIG
+    fv4_model: Path = settings.separation.fv4.ckpt or FV4_MODEL
+    fv4_config: Path = settings.separation.fv4.cfg or FV4_CONFIG
+    temp_dir: Optional[Path] = settings.paths.temp_dir
+    output_directory: Optional[Path] = settings.paths.output_dir
+    sample_rate: int = settings.separation.sep_hz
+    separation_backend: str = settings.separation.backend
+    separation_prefer_center: bool = settings.separation.prefer_center
+    ffmpeg_filter_chain: str = settings.ffmpeg.filter_chain
+    ffmpeg_prefer_center: bool = settings.ffmpeg.prefer_center
+    force_float32: bool = settings.parakeet.force_float32
     prefer_gpu: bool = True
 
 
@@ -51,6 +60,8 @@ class Pipeline:
     def _determine_output_path(self) -> Path:
         if self.config.output_path:
             return self.config.output_path
+        if self.config.output_directory:
+            return self.config.output_directory / f"{self.config.media_path.stem}{DEFAULT_OUTPUT_SUFFIX}"
         return self.config.media_path.with_suffix(DEFAULT_OUTPUT_SUFFIX)
 
     # ---- pipeline steps ----------------------------------------------------------
@@ -60,8 +71,13 @@ class Pipeline:
             return PipelineResult(media_path, None, True, "media missing")
 
         output_path = self._determine_output_path()
+        tmp_kwargs: dict[str, str] = {"prefix": "srtforge_"}
+        if self.config.temp_dir:
+            self.config.temp_dir.mkdir(parents=True, exist_ok=True)
+            tmp_kwargs["dir"] = str(self.config.temp_dir)
+
         try:
-            with tempfile.TemporaryDirectory(prefix="srtforge_") as tmp_dir:
+            with tempfile.TemporaryDirectory(**tmp_kwargs) as tmp_dir:
                 tmp = Path(tmp_dir)
                 extracted = tmp / "english.wav"
                 vocals = tmp / "vocals.wav"
@@ -76,27 +92,50 @@ class Pipeline:
                     return PipelineResult(media_path, None, True, reason)
 
                 # Step 3: extract PCM float 48 kHz stereo -----------------------------------
-                with status("Extracting English audio to PCM f32 48 kHz"):
+                with status(
+                    f"Extracting English audio to PCM f32 {self.config.sample_rate} Hz"
+                ):
                     self.config.tools.extract_audio_stream(
                         media_path,
                         english_stream.index,
                         extracted,
-                        sample_rate=48000,
+                        sample_rate=self.config.sample_rate,
                         channels=2,
                     )
 
                 # Step 4: vocal separation ---------------------------------------------------
-                with status("Running FV4 MelBand Roformer vocal separation"):
-                    self.config.tools.isolate_vocals(
-                        extracted,
-                        vocals,
-                        self.config.fv4_model,
-                        self.config.fv4_config,
-                    )
+                separated_source = extracted
+                backend = (self.config.separation_backend or "fv4").lower()
+                if backend == "fv4":
+                    with status("Running FV4 MelBand Roformer vocal separation"):
+                        self.config.tools.isolate_vocals(
+                            extracted,
+                            vocals,
+                            self.config.fv4_model,
+                            self.config.fv4_config,
+                        )
+                    separated_source = vocals
+                elif backend in {"none", "skip"}:
+                    separated_source = extracted
+                else:
+                    raise ValueError(f"Unsupported separation backend: {self.config.separation_backend}")
 
                 # Step 5: preprocessing filters ---------------------------------------------
+                filter_chain = self.config.ffmpeg_filter_chain
+                if (
+                    filter_chain
+                    and self.config.ffmpeg_prefer_center
+                    and english_stream.channels
+                    and english_stream.channels >= 3
+                    and "pan=" not in filter_chain
+                ):
+                    filter_chain = f"pan=mono|c0=c2,{filter_chain}"
                 with status("Applying FFmpeg preprocessing filters"):
-                    self.config.tools.preprocess_audio(vocals, preprocessed)
+                    self.config.tools.preprocess_audio(
+                        separated_source,
+                        preprocessed,
+                        filter_chain=filter_chain,
+                    )
 
                 # Step 6: ASR with Parakeet + alt-8 post-processing -------------------------
                 with status("Running Parakeet ASR with alt-8 post-processing"):
@@ -108,7 +147,7 @@ class Pipeline:
                         output_path,
                         fps=fps,
                         nemo_local=nemo_local,
-                        force_float32=True,
+                        force_float32=self.config.force_float32,
                         prefer_gpu=self.config.prefer_gpu,
                     )
 
@@ -128,11 +167,18 @@ class Pipeline:
         self.console.print(table)
 
     def _select_english_stream(self, streams: Iterable[AudioStream]) -> Optional[AudioStream]:
+        english_streams: list[AudioStream] = []
         for stream in streams:
             lang = (stream.language or "").lower()
             if lang in {"en", "eng", "english"}:
-                return stream
-        return None
+                english_streams.append(stream)
+        if not english_streams:
+            return None
+        if self.config.separation_prefer_center:
+            for stream in english_streams:
+                if stream.channels == 1:
+                    return stream
+        return english_streams[0]
 
     def _resolve_parakeet_checkpoint(self) -> Optional[Path]:
         """Locate a local Parakeet checkpoint if available."""
