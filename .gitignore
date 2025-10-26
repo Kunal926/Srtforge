@@ -3,6 +3,9 @@ __pycache__/
 .venv/
 .env
 models/
+!models/
+models/*
+!models/voc_gabox.yaml
 .secrets/
 *.log
 .DS_Store
