@@ -48,6 +48,8 @@ if ($Cpu) {
 
 & $venvPip install nemo_toolkit[asr]==2.0.0
 
+& $venvPip install -e .
+
 $modelsDir = Join-Path (Get-Location) 'models'
 if (-not (Test-Path $modelsDir)) {
     New-Item -ItemType Directory -Path $modelsDir | Out-Null

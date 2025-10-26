@@ -1,10 +1,16 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, List, Tuple, Optional, TYPE_CHECKING
 import sys
 
-import torch
+try:  # pragma: no cover - heavy dependency import
+    import torch
+except Exception as exc:  # pragma: no cover - delay failure until used
+    torch = None  # type: ignore[assignment]
+    _TORCH_IMPORT_ERROR = exc
+else:  # pragma: no cover - torch import succeeded
+    _TORCH_IMPORT_ERROR = None
 
 try:  # pragma: no cover - heavy dependency import
     import nemo.collections.asr as nemo_asr
@@ -20,15 +26,26 @@ if str(POST_DIR) not in sys.path:
 from srt_utils import postprocess_segments, write_srt  # type: ignore  # noqa: E402
 
 
+if TYPE_CHECKING:  # pragma: no cover - type checking only
+    import torch as torch_module
+
+    TorchDType = torch_module.dtype
+else:  # pragma: no cover - runtime fallback for type checkers
+    TorchDType = object
+
+
 def load_parakeet(
     nemo_local: Optional[Path] = None,
     force_float32: bool = True,
     prefer_gpu: bool = True,
-) -> Tuple[nemo_asr.models.ASRModel, torch.dtype, bool]:
+) -> Tuple[nemo_asr.models.ASRModel, Optional[TorchDType], bool]:
     """Load the Parakeet-TDT-0.6B-V2 model, optionally from a local .nemo."""
 
     if nemo_asr is None:  # pragma: no cover - import error surfaced lazily
         raise RuntimeError("NVIDIA NeMo is required for Parakeet transcription") from _IMPORT_ERROR
+
+    if torch is None:  # pragma: no cover - surfaced when dependency missing
+        raise RuntimeError("PyTorch is required for Parakeet transcription") from _TORCH_IMPORT_ERROR
 
     use_cuda = prefer_gpu and torch.cuda.is_available()
     if nemo_local and nemo_local.exists():
@@ -38,7 +55,7 @@ def load_parakeet(
             model_name="nvidia/parakeet-tdt-0.6b-v2", strict=False
         )
 
-    dtype: torch.dtype = torch.float32
+    dtype: Optional[TorchDType] = torch.float32
     if use_cuda:
         asr = asr.cuda()
         if force_float32:

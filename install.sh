@@ -55,6 +55,8 @@ fi
 
 pip install nemo_toolkit[asr]==2.0.0
 
+pip install -e .
+
 python <<'PY'
 import os
 import sys
