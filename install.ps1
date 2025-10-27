@@ -47,8 +47,13 @@ function Get-PythonInfo {
         [string[]]$Command
     )
 
+    $tempBase = [System.IO.Path]::GetTempFileName()
+    $tempScript = [System.IO.Path]::ChangeExtension($tempBase, '.py')
+    Move-Item -Path $tempBase -Destination $tempScript -Force
+    [System.IO.File]::WriteAllText($tempScript, $pythonInfoScript)
+
     try {
-        $output = Invoke-WithArgs -Command $Command -Args @('-c', $pythonInfoScript)
+        $output = Invoke-WithArgs -Command $Command -Args @($tempScript)
         $json = ($output | Out-String).Trim()
         if (-not $json) {
             return $null
@@ -68,6 +73,9 @@ function Get-PythonInfo {
         }
     } catch {
         return $null
+    } finally {
+        Remove-Item -Path $tempScript -ErrorAction SilentlyContinue
+        Remove-Item -Path $tempBase -ErrorAction SilentlyContinue
     }
 }
 
