@@ -52,6 +52,9 @@ authenticate against private or rate-limited model downloads.
    lets you choose which one to use (defaulting to the newest). Pass
    `-PythonVersion 3.12` or `-PythonPath C:\Python312\python.exe` to skip the
    prompt and force a specific interpreter.
+   If you see "Python was not found; run without arguments to install from the
+   Microsoft Store" when the script starts, install Python 3.10–3.12 manually or
+   disable the Windows App execution alias before retrying.
 6. Activate the environment and verify the CLI:
    ```powershell
    .\.venv\Scripts\Activate.ps1

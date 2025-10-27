@@ -187,7 +187,12 @@ function Resolve-PythonCommand {
     }
 
     if ($candidates.Count -eq 0) {
-        throw "Unable to find a compatible Python interpreter. Install Python 3.10 through 3.12 or pass -PythonPath/-PythonVersion."
+        $help = "Unable to find a compatible Python interpreter. " +
+            "Install Python 3.10 through 3.12 (for example via https://www.python.org/downloads/) " +
+            "or pass -PythonPath/-PythonVersion. If Windows shows the 'Python was not found; run without arguments to install from the Microsoft Store' message, " +
+            "install Python manually or disable the App execution alias before retrying."
+
+        throw $help
     }
 
     $unique = $candidates |
