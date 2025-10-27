@@ -29,8 +29,9 @@ authenticate against private or rate-limited model downloads.
 
 ### Windows 11 step-by-step
 
-1. Install the latest [Python 3.10+](https://www.python.org/downloads/) and make
-   sure “Add python.exe to PATH” is ticked.
+1. Install [Python 3.12 (recommended)](https://www.python.org/downloads/)—any
+   interpreter in the 3.10–3.12 range works—and make sure “Add python.exe to
+   PATH” is ticked.
 2. Install [Git for Windows](https://git-scm.com/download/win) (enable “Git Bash”
    integration if you prefer a Unix-like shell).
 3. Clone the repository:
@@ -47,6 +48,10 @@ authenticate against private or rate-limited model downloads.
    ./install.ps1 -Cpu         # force CPU wheels
    ./install.ps1 -Gpu         # force CUDA wheels
    ```
+   The installer lists every compatible Python 3.10–3.12 interpreter it finds and
+   lets you choose which one to use (defaulting to the newest). Pass
+   `-PythonVersion 3.12` or `-PythonPath C:\Python312\python.exe` to skip the
+   prompt and force a specific interpreter.
 6. Activate the environment and verify the CLI:
    ```powershell
    .\.venv\Scripts\Activate.ps1
