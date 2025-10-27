@@ -85,7 +85,7 @@ $downloads = @(
 function Download-Model($item) {
     $target = Join-Path $modelsDir $item.File
     if (Test-Path $target -PathType Leaf -and (Get-Item $target).Length -gt 0) {
-        Write-Host "✔ $($item.File) already present"
+        Write-Host "$($item.File) already present"
         return
     }
 
@@ -109,4 +109,4 @@ foreach ($item in $downloads) {
     Download-Model $item
 }
 
-Write-Host "Installation complete. Activate the virtual environment with '.\.venv\Scripts\Activate.ps1'."
+Write-Host 'Installation complete. Activate the virtual environment with ''.\.venv\Scripts\Activate.ps1''.'
