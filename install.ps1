@@ -1,20 +1,41 @@
 Param(
     [switch]$Cpu,
-    [switch]$Gpu
+    [switch]$Gpu,
+    [string]$PythonPath,
+    [string]$PythonVersion,
+    [ValidateSet('auto', '118', '121', '124', '126', '128', '130')]
+    [string]$Cuda = 'auto'
 )
 
 $ErrorActionPreference = "Stop"
 
-if ($env:PYTHON) {
-    $python = $env:PYTHON
+if ($PythonPath) {
+    $pythonCmd = @($PythonPath)
+} elseif ($PythonVersion) {
+    $pythonCmd = @("py", "-$PythonVersion")
+} elseif ($env:PYTHON) {
+    $pythonCmd = @($env:PYTHON)
 } else {
-    $python = "python"
+    $pythonCmd = @("python")
+}
+
+function Invoke-Python {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string[]]$Args
+    )
+
+    if ($pythonCmd.Length -gt 1) {
+        & $pythonCmd[0] @($pythonCmd[1..($pythonCmd.Length - 1)]) @Args
+    } else {
+        & $pythonCmd[0] @Args
+    }
 }
 
 $venvDir = ".venv"
 if (-not (Test-Path $venvDir)) {
     Write-Host "Creating virtual environment in $venvDir"
-    & $python -m venv $venvDir
+    Invoke-Python @("-m", "venv", $venvDir)
 }
 
 $venvPython = Join-Path $venvDir "Scripts/python.exe"
@@ -25,8 +46,9 @@ $venvPip = Join-Path $venvDir "Scripts/pip.exe"
 
 function Install-Torch($device) {
     if ($device -eq 'gpu') {
-        Write-Host "Installing Torch with CUDA wheels"
-        & $venvPip install --extra-index-url https://download.pytorch.org/whl/cu124 torch torchvision torchaudio
+        $cudaTag = if ($Cuda -eq 'auto') { '124' } else { $Cuda }
+        Write-Host "Installing Torch with CUDA $cudaTag wheels"
+        & $venvPip install --extra-index-url "https://download.pytorch.org/whl/cu$cudaTag" torch torchvision torchaudio
     } else {
         Write-Host "Installing Torch CPU wheels"
         & $venvPip install --extra-index-url https://download.pytorch.org/whl/cpu torch torchvision torchaudio
@@ -87,4 +109,4 @@ foreach ($item in $downloads) {
     Download-Model $item
 }
 
-Write-Host "Installation complete. Activate the virtual environment with '.\\.venv\\Scripts\\activate'."
+Write-Host "Installation complete. Activate the virtual environment with '.\.venv\Scripts\Activate.ps1'."
