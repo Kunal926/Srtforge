@@ -55,6 +55,9 @@ authenticate against private or rate-limited model downloads.
    If you see "Python was not found; run without arguments to install from the
    Microsoft Store" when the script starts, install Python 3.10–3.12 manually or
    disable the Windows App execution alias before retrying.
+   If the script reports that it only found unsupported Python versions, install
+   a 3.10–3.12 release or re-run the installer with `-PythonPath` pointing to an
+   interpreter in that range.
 6. Activate the environment and verify the CLI:
    ```powershell
    .\.venv\Scripts\Activate.ps1
