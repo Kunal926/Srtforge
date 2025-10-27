@@ -68,6 +68,26 @@ function Get-PythonInfo {
         }
     } catch {
         return $null
+if ($PythonPath) {
+    $pythonCmd = @($PythonPath)
+} elseif ($PythonVersion) {
+    $pythonCmd = @("py", "-$PythonVersion")
+} elseif ($env:PYTHON) {
+    $pythonCmd = @($env:PYTHON)
+} else {
+    $pythonCmd = @("python")
+}
+
+function Invoke-Python {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string[]]$Args
+    )
+
+    if ($pythonCmd.Length -gt 1) {
+        & $pythonCmd[0] @($pythonCmd[1..($pythonCmd.Length - 1)]) @Args
+    } else {
+        & $pythonCmd[0] @Args
     }
 }
 
