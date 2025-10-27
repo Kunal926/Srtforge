@@ -61,15 +61,14 @@ function Get-PythonInfo {
 
         $data = $json | ConvertFrom-Json
         $version = [Version]$data.version
-        if ($version.Major -ne 3 -or $version.Minor -lt 10 -or $version.Minor -gt 12) {
-            return $null
-        }
+        $isCompatible = ($version.Major -eq 3 -and $version.Minor -ge 10 -and $version.Minor -le 12)
 
         return [pscustomobject]@{
-            Command   = [string[]]$Command
-            Version   = $version
-            Display   = $data.version
-            Executable = $data.executable
+            Command     = [string[]]$Command
+            Version     = $version
+            Display     = $data.version
+            Executable  = $data.executable
+            IsCompatible = $isCompatible
         }
     } catch {
         return $null
@@ -109,11 +108,16 @@ function Resolve-PythonCommand {
             throw "Unable to use Python at '$PythonPath'. Ensure it is Python 3.10 through 3.12."
         }
 
+        if (-not $info.IsCompatible) {
+            throw "Python at '$PythonPath' reports version $($info.Display). Install Python 3.10 through 3.12 or choose a different interpreter with -PythonPath/-PythonVersion."
+        }
+
         return $info
     }
 
     if ($PythonVersion) {
         $versionCandidates = @()
+        $incompatible = @()
         if ($IsWindows -and (Get-Command py -ErrorAction SilentlyContinue)) {
             $versionCandidates += ,@('py', "-$PythonVersion")
         }
@@ -122,8 +126,17 @@ function Resolve-PythonCommand {
         foreach ($candidate in $versionCandidates) {
             $info = Get-PythonInfo $candidate
             if ($info) {
+                if (-not $info.IsCompatible) {
+                    $incompatible += ,$info
+                    continue
+                }
                 return $info
             }
+        }
+
+        if ($incompatible.Count -gt 0) {
+            $details = ($incompatible | Select-Object -ExpandProperty Display -Unique) -join ', '
+            throw "Found Python $details, but Srtforge supports versions 3.10 through 3.12. Install a compatible interpreter or point -PythonPath to one."
         }
 
         throw "Unable to locate Python $PythonVersion. Install a compatible version or use -PythonPath."
@@ -178,16 +191,55 @@ function Resolve-PythonCommand {
     & $addCandidate @('python3')
     & $addCandidate @('python')
 
+    foreach ($version in @('3.12', '3.11', '3.10')) {
+        $trimmed = $version.Replace('.', '')
+        & $addCandidate @("python$version")
+        & $addCandidate @("python$trimmed")
+    }
+
+    $commandPatterns = if ($IsWindows) { @('python*.exe') } else { @('python*') }
+    foreach ($pattern in $commandPatterns) {
+        $commands = Get-Command -Name $pattern -ErrorAction SilentlyContinue |
+            Where-Object { $_.CommandType -eq 'Application' -and $_.Source }
+        foreach ($command in $commands) {
+            & $addCandidate @($command.Source)
+        }
+    }
+
     $candidates = @()
+    $incompatible = @()
     foreach ($command in $candidateCommands) {
         $info = Get-PythonInfo $command
         if ($info) {
-            $candidates += ,$info
+            if ($info.IsCompatible) {
+                $candidates += ,$info
+            } else {
+                $incompatible += ,$info
+            }
         }
     }
 
     if ($candidates.Count -eq 0) {
-        throw "Unable to find a compatible Python interpreter. Install Python 3.10 through 3.12 or pass -PythonPath/-PythonVersion."
+        if ($incompatible.Count -gt 0) {
+            $uniqueIncompatible = $incompatible |
+                Group-Object Display |
+                ForEach-Object {
+                    $paths = $_.Group |
+                        Select-Object -ExpandProperty Executable |
+                        Sort-Object -Unique |
+                        ForEach-Object { "    $_" }
+                    "Python $($_.Name):`n$([string]::Join("`n", $paths))"
+                }
+            $details = [string]::Join("`n", $uniqueIncompatible)
+            $help = "Found Python installations, but their versions are not supported.`n$details`nSrtforge requires Python 3.10 through 3.12. Install a compatible release or pass -PythonPath/-PythonVersion to select one explicitly."
+        } else {
+            $help = "Unable to find a compatible Python interpreter. " +
+                "Install Python 3.10 through 3.12 (for example via https://www.python.org/downloads/) " +
+                "or pass -PythonPath/-PythonVersion. If Windows shows the 'Python was not found; run without arguments to install from the Microsoft Store' message, " +
+                "install Python manually or disable the App execution alias before retrying."
+        }
+
+        throw $help
     }
 
     $unique = $candidates |
