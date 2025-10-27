@@ -68,6 +68,9 @@ function Get-PythonInfo {
         }
     } catch {
         return $null
+    }
+}
+
 if ($PythonPath) {
     $pythonCmd = @($PythonPath)
 } elseif ($PythonVersion) {
@@ -181,8 +184,8 @@ function Resolve-PythonCommand {
 
     $unique = $candidates |
         Group-Object Executable |
-        ForEach-Object { $_.Group | Sort-Object Version -Descending | Select-Object -First 1 } |
-        Sort-Object Version -Descending, Executable
+        ForEach-Object { $_.Group | Sort-Object -Property Version -Descending | Select-Object -First 1 } |
+        Sort-Object -Property @{ Expression = 'Version'; Descending = $true }, @{ Expression = 'Executable'; Descending = $false }
 
     if ($unique.Count -eq 1) {
         return $unique[0]
