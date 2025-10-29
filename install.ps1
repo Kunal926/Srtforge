@@ -339,9 +339,12 @@ $downloads = @(
 
 function Download-Model($item) {
     $target = Join-Path $modelsDir $item.File
-    if (Test-Path $target -PathType Leaf -and (Get-Item $target).Length -gt 0) {
-        Write-Host "$($item.File) already present"
-        return
+    if (Test-Path $target -PathType Leaf) {
+        $existingFile = Get-Item $target -ErrorAction SilentlyContinue
+        if ($existingFile -and $existingFile.Length -gt 0) {
+            Write-Host "$($item.File) already present"
+            return
+        }
     }
 
     $headers = @{}
