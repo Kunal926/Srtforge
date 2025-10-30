@@ -6,7 +6,6 @@ models/
 !models/
 models/*
 !models/voc_gabox.yaml
-!models/*.ckpt
 .secrets/
 *.log
 .DS_Store
