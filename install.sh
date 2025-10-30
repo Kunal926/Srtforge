@@ -42,16 +42,41 @@ install_torch() {
   fi
 }
 
+install_onnxruntime() {
+  local device="$1"
+  if [ "$device" = "gpu" ]; then
+    echo "Installing ONNX Runtime with CUDA support"
+    if ! pip install "onnxruntime-gpu>=1.23.2"; then
+      cat <<'EOF'
+Failed to install the CUDA-enabled ONNX Runtime wheel. GPU vocal separation requires the
+`onnxruntime-gpu` package and a compatible NVIDIA driver. Falling back to the CPU build.
+EOF
+      pip install "onnxruntime>=1.23.2"
+      return 1
+    fi
+  else
+    echo "Installing ONNX Runtime CPU build"
+    pip install "onnxruntime>=1.23.2"
+  fi
+  return 0
+}
+
+SELECTED_DEVICE="cpu"
 if [ "$USE_GPU" = "cpu" ]; then
-  install_torch cpu
+  SELECTED_DEVICE="cpu"
+elif [ "$USE_GPU" = "gpu" ]; then
+  SELECTED_DEVICE="gpu"
 else
   if command -v nvidia-smi >/dev/null 2>&1; then
-    install_torch gpu
+    SELECTED_DEVICE="gpu"
   else
     echo "No NVIDIA GPU detected, falling back to CPU wheels"
-    install_torch cpu
+    SELECTED_DEVICE="cpu"
   fi
 fi
+
+install_torch "$SELECTED_DEVICE"
+install_onnxruntime "$SELECTED_DEVICE"
 
 pip install nemo_toolkit[asr]==2.0.0
 

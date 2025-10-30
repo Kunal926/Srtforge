@@ -9,4 +9,3 @@ numpy>=1.24.0
 soundfile>=0.12.1
 watchdog>=4.0.0
 audio-separator>=0.39.0
-onnxruntime>=1.17.0

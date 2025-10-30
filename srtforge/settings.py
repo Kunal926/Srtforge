@@ -66,6 +66,7 @@ class SeparationSettings:
     backend: str = "fv4"
     sep_hz: int = 48000
     prefer_center: bool = False
+    prefer_gpu: bool = True
     fv4: FV4Settings = field(default_factory=FV4Settings)
 
 
@@ -74,6 +75,7 @@ class ParakeetSettings:
     """Configuration forwarded to the Parakeet ASR stage."""
 
     force_float32: bool = True
+    prefer_gpu: bool = True
 
 
 @dataclass(slots=True)

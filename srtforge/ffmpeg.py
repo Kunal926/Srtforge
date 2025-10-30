@@ -131,8 +131,18 @@ class FFmpegTooling:
         self._run(command)
         return destination
 
-    def isolate_vocals(self, source: Path, destination: Path, model: Path, config: Path) -> Path:
+    def isolate_vocals(
+        self,
+        source: Path,
+        destination: Path,
+        model: Path,
+        config: Path,
+        *,
+        prefer_gpu: bool = True,
+    ) -> Path:
         """Run MelBand Roformer separation to keep vocals only."""
+
+        console = get_console()
 
         try:
             from audio_separator.separator import Separator
@@ -160,22 +170,49 @@ class FFmpegTooling:
         if config.exists() and not target_config.exists():
             shutil.copyfile(config, target_config)
 
+        torch_spec = importlib.util.find_spec("torch")
+        torch_module = None
+        torch_cuda_available = False
+        if torch_spec is not None:
+            torch_module = importlib.import_module("torch")
+            if prefer_gpu:
+                try:
+                    torch_cuda_available = bool(torch_module.cuda.is_available())
+                except Exception:  # pragma: no cover - defensive fallback if CUDA probing fails
+                    torch_cuda_available = False
+
         separator = Separator(
             model_file_dir=str(model_dir),
             output_dir=str(destination.parent),
             output_format="WAV",
             output_single_stem="vocals",
-            use_autocast=False,
+            use_autocast=bool(prefer_gpu and torch_cuda_available),
         )
         separator.load_model(model_filename=str(model.name))
-        torch_spec = importlib.util.find_spec("torch")
-        if torch_spec is not None:
-            torch = importlib.import_module("torch")
+        if torch_module is not None:
             model_instance = getattr(separator, "model_instance", None)
             if model_instance is not None:
                 module = getattr(model_instance, "model", model_instance)
                 if hasattr(module, "to"):
-                    module.to(dtype=torch.float32)
+                    module.to(dtype=torch_module.float32)
+
+        execution_providers = [prov for prov in getattr(separator, "onnx_execution_provider", []) or []]
+        torch_device = getattr(separator, "torch_device", None)
+        if prefer_gpu:
+            if torch_cuda_available and any(prov == "CUDAExecutionProvider" for prov in execution_providers):
+                console.log("[green]FV4 separation is running with CUDA acceleration[/green]")
+            elif torch_cuda_available:
+                console.log(
+                    "[yellow]PyTorch detected CUDA but ONNX Runtime did not expose CUDAExecutionProvider; vocal separation will run on the CPU."
+                )
+            else:
+                console.log(
+                    "[yellow]CUDA not available to audio-separator; vocal separation will use the CPU."
+                )
+        elif torch_device is not None and getattr(torch_device, "type", "cpu") != "cpu":
+            console.log(
+                "[yellow]Vocal separation GPU preference disabled; forcing CPU execution."
+            )
         outputs = separator.separate(str(source))
         vocals_path = None
         for item in outputs or []:

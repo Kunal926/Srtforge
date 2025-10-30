@@ -27,8 +27,16 @@ class DummyTools:
         output.write_bytes(b"pcm")
         return output
 
-    def isolate_vocals(self, source: Path, destination: Path, model: Path, config: Path):
-        self.calls.append(("isolate", source, model, config))
+    def isolate_vocals(
+        self,
+        source: Path,
+        destination: Path,
+        model: Path,
+        config: Path,
+        *,
+        prefer_gpu: bool = True,
+    ):
+        self.calls.append(("isolate", source, model, config, prefer_gpu))
         destination.write_bytes(b"vocals")
         return destination
 
@@ -71,6 +79,7 @@ def test_pipeline_executes_alt8_steps(tmp_path, monkeypatch):
         media_path=media,
         tools=tools,
         prefer_gpu=False,
+        separation_prefer_gpu=False,
         output_path=output_path,
     )
     result = Pipeline(config).run()
@@ -79,6 +88,8 @@ def test_pipeline_executes_alt8_steps(tmp_path, monkeypatch):
     assert outputs and outputs[0][2] == pytest.approx(23.976)
     assert outputs[0][4] is config.force_float32
     assert outputs[0][5] is False
+    isolate_call = tools.calls[1]
+    assert isolate_call[-1] is False
     preprocess_call = tools.calls[-1]
     assert preprocess_call[2] == config.ffmpeg_filter_chain
     assert result.output_path == output_path

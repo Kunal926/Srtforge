@@ -23,7 +23,13 @@ def run(
 ) -> None:
     """Execute the pipeline for a single media file."""
 
-    config = PipelineConfig(media_path=media, output_path=output, prefer_gpu=not cpu)
+    gpu_pref = not cpu
+    config = PipelineConfig(
+        media_path=media,
+        output_path=output,
+        prefer_gpu=gpu_pref,
+        separation_prefer_gpu=gpu_pref,
+    )
     result = run_pipeline(config)
     if result.skipped:
         raise typer.Exit(code=2)
@@ -44,7 +50,12 @@ def series(
         raise typer.Exit(code=1)
     for path in files:
         console.rule(str(path))
-        config = PipelineConfig(media_path=path, prefer_gpu=not cpu)
+        gpu_pref = not cpu
+        config = PipelineConfig(
+            media_path=path,
+            prefer_gpu=gpu_pref,
+            separation_prefer_gpu=gpu_pref,
+        )
         run_pipeline(config)
 
 

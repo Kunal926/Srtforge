@@ -27,6 +27,11 @@ srtforge --help
 Optional: export `HF_TOKEN=<hugging-face-token>` before running the installer to
 authenticate against private or rate-limited model downloads.
 
+If a CUDA-capable GPU is detected, the installer provisions both the CUDA
+`torch` wheels and `onnxruntime-gpu` so the FV4 separator can run on the GPU. Use
+`--cpu` to force CPU wheels (and the CPU ONNX Runtime build) when debugging or
+running on a headless machine.
+
 ### Windows 11 step-by-step
 
 1. Install [Python 3.12 (recommended)](https://www.python.org/downloads/)—any
@@ -42,7 +47,10 @@ authenticate against private or rate-limited model downloads.
 4. (Optional) `setx HF_TOKEN <hugging-face-token>` if you need authenticated
    Hugging Face access.
 5. Run the installer from an elevated PowerShell prompt if CUDA drivers are
-   present, otherwise a normal prompt is fine:
+   present, otherwise a normal prompt is fine. When a CUDA-capable GPU is
+   detected the script installs the matching `torch` wheels and the
+   `onnxruntime-gpu` package; otherwise it falls back to CPU builds and prints a
+   warning:
    ```powershell
    ./install.ps1              # auto-detects GPU
    ./install.ps1 -Cpu         # force CPU wheels
@@ -93,6 +101,38 @@ existing files are left untouched.
 
 The `srtforge` CLI exposes the pipeline for single files (`srtforge run`), bulk
 jobs (`srtforge series`), and the Sonarr custom-script entry point.
+
+## GPU vocal separation
+
+Both the separation and ASR stages default to GPU execution when CUDA is
+available. The CLI forwards `--cpu` to disable GPU use globally, while the
+configuration file exposes dedicated toggles:
+
+```yaml
+separation:
+  prefer_gpu: true
+parakeet:
+  prefer_gpu: true
+```
+
+Internally `FFmpegTooling.isolate_vocals` probes PyTorch for CUDA support and
+passes `use_autocast=True` to `audio_separator` when `onnxruntime-gpu` is
+present, logging whether CUDA, DirectML, or pure CPU execution is being used
+before the FV4 stem is rendered.
+
+### ONNX Runtime vs direct PyTorch FV4
+
+mpv-parakeet-transcriber executes the FV4 Roformer checkpoint directly through
+its vendored PyTorch modules (`mel_band_roformer.py`, `bs_roformer.py`, etc.),
+whereas srtforge wraps the same checkpoint with `audio-separator`, an
+ONNX Runtime-based runner. The ONNX approach simplifies distribution—hardware
+providers are handled by `onnxruntime` and the installer can swap between the
+CPU and CUDA builds automatically—while remaining compatible with the upstream
+weights and configuration files that ship in `models/`. Users who prefer the
+original PyTorch code path can disable ONNX acceleration by setting
+`separation.prefer_gpu: false` and installing only the CPU runtime, but by
+default the project will consume GPU resources whenever CUDA is detected to
+match the mpv experience without manual setup.
 
 ## Usage examples
 
