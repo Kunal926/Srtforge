@@ -70,8 +70,8 @@ MODELS = [
         "voc_fv4.ckpt",
     ),
     (
-        "https://huggingface.co/nvidia/parakeet-tdt-0.6b-v2/resolve/main/parakeet_tdt_0.6b_v2.nemo?download=1",
-        "parakeet_tdt_0.6b_v2.nemo",
+        "https://huggingface.co/nvidia/parakeet-tdt-0.6b-v2/resolve/main/parakeet-tdt-0.6b-v2.nemo?download=1",
+        "parakeet-tdt-0.6b-v2.nemo",
     ),
 ]
 

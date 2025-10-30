@@ -64,7 +64,7 @@ authenticate against private or rate-limited model downloads.
    srtforge --help
    ```
 
-Both installers will download `parakeet_tdt_0.6b_v2.nemo` and
+Both installers will download `parakeet-tdt-0.6b-v2.nemo` and
 `voc_fv4.ckpt` from Hugging Face into `./models`. Re-running the script is safe;
 existing files are left untouched.
 
