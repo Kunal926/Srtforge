@@ -333,7 +333,7 @@ if (-not (Test-Path $modelsDir)) {
 }
 
 $downloads = @(
-    @{ Url = 'https://huggingface.co/audio-separator/melband-roformer-fv4/resolve/main/voc_fv4.ckpt?download=1'; File = 'voc_fv4.ckpt' },
+    @{ Url = 'https://github.com/StiensGate928/Srtforge/releases/download/v1.0.0/voc_fv4.ckpt'; File = 'voc_fv4.ckpt' },
     @{ Url = 'https://huggingface.co/nvidia/parakeet-tdt-0.6b-v2/resolve/main/parakeet_tdt_0.6b_v2.nemo?download=1'; File = 'parakeet_tdt_0.6b_v2.nemo' }
 )
 
