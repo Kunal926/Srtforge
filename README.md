@@ -1,4 +1,4 @@
-# srtforge (Parakeet‑TDT‑0.6B‑V2, alt+8, fully offline)
+# srtforge (Parakeet‑TDT‑0.6B‑V2)
 
 srtforge is an end-to-end clone of the "alt+8" flow from
 [mpv-parakeet-transcriber](https://github.com/StiensGate928/mpv-parakeet-transcriber)
