@@ -35,10 +35,11 @@ class PipelineConfig:
     sample_rate: int = settings.separation.sep_hz
     separation_backend: str = settings.separation.backend
     separation_prefer_center: bool = settings.separation.prefer_center
+    separation_prefer_gpu: bool = settings.separation.prefer_gpu
     ffmpeg_filter_chain: str = settings.ffmpeg.filter_chain
     ffmpeg_prefer_center: bool = settings.ffmpeg.prefer_center
     force_float32: bool = settings.parakeet.force_float32
-    prefer_gpu: bool = True
+    prefer_gpu: bool = settings.parakeet.prefer_gpu
 
 
 @dataclass(slots=True)
@@ -130,6 +131,7 @@ class Pipeline:
                                 vocals,
                                 self.config.fv4_model,
                                 self.config.fv4_config,
+                                prefer_gpu=self.config.separation_prefer_gpu,
                             )
                         separated_source = vocals
                     elif backend in {"none", "skip"}:

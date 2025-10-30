@@ -310,17 +310,42 @@ function Install-Torch($device) {
     }
 }
 
+function Install-OnnxRuntime($device) {
+    if ($device -eq 'gpu') {
+        Write-Host "Installing ONNX Runtime GPU package"
+        try {
+            & $venvPip install "onnxruntime-gpu>=1.23.2"
+            return $true
+        } catch {
+            Write-Warning "Failed to install onnxruntime-gpu. Ensure a compatible NVIDIA driver is available if you expect GPU vocal separation. Falling back to the CPU build."
+            & $venvPip install "onnxruntime>=1.23.2"
+            return $false
+        }
+    } else {
+        Write-Host "Installing ONNX Runtime CPU package"
+        & $venvPip install "onnxruntime>=1.23.2"
+        return $true
+    }
+}
+
+$selectedDevice = 'cpu'
 if ($Cpu) {
-    Install-Torch 'cpu'
+    $selectedDevice = 'cpu'
 } elseif ($Gpu) {
-    Install-Torch 'gpu'
+    $selectedDevice = 'gpu'
 } else {
     if (Get-Command nvidia-smi -ErrorAction SilentlyContinue) {
-        Install-Torch 'gpu'
+        $selectedDevice = 'gpu'
     } else {
         Write-Host "No NVIDIA GPU detected, falling back to CPU wheels"
-        Install-Torch 'cpu'
+        $selectedDevice = 'cpu'
     }
+}
+
+Install-Torch $selectedDevice
+$onnxGpuInstalled = Install-OnnxRuntime $selectedDevice
+if (-not $onnxGpuInstalled -and $selectedDevice -eq 'gpu') {
+    Write-Warning "Vocal separation is falling back to the CPU build of ONNX Runtime. Re-run the installer after fixing your CUDA driver to re-enable GPU separation."
 }
 
 & $venvPip install nemo_toolkit[asr]==2.0.0
