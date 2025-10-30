@@ -136,8 +136,21 @@ class FFmpegTooling:
 
         try:
             from audio_separator.separator import Separator
+        except ModuleNotFoundError as exc:  # pragma: no cover - explicit dependency message
+            missing = exc.name or ""
+            if missing.startswith("onnxruntime"):
+                raise RuntimeError(
+                    "audio-separator requires onnxruntime for vocal isolation. "
+                    "Install it with 'pip install onnxruntime' or re-run the installer."
+                ) from exc
+            raise RuntimeError(
+                "audio-separator is required for vocal isolation. "
+                "Re-run the installer or install the optional dependency manually."
+            ) from exc
         except Exception as exc:  # pragma: no cover - import errors propagated
-            raise RuntimeError("audio-separator is required for vocal isolation") from exc
+            raise RuntimeError(
+                f"audio-separator failed to initialize for vocal isolation: {exc}"
+            ) from exc
 
         # ``audio-separator`` stores intermediate data in output directory and returns the
         # paths through ``Separator.separate()``. We keep the canonical stems location.
