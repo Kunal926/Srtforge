@@ -7,6 +7,7 @@ import json
 import os
 import shutil
 import subprocess
+import types
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, List, Optional
@@ -41,6 +42,51 @@ class AudioStream:
 
 class FFmpegError(RuntimeError):
     """Raised when FFmpeg or ffprobe exits with a failure."""
+
+
+def _ensure_separator_supports_model(separator: "Separator", model: Path, config: Path | None) -> None:
+    """Patch ``separator`` so ``model`` is treated as a supported download."""
+
+    try:
+        original_list_supported = separator.list_supported_model_files
+    except AttributeError:  # pragma: no cover - defensive safeguard for unexpected API changes
+        return
+
+    try:
+        existing = original_list_supported()
+    except Exception:  # pragma: no cover - if probing fails we fall back to default behaviour
+        return
+
+    model_name = model.name
+
+    def _contains(target: dict) -> bool:
+        for models in target.values():
+            for info in models.values():
+                if info.get("filename") == model_name:
+                    return True
+        return False
+
+    if _contains(existing):
+        return
+
+    download_files = [model_name]
+    if config is not None and config.exists():
+        download_files.append(config.name)
+
+    def patched_list_supported(self):
+        data = original_list_supported()
+        if not _contains(data):
+            mdxc = data.setdefault("MDXC", {})
+            mdxc[f"Local {model_name}"] = {
+                "filename": model_name,
+                "scores": {},
+                "stems": [],
+                "target_stem": None,
+                "download_files": download_files,
+            }
+        return data
+
+    separator.list_supported_model_files = types.MethodType(patched_list_supported, separator)
 
 
 class FFmpegTooling:
@@ -167,8 +213,14 @@ class FFmpegTooling:
         model_dir = model.parent
         os.environ.setdefault("AUDIO_SEPARATOR_MODEL_DIR", str(model_dir))
         target_config = model_dir / config.name
+        config_for_registration: Path | None = None
         if config.exists() and not target_config.exists():
             shutil.copyfile(config, target_config)
+            config_for_registration = target_config
+        elif target_config.exists():
+            config_for_registration = target_config
+        elif config.exists():
+            config_for_registration = config
 
         torch_spec = importlib.util.find_spec("torch")
         torch_module = None
@@ -188,6 +240,7 @@ class FFmpegTooling:
             output_single_stem="vocals",
             use_autocast=bool(prefer_gpu and torch_cuda_available),
         )
+        _ensure_separator_supports_model(separator, model, config_for_registration)
         separator.load_model(model_filename=str(model.name))
         if torch_module is not None:
             model_instance = getattr(separator, "model_instance", None)
