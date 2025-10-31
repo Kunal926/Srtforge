@@ -328,6 +328,60 @@ function Install-OnnxRuntime($device) {
     }
 }
 
+function Test-CudaToolkitInstalled {
+    $cudaPath = $env:CUDA_PATH
+    if ($cudaPath -and (Test-Path $cudaPath)) {
+        return $true
+    }
+
+    $defaultCudaRoot = 'C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA'
+    if (Test-Path $defaultCudaRoot) {
+        return $true
+    }
+
+    if (Get-Command nvcc.exe -ErrorAction SilentlyContinue) {
+        return $true
+    }
+
+    return $false
+}
+
+function Ensure-CudaToolkit {
+    param (
+        [switch] $Silent
+    )
+
+    if (Test-CudaToolkitInstalled) {
+        Write-Host 'CUDA toolkit already present'
+        return $true
+    }
+
+    if (-not (Get-Command winget.exe -ErrorAction SilentlyContinue)) {
+        Write-Warning 'winget not available. Install NVIDIA CUDA manually from https://developer.nvidia.com/cuda-downloads'
+        return $false
+    }
+
+    Write-Host 'Installing NVIDIA CUDA toolkit via winget'
+    try {
+        $arguments = @(
+            'install',
+            '--id', 'NVIDIA.CUDA',
+            '-e',
+            '--accept-package-agreements',
+            '--accept-source-agreements'
+        )
+        if ($Silent) {
+            $arguments += '--silent'
+        }
+
+        & winget.exe @arguments
+        return $true
+    } catch {
+        Write-Warning "Failed to install CUDA toolkit automatically. Install it manually from NVIDIA's website."
+        return $false
+    }
+}
+
 $selectedDevice = 'cpu'
 if ($Cpu) {
     $selectedDevice = 'cpu'
@@ -339,6 +393,12 @@ if ($Cpu) {
     } else {
         Write-Host "No NVIDIA GPU detected, falling back to CPU wheels"
         $selectedDevice = 'cpu'
+    }
+}
+
+if ($selectedDevice -eq 'gpu') {
+    if (-not (Ensure-CudaToolkit)) {
+        Write-Warning 'Continuing with GPU Python packages, but CUDA toolkit installation may be incomplete.'
     }
 }
 
