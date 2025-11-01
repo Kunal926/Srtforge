@@ -1,3 +1,7 @@
+is_roformer: true
+model_type: mel_band_roformer
+architecture: mel_band_roformer
+
 audio:
   chunk_size: 352800
   dim_f: 1024

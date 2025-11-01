@@ -301,12 +301,12 @@ $venvPip = Join-Path $venvDir "Scripts/pip.exe"
 
 function Install-Torch($device) {
     if ($device -eq 'gpu') {
-        $cudaTag = if ($Cuda -eq 'auto') { '124' } else { $Cuda }
+        $cudaTag = if ($Cuda -eq 'auto') { '130' } else { $Cuda }
         Write-Host "Installing Torch with CUDA $cudaTag wheels"
-        & $venvPip install --extra-index-url "https://download.pytorch.org/whl/cu$cudaTag" torch torchvision torchaudio
+        & $venvPip install --index-url "https://download.pytorch.org/whl/cu$cudaTag" torch torchvision torchaudio
     } else {
         Write-Host "Installing Torch CPU wheels"
-        & $venvPip install --extra-index-url https://download.pytorch.org/whl/cpu torch torchvision torchaudio
+        & $venvPip install --index-url https://download.pytorch.org/whl/cpu torch torchvision torchaudio
     }
 }
 
