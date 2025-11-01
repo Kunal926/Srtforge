@@ -34,11 +34,15 @@ pip install -r requirements.txt
 install_torch() {
   local device="$1"
   if [ "$device" = "gpu" ]; then
-    echo "Installing Torch with CUDA wheels"
-    pip install --extra-index-url https://download.pytorch.org/whl/cu124 torch torchvision torchaudio
+    local cuda_tag="130"
+    if [ "${CUDA_VERSION:-auto}" != "auto" ]; then
+      cuda_tag="$CUDA_VERSION"
+    fi
+    echo "Installing Torch with CUDA ${cuda_tag} wheels"
+    pip install --index-url "https://download.pytorch.org/whl/cu${cuda_tag}" torch torchvision torchaudio
   else
     echo "Installing Torch CPU wheels"
-    pip install --extra-index-url https://download.pytorch.org/whl/cpu torch torchvision torchaudio
+    pip install --index-url https://download.pytorch.org/whl/cpu torch torchvision torchaudio
   fi
 }
 
