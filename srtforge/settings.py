@@ -47,7 +47,7 @@ class FFmpegSettings:
     prefer_center: bool = False
     filter_chain: str = (
         "highpass=f=60,lowpass=f=10000,aformat=sample_fmts=flt,"
-        "aresample=resampler=soxr:osf=flt:ocl=mono:osr=16000"
+        "aresample=resampler=soxr:osf=flt:osr=16000"
     )
 
 
