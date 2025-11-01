@@ -10,7 +10,7 @@ import subprocess
 import types
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, List, Optional
+from typing import Iterable, List, Mapping, Optional, Sequence
 
 from .logging import get_console
 
@@ -87,6 +87,29 @@ def _ensure_separator_supports_model(separator: "Separator", model: Path, config
         return data
 
     separator.list_supported_model_files = types.MethodType(patched_list_supported, separator)
+
+
+def _iter_separator_output_paths(outputs: object) -> Iterable[Path]:
+    """Yield :class:`pathlib.Path` objects from ``audio_separator`` outputs."""
+
+    def handle(value: object) -> List[Path]:
+        if value is None:
+            return []
+        if isinstance(value, (str, os.PathLike)):
+            return [Path(value)]
+        if isinstance(value, Mapping):
+            paths: List[Path] = []
+            for nested in value.values():
+                paths.extend(handle(nested))
+            return paths
+        if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray, os.PathLike)):
+            paths: List[Path] = []
+            for nested in value:
+                paths.extend(handle(nested))
+            return paths
+        return []
+
+    return handle(outputs)
 
 
 class FFmpegTooling:
@@ -309,8 +332,7 @@ class FFmpegTooling:
             )
         outputs = separator.separate(str(source))
         vocals_path = None
-        for item in outputs or []:
-            path_obj = Path(item)
+        for path_obj in _iter_separator_output_paths(outputs):
             if "vocals" in path_obj.stem.lower():
                 vocals_path = path_obj
                 break
