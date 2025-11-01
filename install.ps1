@@ -22,7 +22,15 @@ function Invoke-WithArgs {
         $baseArgs = $Command[1..($Command.Length - 1)]
     }
 
-    & $Command[0] @baseArgs @Args
+    $global:LASTEXITCODE = 0
+    $result = & $Command[0] @baseArgs @Args
+    $exitCode = $LASTEXITCODE
+    if ($exitCode -ne $null -and $exitCode -ne 0) {
+        $commandLine = [string]::Join(' ', @($Command + $Args))
+        throw "Command '$commandLine' failed with exit code $exitCode."
+    }
+
+    return $result
 }
 
 $pythonInfoScript = @'
