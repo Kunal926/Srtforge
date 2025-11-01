@@ -343,8 +343,10 @@ function Install-Torch($device) {
         $cudaTag = if ($Cuda -eq 'auto') { '130' } else { $Cuda }
         Write-Host "Installing Torch with CUDA $cudaTag wheels"
         $packages = @('torch', 'torchvision', 'torchaudio')
-        Invoke-WithArgs -Command @($venvPip) -Args @('uninstall', '-y') + $packages | Out-Null
-        Invoke-WithArgs -Command @($venvPip) -Args @(
+        $uninstallArgs = @('uninstall', '-y') + $packages
+        Invoke-WithArgs -Command @($venvPip) -Args $uninstallArgs | Out-Null
+
+        $installArgs = @(
             'install',
             '--upgrade',
             '--force-reinstall',
@@ -352,6 +354,7 @@ function Install-Torch($device) {
             '--index-url', "https://download.pytorch.org/whl/cu$cudaTag",
             '--extra-index-url', 'https://pypi.org/simple'
         ) + $packages
+        Invoke-WithArgs -Command @($venvPip) -Args $installArgs
 
         $torchInfo = Get-TorchCudaInfo
         if ($torchInfo -and $torchInfo.ok) {
