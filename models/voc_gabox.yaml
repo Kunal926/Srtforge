@@ -16,6 +16,10 @@ model:
   time_transformer_depth: 1
   freq_transformer_depth: 1
   num_bands: 60
+  # ``audio-separator`` 0.39 switched the configuration field name to
+  # ``num_subbands``.  Keep both keys so the model works on older and newer
+  # releases.
+  num_subbands: 60
   dim_head: 64
   heads: 8
   attn_dropout: 0
