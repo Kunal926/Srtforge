@@ -299,11 +299,72 @@ $venvPip = Join-Path $venvDir "Scripts/pip.exe"
 & $venvPython -m pip install --upgrade pip wheel
 & $venvPip install -r requirements.txt
 
+$torchInfoScript = @'
+import json
+
+try:
+    import torch
+except Exception as exc:  # pragma: no cover - diagnostic helper
+    print(json.dumps({
+        "ok": False,
+        "error": str(exc),
+        "cuda_version": None,
+        "cuda_available": False,
+    }))
+else:
+    print(json.dumps({
+        "ok": True,
+        "error": None,
+        "cuda_version": getattr(torch.version, "cuda", None),
+        "cuda_available": bool(torch.cuda.is_available()),
+    }))
+'@
+
+function Get-TorchCudaInfo {
+    try {
+        $result = Invoke-WithArgs -Command @($venvPython) -Args @("-c", $torchInfoScript)
+        if (-not $result) {
+            return $null
+        }
+
+        $json = ($result | Out-String).Trim()
+        if (-not $json) {
+            return $null
+        }
+
+        return $json | ConvertFrom-Json
+    } catch {
+        return $null
+    }
+}
+
 function Install-Torch($device) {
     if ($device -eq 'gpu') {
         $cudaTag = if ($Cuda -eq 'auto') { '130' } else { $Cuda }
         Write-Host "Installing Torch with CUDA $cudaTag wheels"
-        & $venvPip install --index-url "https://download.pytorch.org/whl/cu$cudaTag" torch torchvision torchaudio
+        $packages = @('torch', 'torchvision', 'torchaudio')
+        Invoke-WithArgs -Command @($venvPip) -Args @('uninstall', '-y') + $packages | Out-Null
+        Invoke-WithArgs -Command @($venvPip) -Args @(
+            'install',
+            '--upgrade',
+            '--force-reinstall',
+            '--no-cache-dir',
+            '--index-url', "https://download.pytorch.org/whl/cu$cudaTag",
+            '--extra-index-url', 'https://pypi.org/simple'
+        ) + $packages
+
+        $torchInfo = Get-TorchCudaInfo
+        if ($torchInfo -and $torchInfo.ok) {
+            if (-not $torchInfo.cuda_version) {
+                Write-Warning 'PyTorch CUDA runtime was not detected after installation. CPU-only wheels may still be in use.'
+            } elseif (-not $torchInfo.cuda_available) {
+                Write-Warning "PyTorch reports CUDA $($torchInfo.cuda_version) but no GPU is currently available. Check your NVIDIA drivers."
+            } else {
+                Write-Host "Detected CUDA-enabled PyTorch (CUDA $($torchInfo.cuda_version))."
+            }
+        } else {
+            Write-Warning 'Unable to verify the CUDA-enabled PyTorch installation.'
+        }
     } else {
         Write-Host "Installing Torch CPU wheels"
         & $venvPip install --index-url https://download.pytorch.org/whl/cpu torch torchvision torchaudio

@@ -33,16 +33,40 @@ pip install -r requirements.txt
 
 install_torch() {
   local device="$1"
+  local packages=(torch torchvision torchaudio)
   if [ "$device" = "gpu" ]; then
     local cuda_tag="130"
     if [ "${CUDA_VERSION:-auto}" != "auto" ]; then
       cuda_tag="$CUDA_VERSION"
     fi
     echo "Installing Torch with CUDA ${cuda_tag} wheels"
-    pip install --index-url "https://download.pytorch.org/whl/cu${cuda_tag}" torch torchvision torchaudio
+    pip uninstall -y "${packages[@]}" >/dev/null 2>&1 || true
+    pip install \
+      --upgrade \
+      --force-reinstall \
+      --no-cache-dir \
+      --index-url "https://download.pytorch.org/whl/cu${cuda_tag}" \
+      --extra-index-url https://pypi.org/simple \
+      "${packages[@]}"
+    python <<'PY'
+import sys
+
+try:
+    import torch
+except Exception as exc:  # pragma: no cover - diagnostic helper
+    print(f"WARNING: Unable to import torch after installation: {exc}", file=sys.stderr)
+else:
+    cuda_version = getattr(torch.version, "cuda", None)
+    if not cuda_version:
+        print("WARNING: PyTorch CUDA runtime was not detected after installation. CPU-only wheels may still be in use.", file=sys.stderr)
+    elif not torch.cuda.is_available():
+        print(f"WARNING: PyTorch reports CUDA {cuda_version} but no GPU is currently available. Check your NVIDIA drivers.", file=sys.stderr)
+    else:
+        print(f"Detected CUDA-enabled PyTorch (CUDA {cuda_version}).")
+PY
   else
     echo "Installing Torch CPU wheels"
-    pip install --index-url https://download.pytorch.org/whl/cpu torch torchvision torchaudio
+    pip install --index-url https://download.pytorch.org/whl/cpu "${packages[@]}"
   fi
 }
 
