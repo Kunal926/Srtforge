@@ -112,6 +112,24 @@ def _iter_separator_output_paths(outputs: object) -> Iterable[Path]:
     return handle(outputs)
 
 
+def _resolve_separator_output_path(path_obj: Path, output_dir: Path) -> Optional[Path]:
+    """Resolve ``audio_separator`` output paths to an existing file."""
+
+    candidates: List[Path] = []
+    if path_obj.is_absolute():
+        candidates.append(path_obj)
+    else:
+        candidates.append(output_dir / path_obj)
+        candidates.append(output_dir / path_obj.name)
+        candidates.append(path_obj)
+
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+
+    return None
+
+
 class FFmpegTooling:
     """Thin wrapper around FFmpeg/ffprobe commands."""
 
@@ -331,10 +349,13 @@ class FFmpegTooling:
                 "[yellow]Vocal separation GPU preference disabled; forcing CPU execution."
             )
         outputs = separator.separate(str(source))
-        vocals_path = None
+        vocals_path: Optional[Path] = None
         for path_obj in _iter_separator_output_paths(outputs):
-            if "vocals" in path_obj.stem.lower():
-                vocals_path = path_obj
+            if "vocals" not in path_obj.stem.lower():
+                continue
+            resolved = _resolve_separator_output_path(path_obj, destination.parent)
+            if resolved is not None:
+                vocals_path = resolved
                 break
         if not vocals_path or not vocals_path.exists():
             raise RuntimeError("Vocal separation failed to produce a vocals stem")
