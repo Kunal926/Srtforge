@@ -472,7 +472,28 @@ if (-not $onnxGpuInstalled -and $selectedDevice -eq 'gpu') {
     Write-Warning "Vocal separation is falling back to the CPU build of ONNX Runtime. Re-run the installer after fixing your CUDA driver to re-enable GPU separation."
 }
 
-& $venvPip install nemo_toolkit[asr]==2.0.0
+Invoke-WithArgs -Command @($venvPython) -Args @('-m', 'pip', 'install', 'nemo_toolkit[asr]==2.0.0')
+
+$verifyNeMoScript = @'
+import importlib
+import sys
+
+try:
+    importlib.import_module("nemo.collections.asr")
+except Exception as exc:
+    print(
+        "ERROR: NVIDIA NeMo ASR components failed to import after installation. "
+        "This usually means one of its dependencies (such as numpy, pyarrow or matplotlib) "
+        "was not installed correctly.",
+        file=sys.stderr,
+    )
+    print(f"       Original import error: {exc}", file=sys.stderr)
+    sys.exit(1)
+else:
+    print("Verified NVIDIA NeMo ASR modules are importable.")
+'@
+
+Invoke-WithArgs -Command @($venvPython) -Args @('-c', $verifyNeMoScript)
 
 & $venvPip install -e .
 

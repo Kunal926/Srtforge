@@ -108,6 +108,25 @@ install_onnxruntime "$SELECTED_DEVICE"
 
 pip install nemo_toolkit[asr]==2.0.0
 
+python <<'PY'
+import importlib
+import sys
+
+try:
+    importlib.import_module("nemo.collections.asr")
+except Exception as exc:  # pragma: no cover - installer validation
+    print(
+        "ERROR: NVIDIA NeMo ASR components failed to import after installation. "
+        "This usually means one of its dependencies (such as numpy, pyarrow or matplotlib) "
+        "was not installed correctly.",
+        file=sys.stderr,
+    )
+    print(f"       Original import error: {exc}", file=sys.stderr)
+    sys.exit(1)
+else:
+    print("✔ Verified NVIDIA NeMo ASR modules are importable.")
+PY
+
 pip install -e .
 
 python <<'PY'
