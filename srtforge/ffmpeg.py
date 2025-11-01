@@ -225,13 +225,54 @@ class FFmpegTooling:
         torch_spec = importlib.util.find_spec("torch")
         torch_module = None
         torch_cuda_available = False
+        torch_cuda_probe_error: str | None = None
+        torch_cuda_built = False
         if torch_spec is not None:
             torch_module = importlib.import_module("torch")
             if prefer_gpu:
                 try:
                     torch_cuda_available = bool(torch_module.cuda.is_available())
-                except Exception:  # pragma: no cover - defensive fallback if CUDA probing fails
+                except Exception as exc:  # pragma: no cover - defensive fallback if CUDA probing fails
+                    torch_cuda_probe_error = str(exc)
                     torch_cuda_available = False
+            torch_version = getattr(torch_module, "version", None)
+            cuda_version = getattr(torch_version, "cuda", None)
+            torch_cuda_built = bool(cuda_version)
+
+        onnx_cuda_available = False
+        onnx_probe_error: str | None = None
+        if prefer_gpu:
+            try:
+                import onnxruntime as ort  # type: ignore
+            except ModuleNotFoundError:
+                onnx_probe_error = "onnxruntime is not installed"
+            except Exception as exc:  # pragma: no cover - unexpected import failure
+                onnx_probe_error = str(exc)
+            else:
+                try:
+                    onnx_cuda_available = "CUDAExecutionProvider" in set(ort.get_available_providers())
+                except Exception as exc:  # pragma: no cover - defensive fallback if provider probing fails
+                    onnx_probe_error = str(exc)
+
+        if prefer_gpu and torch_module is not None and not torch_cuda_available:
+            if not torch_cuda_built:
+                console.log(
+                    "[yellow]PyTorch was installed without CUDA support; install a CUDA-enabled build to run FV4 separation on the GPU.[/yellow]"
+                )
+            elif torch_cuda_probe_error:
+                console.log(
+                    "[yellow]PyTorch could not query CUDA availability; FV4 separation will fall back to the CPU. "
+                    f"({torch_cuda_probe_error})[/yellow]"
+                )
+            else:
+                console.log(
+                    "[yellow]CUDA is unavailable to PyTorch; FV4 separation will use the CPU unless CUDA drivers are installed correctly.[/yellow]"
+                )
+        if prefer_gpu and not onnx_cuda_available and onnx_probe_error:
+            console.log(
+                "[yellow]Could not verify ONNX Runtime CUDA support; FV4 separation may run on the CPU. "
+                f"({onnx_probe_error})[/yellow]"
+            )
 
         separator = Separator(
             model_file_dir=str(model_dir),
