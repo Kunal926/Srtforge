@@ -33,6 +33,27 @@ function Invoke-WithArgs {
     return $result
 }
 
+function Invoke-CommandWithScript {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string[]]$Command,
+        [Parameter(Mandatory = $true)]
+        [string]$ScriptContent
+    )
+
+    $tempBase = [System.IO.Path]::GetTempFileName()
+    $tempScript = [System.IO.Path]::ChangeExtension($tempBase, '.py')
+    Move-Item -Path $tempBase -Destination $tempScript -Force
+    [System.IO.File]::WriteAllText($tempScript, $ScriptContent)
+
+    try {
+        Invoke-WithArgs -Command $Command -Args @($tempScript)
+    } finally {
+        Remove-Item -Path $tempScript -ErrorAction SilentlyContinue
+        Remove-Item -Path $tempBase -ErrorAction SilentlyContinue
+    }
+}
+
 $pythonInfoScript = @'
 import json
 import pathlib
@@ -501,7 +522,7 @@ else:
     print("Verified NVIDIA NeMo ASR modules are importable.")
 '@
 
-Invoke-WithArgs -Command @($venvPython) -Args @('-c', $verifyNeMoScript)
+Invoke-CommandWithScript -Command @($venvPython) -ScriptContent $verifyNeMoScript
 
 & $venvPip install -e .
 
