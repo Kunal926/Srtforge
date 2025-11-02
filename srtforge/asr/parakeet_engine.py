@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 from contextlib import nullcontext
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional, TYPE_CHECKING
@@ -178,10 +179,45 @@ def parakeet_to_srt_with_alt8(
         device = "GPU" if use_cuda else "CPU"
         run_logger.log(f"ASR device: {device}")
 
-    with (step("ASR: inference") if step else nullcontext()):
-        results = asr.transcribe(
-            [str(audio_path)], timestamps=True, return_hypotheses=True
+    def _attempt_transcribe() -> List[object]:
+        """Call ``asr.transcribe`` while handling API differences between NeMo versions."""
+
+        candidates: List[Dict[str, object]] = [
+            {"timestamps": True, "return_hypotheses": True},
+            {"return_timestamps": "word", "return_hypotheses": True},
+            {"return_timestamps": True, "return_hypotheses": True},
+            {"return_hypotheses": True},
+        ]
+
+        unexpected_kw_error_fragments = (
+            "unexpected keyword",  # CPython message fragment
+            "got an unexpected keyword",  # PyPy style fragment
         )
+
+        for kwargs in candidates:
+            try:
+                return asr.transcribe([str(audio_path)], **kwargs)
+            except TypeError as exc:
+                message = str(exc)
+                if any(fragment in message for fragment in unexpected_kw_error_fragments):
+                    continue
+                raise
+
+        # All attempts failed due to unexpected keyword arguments.  Re-raise the
+        # final error using the latest signature information for easier debugging.
+        try:
+            sig = inspect.signature(asr.transcribe)
+        except (TypeError, ValueError):  # pragma: no cover - signature unavailable
+            sig_repr = "<unavailable>"
+        else:
+            sig_repr = str(sig)
+        raise TypeError(
+            "Could not call asr.transcribe with timestamp arguments; "
+            f"signature: {sig_repr}"
+        )
+
+    with (step("ASR: inference") if step else nullcontext()):
+        results = _attempt_transcribe()
     if not results or not results[0]:
         raise RuntimeError("Parakeet ASR did not return any hypotheses")
 
