@@ -76,6 +76,12 @@ Both installers will download `parakeet-tdt-0.6b-v2.nemo` and
 `voc_fv4.ckpt` from Hugging Face into `./models`. Re-running the script is safe;
 existing files are left untouched.
 
+The virtual environment provisions NeMo `2.5.x` (instead of the older `2.0`
+series) to avoid the NumPy 2.0 compatibility breakages reported with RNNT
+training loss utilities. When a CUDA-capable GPU is detected the installers also
+add the `cuda-python` bindings so NeMo can enable CUDA graph optimizations,
+matching the upstream `mpv-parakeet-transcriber` behavior.
+
 ## How it works
 
 1. **English stream discovery** – `FFmpegTooling.probe_audio_streams` enumerates
