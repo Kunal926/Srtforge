@@ -505,7 +505,12 @@ Invoke-WithArgs -Command @($venvPython) -Args @('-m', 'pip', 'install', 'nemo_to
 
 $verifyNeMoScript = @'
 import importlib
+import signal
 import sys
+
+if not hasattr(signal, "SIGKILL"):
+    _sigkill_fallback = getattr(signal, "SIGTERM", getattr(signal, "SIGABRT", 9))
+    setattr(signal, "SIGKILL", _sigkill_fallback)
 
 try:
     importlib.import_module("nemo.collections.asr")
