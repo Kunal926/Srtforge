@@ -18,6 +18,10 @@ if not hasattr(signal, "SIGKILL"):
     _sigkill_fallback = getattr(signal, "SIGTERM", getattr(signal, "SIGABRT", 9))
     signal.SIGKILL = _sigkill_fallback  # type: ignore[attr-defined]
 
+from ._nemo_compat import ensure_cuda_python_available, install_megatron_microbatch_stub
+
+install_megatron_microbatch_stub()
+
 try:  # pragma: no cover - heavy dependency import
     import torch
 except Exception as exc:  # pragma: no cover - delay failure until used
@@ -90,6 +94,8 @@ def load_parakeet(
         raise RuntimeError("PyTorch is required for Parakeet transcription") from _TORCH_IMPORT_ERROR
 
     use_cuda = prefer_gpu and torch.cuda.is_available()
+    if use_cuda:
+        ensure_cuda_python_available()
     if nemo_local and nemo_local.exists():
         asr = nemo_asr.models.ASRModel.restore_from(restore_path=str(nemo_local))
     else:
