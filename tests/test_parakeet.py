@@ -141,3 +141,75 @@ def test_parakeet_alt8_postprocess_return_timestamps(tmp_path, monkeypatch):
     )
 
     assert model.call_count == 2
+
+
+def test_load_parakeet_falls_back_when_cuda_runtime_missing(monkeypatch):
+    class DummyCuda:
+        @staticmethod
+        def is_available() -> bool:
+            return True
+
+        @staticmethod
+        def is_bf16_supported() -> bool:
+            return False
+
+    class DummyTorch:
+        cuda = DummyCuda()
+        float32 = object()
+        float16 = object()
+        bfloat16 = object()
+
+    class DummyASRModel:
+        def __init__(self) -> None:
+            self.eval_called = False
+
+        def to(self, *, dtype=None):  # noqa: ANN001 - signature mimics torch
+            self.dtype = dtype
+            return self
+
+        def eval(self):
+            self.eval_called = True
+            return self
+
+    class DummyASRFactory:
+        @staticmethod
+        def from_pretrained(**_: object) -> DummyASRModel:
+            return DummyASRModel()
+
+        @staticmethod
+        def restore_from(**_: object) -> DummyASRModel:
+            return DummyASRModel()
+
+    class DummyModels:
+        ASRModel = DummyASRFactory
+
+    class DummyNemoASR:
+        models = DummyModels()
+
+    def fail_cuda_runtime() -> None:
+        raise RuntimeError("cuda.cudart missing")
+
+    monkeypatch.setattr(parakeet_engine, "torch", DummyTorch)
+    monkeypatch.setattr(parakeet_engine, "_TORCH_IMPORT_ERROR", None)
+    monkeypatch.setattr(parakeet_engine, "nemo_asr", DummyNemoASR())
+    monkeypatch.setattr(parakeet_engine, "_IMPORT_ERROR", None)
+    monkeypatch.setattr(parakeet_engine, "ensure_cuda_python_available", fail_cuda_runtime)
+
+    messages: list[str] = []
+
+    class DummyLogger:
+        def log(self, message: str) -> None:
+            messages.append(message)
+
+    model, dtype, use_cuda = parakeet_engine.load_parakeet(
+        nemo_local=None,
+        force_float32=True,
+        prefer_gpu=True,
+        run_logger=DummyLogger(),
+    )
+
+    assert not use_cuda
+    assert any("Falling back to CPU" in message for message in messages)
+    assert isinstance(model, DummyASRModel)
+    assert model.eval_called
+    assert dtype is DummyTorch.float32
