@@ -46,6 +46,23 @@ def test_install_megatron_microbatch_stub_registers_expected_api(monkeypatch):
     )
 
 
+def test_install_megatron_microbatch_stub_handles_missing_parent_package(monkeypatch):
+    _clear_megatron_modules()
+
+    def fake_find_spec(name, package=None):
+        if name == "megatron.core.num_microbatches_calculator":
+            raise ModuleNotFoundError
+        raise AssertionError(f"unexpected find_spec call: {name}")
+
+    monkeypatch.setattr(importlib.util, "find_spec", fake_find_spec)
+
+    _nemo_compat.install_megatron_microbatch_stub()
+
+    module = importlib.import_module("megatron.core.num_microbatches_calculator")
+    assert hasattr(module, "ConstantNumMicroBatchesCalculator")
+    assert hasattr(module, "init_num_microbatches_calculator")
+
+
 def test_ensure_cuda_python_available_happy_path(monkeypatch):
     dummy_module = SimpleNamespace(__name__="cuda")
 
