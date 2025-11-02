@@ -351,7 +351,7 @@ else:
 
 function Get-TorchCudaInfo {
     try {
-        $result = Invoke-WithArgs -Command @($venvPython) -Args @("-c", $torchInfoScript)
+        $result = Invoke-CommandWithScript -Command @($venvPython) -ScriptContent $torchInfoScript
         if (-not $result) {
             return $null
         }
