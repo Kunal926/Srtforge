@@ -188,7 +188,16 @@ def _install_stub_module() -> None:
 def install_megatron_microbatch_stub() -> None:
     """Expose a stub Megatron microbatch calculator if the real one is missing."""
 
-    if importlib.util.find_spec("megatron.core.num_microbatches_calculator"):
+    try:
+        spec = importlib.util.find_spec("megatron.core.num_microbatches_calculator")
+    except ModuleNotFoundError:
+        # ``find_spec`` raises ``ModuleNotFoundError`` on Windows when the top
+        # level ``megatron`` package is missing.  Treat this the same as
+        # returning ``None`` so that we install the compatibility shim instead
+        # of bubbling up the exception and aborting the CLI invocation.
+        spec = None
+
+    if spec:
         return
 
     _install_stub_module()
