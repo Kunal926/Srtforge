@@ -214,11 +214,29 @@ def ensure_cuda_python_available(min_version: str = "12.3.0") -> None:
     """
 
     try:
-        module = importlib.import_module("cuda")
+        importlib.import_module("cuda")
     except ModuleNotFoundError as exc:  # pragma: no cover - exercised in tests
         raise RuntimeError(
             "cuda-python>=12.3 is required for GPU inference. Install it with "
             "'pip install cuda-python>=12.3' before running srtforge."
+        ) from exc
+    except Exception as exc:  # pragma: no cover - defensive: unexpected failure
+        raise RuntimeError(
+            "cuda-python is installed but failed to initialise. Ensure the package "
+            "is working by reinstalling it with 'pip install --force-reinstall cuda-python'."
+        ) from exc
+
+    try:
+        importlib.import_module("cuda.cudart")
+    except ModuleNotFoundError as exc:  # pragma: no cover - exercised in tests
+        raise RuntimeError(
+            "cuda-python is installed but its CUDA runtime bindings are missing. "
+            "Install the NVIDIA CUDA Toolkit 12.3 or newer so that cuda.cudart is available."
+        ) from exc
+    except Exception as exc:  # pragma: no cover - defensive: unexpected failure
+        raise RuntimeError(
+            "cuda-python failed to load the CUDA runtime bindings (cuda.cudart). "
+            "Ensure the NVIDIA CUDA Toolkit is installed and visible on your system PATH."
         ) from exc
 
     if Version is None:
