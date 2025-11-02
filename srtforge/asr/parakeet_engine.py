@@ -7,6 +7,11 @@ from typing import Dict, List, Tuple, Optional, TYPE_CHECKING
 import sys
 import signal
 
+try:  # pragma: no cover - optional dependency
+    import soundfile as sf
+except Exception:  # pragma: no cover - defer failure until used
+    sf = None  # type: ignore[assignment]
+
 # Windows does not define SIGKILL, but NeMo expects it to exist when importing on
 # any platform.  Provide a reasonable fallback so the import succeeds.
 if not hasattr(signal, "SIGKILL"):
@@ -34,6 +39,33 @@ if str(POST_DIR) not in sys.path:
 
 from srt_utils import postprocess_segments, write_srt  # type: ignore  # noqa: E402
 from ..logging import RunLogger
+
+
+LONG_AUDIO_THRESHOLD_S = 480.0
+
+
+def _probe_audio_duration_seconds(path: Path) -> Optional[float]:
+    """Return the duration of ``path`` in seconds when ``soundfile`` is available."""
+
+    if sf is None:
+        return None
+
+    try:
+        info = sf.info(str(path))
+    except Exception:  # pragma: no cover - diagnostic helper
+        return None
+
+    if not info.samplerate or not info.frames:
+        return None
+
+    return float(info.frames) / float(info.samplerate)
+
+
+def _log_event(run_logger: Optional[RunLogger], message: str) -> None:
+    """Send ``message`` to the active :class:`RunLogger` if present."""
+
+    if run_logger:
+        run_logger.log(message)
 
 
 if TYPE_CHECKING:  # pragma: no cover - type checking only
@@ -178,6 +210,46 @@ def parakeet_to_srt_with_alt8(
     if run_logger:
         device = "GPU" if use_cuda else "CPU"
         run_logger.log(f"ASR device: {device}")
+
+    audio_duration_seconds = _probe_audio_duration_seconds(audio_path)
+    long_audio_settings_applied = bool(getattr(asr, "_parakeet_long_audio_applied", False))
+    if (
+        audio_duration_seconds is not None
+        and audio_duration_seconds > LONG_AUDIO_THRESHOLD_S
+        and not long_audio_settings_applied
+    ):
+        _log_event(
+            run_logger,
+            f"Audio duration {audio_duration_seconds:.2f}s exceeded long audio threshold "
+            f"{LONG_AUDIO_THRESHOLD_S}s. Applying local attention settings.",
+        )
+        print(
+            f"Audio duration ({audio_duration_seconds:.2f}s) > {LONG_AUDIO_THRESHOLD_S}s. "
+            "Applying long audio settings.",
+            file=sys.stderr,
+        )
+        if hasattr(asr, "change_attention_model"):
+            try:
+                asr.change_attention_model("rel_pos_local_attn", [768, 768])
+            except Exception as exc:  # pragma: no cover - defensive logging
+                warning = (
+                    f"Warning: Failed to apply long audio settings: {exc}. Proceeding without them."
+                )
+                print(warning, file=sys.stderr)
+                _log_event(run_logger, warning)
+            else:
+                long_audio_settings_applied = True
+                setattr(asr, "_parakeet_long_audio_applied", True)
+                success_message = "Long audio settings applied: Local Attention."
+                print(success_message, file=sys.stderr)
+                _log_event(run_logger, success_message)
+        else:  # pragma: no cover - depends on upstream implementation
+            warning = (
+                "Warning: Parakeet model does not support change_attention_model; "
+                "skipping long audio settings."
+            )
+            print(warning, file=sys.stderr)
+            _log_event(run_logger, warning)
 
     def _attempt_transcribe() -> List[object]:
         """Call ``asr.transcribe`` while handling API differences between NeMo versions."""

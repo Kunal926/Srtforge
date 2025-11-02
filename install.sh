@@ -106,10 +106,8 @@ fi
 install_torch "$SELECTED_DEVICE"
 install_onnxruntime "$SELECTED_DEVICE"
 
-if [ "$SELECTED_DEVICE" = "gpu" ]; then
-  echo "Installing cuda-python bindings required for NeMo CUDA graphs"
-  pip install "cuda-python>=12.3"
-fi
+echo "Installing cuda-python bindings required for NeMo CUDA graphs"
+pip install "cuda-python>=12.3"
 
 pip install "nemo_toolkit[asr]>=2.5.1,<2.6"
 
