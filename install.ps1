@@ -501,10 +501,8 @@ if (-not $onnxGpuInstalled -and $selectedDevice -eq 'gpu') {
     Write-Warning "Vocal separation is falling back to the CPU build of ONNX Runtime. Re-run the installer after fixing your CUDA driver to re-enable GPU separation."
 }
 
-if ($selectedDevice -eq 'gpu') {
-    Write-Host 'Installing cuda-python bindings required for NeMo CUDA graphs'
-    Invoke-WithArgs -Command @($venvPython) -Args @('-m', 'pip', 'install', 'cuda-python>=12.3')
-}
+Write-Host 'Installing cuda-python bindings required for NeMo CUDA graphs'
+Invoke-WithArgs -Command @($venvPython) -Args @('-m', 'pip', 'install', 'cuda-python>=12.3')
 
 Invoke-WithArgs -Command @($venvPython) -Args @('-m', 'pip', 'install', 'nemo_toolkit[asr]>=2.5.1,<2.6')
 
