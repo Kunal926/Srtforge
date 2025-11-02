@@ -84,6 +84,8 @@ def load_parakeet(
     nemo_local: Optional[Path] = None,
     force_float32: bool = True,
     prefer_gpu: bool = True,
+    *,
+    run_logger: Optional[RunLogger] = None,
 ) -> Tuple[nemo_asr.models.ASRModel, Optional[TorchDType], bool]:
     """Load the Parakeet-TDT-0.6B-V2 model, optionally from a local .nemo."""
 
@@ -95,7 +97,16 @@ def load_parakeet(
 
     use_cuda = prefer_gpu and torch.cuda.is_available()
     if use_cuda:
-        ensure_cuda_python_available()
+        try:
+            ensure_cuda_python_available()
+        except RuntimeError as exc:
+            message = (
+                "GPU inference requested but the CUDA runtime is unavailable. "
+                "Falling back to CPU execution."
+            )
+            print(f"{message} ({exc})", file=sys.stderr)
+            _log_event(run_logger, message)
+            use_cuda = False
     if nemo_local and nemo_local.exists():
         asr = nemo_asr.models.ASRModel.restore_from(restore_path=str(nemo_local))
     else:
@@ -212,6 +223,7 @@ def parakeet_to_srt_with_alt8(
             nemo_local=nemo_local,
             force_float32=force_float32,
             prefer_gpu=prefer_gpu,
+            run_logger=run_logger,
         )
     if run_logger:
         device = "GPU" if use_cuda else "CPU"
