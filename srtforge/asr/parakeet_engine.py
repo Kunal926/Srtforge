@@ -4,6 +4,13 @@ from contextlib import nullcontext
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional, TYPE_CHECKING
 import sys
+import signal
+
+# Windows does not define SIGKILL, but NeMo expects it to exist when importing on
+# any platform.  Provide a reasonable fallback so the import succeeds.
+if not hasattr(signal, "SIGKILL"):
+    _sigkill_fallback = getattr(signal, "SIGTERM", getattr(signal, "SIGABRT", 9))
+    signal.SIGKILL = _sigkill_fallback  # type: ignore[attr-defined]
 
 try:  # pragma: no cover - heavy dependency import
     import torch

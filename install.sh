@@ -110,7 +110,12 @@ pip install nemo_toolkit[asr]==2.0.0
 
 python <<'PY'
 import importlib
+import signal
 import sys
+
+if not hasattr(signal, "SIGKILL"):
+    _sigkill_fallback = getattr(signal, "SIGTERM", getattr(signal, "SIGABRT", 9))
+    setattr(signal, "SIGKILL", _sigkill_fallback)
 
 try:
     importlib.import_module("nemo.collections.asr")
