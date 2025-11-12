@@ -9,6 +9,13 @@ Param(
 
 $ErrorActionPreference = "Stop"
 
+# --- Compatibility for Windows PowerShell 5.x (no $IsWindows automatic var) ---
+if ($null -eq $IsWindows) {
+    $IsWindows = [System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform(
+        [System.Runtime.InteropServices.OSPlatform]::Windows
+    )
+}
+
 function Invoke-WithArgs {
     param(
         [Parameter(Mandatory = $true)]
@@ -227,9 +234,14 @@ function Resolve-PythonCommand {
     }
 
     $commandPatterns = if ($IsWindows) { @('python*.exe') } else { @('python*') }
+    $windowsAppsDir  = if ($IsWindows) { (Join-Path $env:LOCALAPPDATA 'Microsoft\WindowsApps') } else { $null }
+
     foreach ($pattern in $commandPatterns) {
         $commands = Get-Command -Name $pattern -ErrorAction SilentlyContinue |
-            Where-Object { $_.CommandType -eq 'Application' -and $_.Source }
+            Where-Object {
+                $_.CommandType -eq 'Application' -and $_.Source -and `
+                (-not $windowsAppsDir -or -not $_.Source.StartsWith($windowsAppsDir, [StringComparison]::OrdinalIgnoreCase))
+            }
         foreach ($command in $commands) {
             & $addCandidate @($command.Source)
         }
@@ -271,33 +283,38 @@ function Resolve-PythonCommand {
         throw $help
     }
 
-    $unique = $candidates |
-        Group-Object Executable |
-        ForEach-Object { $_.Group | Sort-Object -Property Version -Descending | Select-Object -First 1 } |
-        Sort-Object -Property @{ Expression = 'Version'; Descending = $true }, @{ Expression = 'Executable'; Descending = $false }
+    $unique = @(
+        $candidates |
+            Group-Object Executable |
+            ForEach-Object { $_.Group | Sort-Object -Property Version -Descending | Select-Object -First 1 } |
+            Sort-Object -Property @{ Expression = 'Version'; Descending = $true }, @{ Expression = 'Executable'; Descending = $false }
+    )
 
     if ($unique.Count -eq 1) {
         return $unique[0]
     }
 
-    Write-Host "Multiple compatible Python interpreters detected:" -ForegroundColor Yellow
-    for ($i = 0; $i -lt $unique.Count; $i++) {
-        $entry = $unique[$i]
-        $index = $i + 1
-        Write-Host ("  [{0}] Python {1} - {2}" -f $index, $entry.Display, $entry.Executable)
-    }
-
-    while ($true) {
-        $selection = Read-Host "Select interpreter [1-$($unique.Count)]"
-        $parsed = 0
-        if ([int]::TryParse($selection, [ref]$parsed)) {
-            if ($parsed -ge 1 -and $parsed -le $unique.Count) {
-                return $unique[$parsed - 1]
-            }
+    if ($unique.Count -gt 1) {
+        Write-Host "Multiple compatible Python interpreters detected:" -ForegroundColor Yellow
+        for ($i = 0; $i -lt $unique.Count; $i++) {
+            $entry = $unique[$i]
+            $index = $i + 1
+            Write-Host ("  [{0}] Python {1} - {2}" -f $index, $entry.Display, $entry.Executable)
         }
 
-        Write-Host "Invalid selection. Please enter a value between 1 and $($unique.Count)." -ForegroundColor Yellow
+        while ($true) {
+            $selection = Read-Host "Select interpreter [1-$($unique.Count)]"
+            $parsed = 0
+            if ([int]::TryParse($selection, [ref]$parsed)) {
+                if ($parsed -ge 1 -and $parsed -le $unique.Count) {
+                    return $unique[$parsed - 1]
+                }
+            }
+            Write-Host "Invalid selection. Please enter a value between 1 and $($unique.Count)." -ForegroundColor Yellow
+        }
     }
+
+    throw "Unable to locate a compatible Python interpreter (3.10–3.12). Install one or pass -PythonPath/-PythonVersion."
 }
 
 $pythonSelection = Resolve-PythonCommand
