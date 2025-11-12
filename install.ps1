@@ -61,6 +61,71 @@ function Invoke-CommandWithScript {
     }
 }
 
+function Test-CudartImport {
+    param([string]$PythonExe)
+
+    $probe = @'
+try:
+    import importlib
+    import cuda.cudart  # legacy import expected by NeMo 2.5.x
+    print("OK")
+except Exception as e:
+    print("FAIL:", type(e).__name__, str(e))
+'@
+    try {
+        $out = Invoke-CommandWithScript -Command @($PythonExe) -ScriptContent $probe
+        $txt = ($out | Out-String).Trim()
+        return $txt -like 'OK*'
+    } catch {
+        return $false
+    }
+}
+
+function Install-Cuda12Runtime {
+    param([string]$PythonExe, [string]$PipExe)
+
+    if (Test-CudartImport -PythonExe $PythonExe) {
+        Write-Host 'cuda.cudart is already importable'
+        return
+    }
+
+    Write-Host 'Installing CUDA 12 runtime (cudart) into the venv'
+    $ok = $true
+    try {
+        Invoke-WithArgs -Command @($PipExe) -Args @(
+            'install',
+            '--extra-index-url','https://pypi.ngc.nvidia.com',
+            'cuda-toolkit[cudart]==12.9.*'
+        )
+    } catch {
+        $ok = $false
+        Write-Warning "cuda-toolkit[cudart]==12.9.* installation failed, falling back to nvidia-cuda-runtime-cu12"
+    }
+
+    if (-not $ok) {
+        try {
+            Invoke-WithArgs -Command @($PipExe) -Args @(
+                'install',
+                '--extra-index-url','https://pypi.ngc.nvidia.com',
+                'nvidia-cuda-runtime-cu12==12.9.*'
+            )
+            $ok = $true
+        } catch {
+            $ok = $false
+        }
+    }
+
+    if ($ok) {
+        if (Test-CudartImport -PythonExe $PythonExe) {
+            Write-Host 'CUDA 12 runtime present: cuda.cudart import OK'
+        } else {
+            Write-Warning 'CUDA 12 runtime was installed but cuda.cudart still does not import. NeMo CUDA graphs may remain disabled.'
+        }
+    } else {
+        Write-Warning 'Failed to install CUDA 12 runtime. NeMo CUDA graphs may remain disabled.'
+    }
+}
+
 $pythonInfoScript = @'
 import json
 import pathlib
@@ -524,8 +589,11 @@ if (-not $onnxGpuInstalled -and $selectedDevice -eq 'gpu') {
     Write-Warning "Vocal separation is falling back to the CPU build of ONNX Runtime. Re-run the installer after fixing your CUDA driver to re-enable GPU separation."
 }
 
-Write-Host 'Installing cuda-python bindings required for NeMo CUDA graphs'
-Invoke-WithArgs -Command @($venvPython) -Args @('-m', 'pip', 'install', 'cuda-python>=12.3')
+Write-Host 'Installing cuda-python==12.9.* for NeMo CUDA Graphs compatibility'
+Invoke-WithArgs -Command @($venvPython) -Args @('-m', 'pip', 'install', 'cuda-python==12.9.*')
+
+# Ensure cudart64_12*.dll is available inside the venv for cuda-python 12.9
+Install-Cuda12Runtime -PythonExe $venvPython -PipExe $venvPip
 
 Invoke-WithArgs -Command @($venvPython) -Args @('-m', 'pip', 'install', 'nemo_toolkit[asr]>=2.5.1,<2.6')
 
