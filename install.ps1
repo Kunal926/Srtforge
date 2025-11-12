@@ -89,7 +89,13 @@ function Get-PythonInfo {
     [System.IO.File]::WriteAllText($tempScript, $pythonInfoScript)
 
     try {
-        $output = Invoke-WithArgs -Command $Command -Args @($tempScript)
+        # Call the candidate quietly (discard stderr) so missing versions don't spam the console
+        $baseArgs = @()
+        if ($Command.Length -gt 1) { $baseArgs = $Command[1..($Command.Length - 1)] }
+        $global:LASTEXITCODE = 0
+        $output = & $Command[0] @baseArgs @($tempScript) 2>$null
+        $exitCode = $LASTEXITCODE
+        if ($exitCode -ne $null -and $exitCode -ne 0) { return $null }
         $json = ($output | Out-String).Trim()
         if (-not $json) {
             return $null
@@ -204,9 +210,12 @@ function Resolve-PythonCommand {
                 $pyList = & py -0p 2>$null
                 foreach ($line in $pyList) {
                     if ($line -match '^\s*-(?<tag>[^\s]+)\s*(?<default>\*)?\s*(?<path>.+)$') {
-                        $tag = $Matches['tag']
+                        $tag  = $Matches['tag']
                         $path = $Matches['path']
-                        & $addCandidate @('py', "-$tag")
+                        # Only add tags we actually support
+                        if ($tag -match '^3\.(10|11|12)$') {
+                            & $addCandidate @('py', "-$tag")
+                        }
                         if ($path) {
                             & $addCandidate @($path.Trim())
                         }
@@ -223,9 +232,6 @@ function Resolve-PythonCommand {
 
         & $addCandidate @('py')
     }
-
-    & $addCandidate @('python3')
-    & $addCandidate @('python')
 
     foreach ($version in @('3.12', '3.11', '3.10')) {
         $trimmed = $version.Replace('.', '')
