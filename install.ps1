@@ -314,7 +314,7 @@ function Resolve-PythonCommand {
         }
     }
 
-    throw "Unable to locate a compatible Python interpreter (3.10–3.12). Install one or pass -PythonPath/-PythonVersion."
+    throw "Unable to locate a compatible Python interpreter (3.10-3.12). Install one or pass -PythonPath/-PythonVersion."
 }
 
 $pythonSelection = Resolve-PythonCommand
