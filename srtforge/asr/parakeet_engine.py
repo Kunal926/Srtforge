@@ -132,7 +132,7 @@ def load_parakeet(
 
 
 def _build_segments_from_hypothesis(hypothesis) -> List[Dict[str, object]]:
-    """Recreate the segment/word mapping used by the alt-8 CLI script."""
+    """Recreate the segment/word mapping used by the srtforge CLI."""
 
     timestamps = getattr(hypothesis, "timestamp", None) or {}
     segment_ts = timestamps.get("segment") or []
@@ -193,7 +193,7 @@ def _build_segments_from_hypothesis(hypothesis) -> List[Dict[str, object]]:
     return []
 
 
-def parakeet_to_srt_with_alt8(
+def parakeet_to_srt(
     audio_path: Path,
     srt_out: Path,
     fps: float,
@@ -214,7 +214,7 @@ def parakeet_to_srt_with_alt8(
     max_block_duration_s: float = 7.0,
     max_merge_gap_ms: int = 360,
 ) -> List[Dict[str, object]]:
-    """Run Parakeet ASR and post-process using the original alt-8 pipeline."""
+    """Run Parakeet ASR and post-process using the srtforge pipeline."""
 
     step = run_logger.step if run_logger else None
 
@@ -338,5 +338,5 @@ def parakeet_to_srt_with_alt8(
 
 __all__ = [
     "load_parakeet",
-    "parakeet_to_srt_with_alt8",
+    "parakeet_to_srt",
 ]

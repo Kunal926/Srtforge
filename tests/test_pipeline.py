@@ -46,7 +46,7 @@ class DummyTools:
         return destination
 
 
-def test_pipeline_executes_alt8_steps(tmp_path, monkeypatch):
+def test_pipeline_executes_parakeet_steps(tmp_path, monkeypatch):
     media = tmp_path / "episode.mkv"
     media.write_bytes(b"video")
 
@@ -72,7 +72,7 @@ def test_pipeline_executes_alt8_steps(tmp_path, monkeypatch):
         srt_path.write_text("1\n00:00:00,000 --> 00:00:01,000\nHello\n\n")
         return [{"start": 0.0, "end": 1.0, "text": "Hello"}]
 
-    monkeypatch.setattr("srtforge.pipeline.parakeet_to_srt_with_alt8", fake_parakeet)
+    monkeypatch.setattr("srtforge.pipeline.parakeet_to_srt", fake_parakeet)
 
     output_path = media.with_suffix(".srt")
     config = PipelineConfig(
