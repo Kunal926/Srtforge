@@ -419,7 +419,15 @@ $venvPip = Join-Path $venvDir "Scripts/pip.exe"
 Write-Host 'Installing PyInstaller so Windows bundles can be produced immediately'
 & $venvPip install pyinstaller
 
-$global:ffmpegDownloadUrl = 'https://www.gyan.dev/ffmpeg/builds/packages/ffmpeg-6.1.1-essentials_build.zip'
+$global:ffmpegDownloadUrls = @(
+    # GitHub-hosted nightly build maintained by BtbN. Stable URL that always
+    # serves the most recent GPL-configured Win64 build with ffmpeg/ffprobe
+    # binaries in the ./bin directory.
+    'https://github.com/BtbN/FFmpeg-Builds/releases/latest/download/ffmpeg-master-latest-win64-gpl.zip',
+    # Legacy mirror (gyan.dev). This site occasionally responds with 404s, so
+    # keep it as a fallback instead of the primary source.
+    'https://www.gyan.dev/ffmpeg/builds/packages/ffmpeg-6.1.1-essentials_build.zip'
+)
 
 function Ensure-Directory {
     param([string]$Path)
@@ -456,7 +464,21 @@ function Ensure-FfmpegBinaries {
     Move-Item -Path $tempBase -Destination $tempZip -Force
 
     Write-Host "Downloading FFmpeg build to support the GUI bundler"
-    Invoke-WebRequest -Uri $global:ffmpegDownloadUrl -OutFile $tempZip -UseBasicParsing
+    $downloaded = $false
+    foreach ($url in $global:ffmpegDownloadUrls) {
+        Write-Host "Attempting download from $url"
+        try {
+            Invoke-WebRequest -Uri $url -OutFile $tempZip -UseBasicParsing
+            $downloaded = $true
+            break
+        } catch {
+            Write-Warning "FFmpeg download failed from $url — $_"
+        }
+    }
+
+    if (-not $downloaded) {
+        throw 'Unable to download FFmpeg binaries from any configured mirror.'
+    }
 
     $tempExtract = Join-Path ([System.IO.Path]::GetTempPath()) ([System.IO.Path]::GetRandomFileName())
     Ensure-Directory $tempExtract

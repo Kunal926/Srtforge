@@ -183,9 +183,9 @@ environment created by `install.ps1`:
 
 1. Run `install.ps1` (or `install.sh` on WSL) at least once. The installer now
    adds PyInstaller to the managed virtual environment, downloads a known-good
-   FFmpeg build into `packaging/windows/ffmpeg/bin`, and registers
-   `SRTFORGE_FFMPEG_DIR` so the spec automatically bundles `ffmpeg.exe` and
-   `ffprobe.exe`.
+   FFmpeg build from the BtbN GitHub mirror (with a legacy gyan.dev fallback)
+   into `packaging/windows/ffmpeg/bin`, and registers `SRTFORGE_FFMPEG_DIR` so
+   the spec automatically bundles `ffmpeg.exe` and `ffprobe.exe`.
 2. Activate the environment before building:
    ```powershell
    .\.venv\Scripts\Activate.ps1
