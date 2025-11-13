@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "srtforge"
+version = "0.3.0"
+description = "Offline SRT generator for English-dubbed anime: Sonarr-triggered Parakeet-TDT-0.6B-V2 ASR with FV4 separation."
+requires-python = ">=3.10"
+authors = [{name="srtforge"}]
+readme = "README.md"
+license = {text = "MIT"}
+
+[project.scripts]
+srtforge = "srtforge.cli:app"
+srtforge-sonarr = "srtforge.sonarr_hook:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["srtforge*"]

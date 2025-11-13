@@ -1,0 +1,17 @@
+# Runtime libs (install Torch + NeMo via installer after Torch)
+# Typer's "all" extra was removed in v0.20.0; install the base package instead.
+typer>=0.12.3
+rich>=13.7.1
+tqdm>=4.66.4
+pyyaml>=6.0.1
+requests>=2.32.3
+ffmpeg-python>=0.2.0
+# audio-separator>=0.39.0 requires numpy>=2.0.0. Bump the lower bound to
+# ensure compatibility and prevent pip resolver conflicts.
+numpy>=2.0.0
+pyarrow>=20.0.0,<21
+matplotlib>=3.8.0
+soundfile>=0.12.1
+watchdog>=4.0.0
+audio-separator>=0.39.0
+cuda-python>=12.3
