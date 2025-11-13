@@ -219,6 +219,7 @@ class TranscriptionWorker(QtCore.QThread):
     def _embed_subtitles(self, media: Path, subtitles: Path) -> Path:
         output = media.with_name(f"{media.stem}_subbed{media.suffix}")
         codec = "mov_text" if media.suffix.lower() in {".mp4", ".m4v", ".mov"} else "srt"
+        subtitle_index = self._count_subtitle_streams(media)
         command = [
             self.options.ffmpeg_bin or "ffmpeg",
             "-y",
@@ -234,14 +235,38 @@ class TranscriptionWorker(QtCore.QThread):
             "0",
             "-map",
             "1",
-            "-disposition:s:0",
+            f"-disposition:s:{subtitle_index}",
             "default",
-            "-metadata:s:s:0",
+            f"-metadata:s:s:{subtitle_index}",
             "language=eng",
             str(output),
         ]
         self._run_command(command, "Embed subtitles")
         return output
+
+    def _count_subtitle_streams(self, media: Path) -> int:
+        """Return how many subtitle streams already exist in the media file."""
+
+        ffprobe = self.options.ffprobe_bin or "ffprobe"
+        command = [
+            ffprobe,
+            "-v",
+            "error",
+            "-select_streams",
+            "s",
+            "-show_entries",
+            "stream=index",
+            "-of",
+            "csv=p=0",
+            str(media),
+        ]
+        return_code, stdout, stderr = self._run_command(command, "Probe subtitle streams", check=False)
+        if return_code != 0:
+            if self._stop_event.is_set():
+                raise StopRequested
+            message = stderr.strip() or stdout.strip() or "Unable to inspect subtitle streams"
+            raise RuntimeError(message)
+        return sum(1 for line in stdout.splitlines() if line.strip())
 
     def _burn_subtitles(self, media: Path, subtitles: Path) -> Path:
         output = media.with_name(f"{media.stem}_burned{media.suffix}")
