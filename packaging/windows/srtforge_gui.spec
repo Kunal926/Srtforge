@@ -29,8 +29,8 @@ if ffmpeg_dir:
     ffmpeg_bin = ffmpeg_path / "ffmpeg.exe"
     ffprobe_bin = ffmpeg_path / "ffprobe.exe"
     if ffmpeg_bin.exists() and ffprobe_bin.exists():
-        datas.append((str(ffmpeg_bin), "ffmpeg/ffmpeg.exe"))
-        datas.append((str(ffprobe_bin), "ffmpeg/ffprobe.exe"))
+        datas.append((str(ffmpeg_bin), "ffmpeg"))
+        datas.append((str(ffprobe_bin), "ffmpeg"))
 
 hiddenimports = ["PySide6.QtSvg", "PySide6.QtNetwork"]
 
