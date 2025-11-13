@@ -97,7 +97,7 @@ ensuring the processing pipeline performs optimally on modern hardware.
 4. **Preprocessing filters** – the isolated stem is high/low-pass filtered and
    resampled with SoXr to 16 kHz mono float to produce the exact waveform that
    Parakeet expects.
-5. **Parakeet ASR** – `parakeet_to_srt_with_alt8` restores the
+5. **Parakeet ASR** – `parakeet_to_srt` restores the
    Parakeet-TDT-0.6B-V2 model from the local `.nemo` (or downloads it if
    missing), requests timestamps, and reconstructs the segment/word structure
    expected by the subtitle post-processing stack.

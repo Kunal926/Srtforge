@@ -7,7 +7,7 @@ import pytest
 from srtforge.asr import parakeet_engine
 
 
-def test_parakeet_alt8_postprocess(tmp_path, monkeypatch):
+def test_parakeet_postprocess(tmp_path, monkeypatch):
     audio_path = tmp_path / "audio.wav"
     audio_path.write_bytes(b"\x00\x00")
     srt_path = tmp_path / "out.srt"
@@ -56,7 +56,7 @@ def test_parakeet_alt8_postprocess(tmp_path, monkeypatch):
 
     monkeypatch.setattr(parakeet_engine, "write_srt", fake_write_srt)
 
-    result = parakeet_engine.parakeet_to_srt_with_alt8(
+    result = parakeet_engine.parakeet_to_srt(
         audio_path,
         srt_path,
         fps=24.0,
@@ -80,7 +80,7 @@ def test_parakeet_alt8_postprocess(tmp_path, monkeypatch):
     assert result == written["segments"]
 
 
-def test_parakeet_alt8_postprocess_return_timestamps(tmp_path, monkeypatch):
+def test_parakeet_postprocess_return_timestamps(tmp_path, monkeypatch):
     audio_path = tmp_path / "audio.wav"
     audio_path.write_bytes(b"\x00\x00")
     srt_path = tmp_path / "out.srt"
@@ -131,7 +131,7 @@ def test_parakeet_alt8_postprocess_return_timestamps(tmp_path, monkeypatch):
     monkeypatch.setattr(parakeet_engine, "postprocess_segments", lambda segments, **kwargs: segments)
     monkeypatch.setattr(parakeet_engine, "write_srt", lambda segments, path: Path(path).write_text("dummy\n"))
 
-    parakeet_engine.parakeet_to_srt_with_alt8(
+    parakeet_engine.parakeet_to_srt(
         audio_path,
         srt_path,
         fps=24.0,

@@ -11,7 +11,7 @@ from typing import Iterable, Optional
 
 from rich.table import Table
 
-from .asr.parakeet_engine import parakeet_to_srt_with_alt8
+from .asr.parakeet_engine import parakeet_to_srt
 from .config import DEFAULT_OUTPUT_SUFFIX, FV4_CONFIG, FV4_MODEL, MODELS_DIR, PARAKEET_MODEL
 from .ffmpeg import DEFAULT_TOOLS, AudioStream, FFmpegTooling
 from .logging import RunLogger, get_console, status
@@ -160,13 +160,13 @@ class Pipeline:
                             filter_chain=filter_chain,
                         )
 
-                    with status("Running Parakeet ASR with alt-8 post-processing"), run_logger.step(
+                    with status("Running Parakeet ASR and subtitle post-processing"), run_logger.step(
                         "ASR pipeline"
                     ):
                         fps = probe_video_fps(media_path)
                         nemo_local = self._resolve_parakeet_checkpoint()
                         output_path.parent.mkdir(parents=True, exist_ok=True)
-                        parakeet_to_srt_with_alt8(
+                        parakeet_to_srt(
                             preprocessed,
                             output_path,
                             fps=fps,
