@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib.resources as resources
 import os
 import subprocess
 import sys
@@ -14,6 +15,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 from .config import DEFAULT_OUTPUT_SUFFIX
 from .settings import settings
+from .win11_backdrop import apply_win11_look, get_windows_accent_qcolor
 
 
 @dataclass(slots=True)
@@ -78,6 +80,16 @@ class DropArea(QtWidgets.QFrame):
         if paths:
             self.filesDropped.emit(paths)
         event.acceptProposedAction()
+
+
+def add_shadow(widget: QtWidgets.QWidget) -> None:
+    """Add a soft drop shadow to widgets to emulate Windows 11 cards."""
+
+    effect = QtWidgets.QGraphicsDropShadowEffect(widget)
+    effect.setBlurRadius(30)
+    effect.setOffset(0, 12)
+    effect.setColor(QtGui.QColor(15, 23, 42, 50))
+    widget.setGraphicsEffect(effect)
 
 
 def _normalize_paths(paths: Iterable[str]) -> List[Path]:
@@ -351,6 +363,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._build_ui()
         self._apply_styles()
         self._update_ffmpeg_status()
+        apply_win11_look(self)
 
     # ---- UI construction ---------------------------------------------------------
     def _build_ui(self) -> None:
@@ -365,6 +378,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.drop_area = DropArea()
         self.drop_area.filesDropped.connect(self._handle_dropped_files)
         layout.addWidget(self.drop_area)
+        add_shadow(self.drop_area)
 
         queue_group = QtWidgets.QGroupBox("Transcription queue")
         queue_layout = QtWidgets.QHBoxLayout(queue_group)
@@ -384,6 +398,7 @@ class MainWindow(QtWidgets.QMainWindow):
         queue_buttons.addStretch()
         queue_layout.addLayout(queue_buttons)
         layout.addWidget(queue_group)
+        add_shadow(queue_group)
 
         options_group = QtWidgets.QGroupBox("Processing options")
         options_layout = QtWidgets.QGridLayout(options_group)
@@ -400,6 +415,7 @@ class MainWindow(QtWidgets.QMainWindow):
         options_layout.addWidget(self.burn_checkbox, 2, 0, 1, 2)
         options_layout.addWidget(self.cleanup_checkbox, 3, 0, 1, 2)
         layout.addWidget(options_group)
+        add_shadow(options_group)
 
         progress_row = QtWidgets.QHBoxLayout()
         self.progress_bar = QtWidgets.QProgressBar()
@@ -434,57 +450,29 @@ class MainWindow(QtWidgets.QMainWindow):
         self.setCentralWidget(central)
 
     def _apply_styles(self) -> None:
+        accent = get_windows_accent_qcolor() or QtGui.QColor("#2563eb")
         palette = self.palette()
-        palette.setColor(QtGui.QPalette.ColorRole.Window, QtGui.QColor("#f3f3f3"))
+        palette.setColor(QtGui.QPalette.ColorRole.Window, QtGui.QColor("#f5f6f8"))
         palette.setColor(QtGui.QPalette.ColorRole.Base, QtGui.QColor("#ffffff"))
-        palette.setColor(QtGui.QPalette.ColorRole.Highlight, QtGui.QColor("#2563eb"))
-        palette.setColor(QtGui.QPalette.ColorRole.Button, QtGui.QColor("#2563eb"))
+        palette.setColor(QtGui.QPalette.ColorRole.Highlight, accent)
+        palette.setColor(QtGui.QPalette.ColorRole.Button, accent)
         palette.setColor(QtGui.QPalette.ColorRole.ButtonText, QtGui.QColor("#ffffff"))
         self.setPalette(palette)
-        self.setStyleSheet(
-            """
-            #HeaderLabel {
-                font-size: 20px;
-                font-weight: 600;
-            }
-            #DropArea {
-                border: 2px dashed #94a3b8;
-                border-radius: 16px;
-                background-color: #ffffff;
-            }
-            QPushButton {
-                border-radius: 8px;
-                padding: 8px 18px;
-                font-weight: 600;
-            }
-            QPushButton:disabled {
-                background-color: #cbd5f5;
-                color: #7c818c;
-            }
-            QGroupBox {
-                border: 1px solid #e2e8f0;
-                border-radius: 12px;
-                margin-top: 12px;
-                padding: 12px;
-                font-weight: 600;
-            }
-            QGroupBox::title {
-                subcontrol-origin: margin;
-                left: 20px;
-                padding: 0 4px;
-            }
-            QListWidget {
-                border: 1px solid #e2e8f0;
-                border-radius: 8px;
-            }
-            QPlainTextEdit {
-                border: 1px solid #e2e8f0;
-                border-radius: 8px;
-                background-color: #0f172a;
-                color: #e2e8f0;
-                font-family: Consolas, 'Cascadia Code', monospace;
-            }
-        """
+
+        stylesheet = self._load_win11_stylesheet(accent)
+        if stylesheet:
+            self.setStyleSheet(stylesheet)
+
+    def _load_win11_stylesheet(self, accent: QtGui.QColor) -> Optional[str]:
+        try:
+            data = resources.files("srtforge.assets.styles").joinpath("win11.qss").read_text(encoding="utf-8")
+        except (FileNotFoundError, ModuleNotFoundError):  # pragma: no cover - packaging guard
+            return None
+        lighter = QtGui.QColor(accent)
+        lighter = lighter.lighter(115)
+        return (
+            data.replace("{ACCENT_COLOR}", accent.name())
+            .replace("{ACCENT_COLOR_LIGHT}", lighter.name())
         )
 
     # ---- runtime helpers ---------------------------------------------------------

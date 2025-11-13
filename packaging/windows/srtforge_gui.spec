@@ -20,6 +20,10 @@ config_yaml = project_root / "srtforge" / "config.yaml"
 if config_yaml.exists():
     datas.append((str(config_yaml), "srtforge"))
 
+win11_qss = project_root / "srtforge" / "assets" / "styles" / "win11.qss"
+if win11_qss.exists():
+    datas.append((str(win11_qss), "srtforge/assets/styles"))
+
 if ffmpeg_dir:
     ffmpeg_path = Path(ffmpeg_dir)
     ffmpeg_bin = ffmpeg_path / "ffmpeg.exe"
