@@ -693,18 +693,10 @@ Invoke-WithArgs -Command @($venvPython) -Args @('-m', 'pip', 'install', 'cuda-py
 # Ensure cudart64_12*.dll is available inside the venv for cuda-python 12.9
 Install-Cuda12Runtime -PythonExe $venvPython -PipExe $venvPip
 
-$nemoRequirement = 'nemo_toolkit[asr]>=2.5.1,<2.6'
-$tempRequirementFile = (New-TemporaryFile).FullName
-try {
-    Set-Content -Path $tempRequirementFile -Value $nemoRequirement
-    Invoke-WithArgs -Command @($venvPython) -Args @(
-        '-m', 'pip', 'install', '-r', $tempRequirementFile
-    )
-} finally {
-    if (Test-Path $tempRequirementFile) {
-        Remove-Item $tempRequirementFile -Force -ErrorAction SilentlyContinue
-    }
-}
+$nemoRequirement = "nemo_toolkit[asr]>=2.5.1,`<2.6"
+Invoke-WithArgs -Command @($venvPython) -Args @(
+    '-m','pip','install',$nemoRequirement
+)
 
 $verifyNeMoScript = @'
 import importlib
