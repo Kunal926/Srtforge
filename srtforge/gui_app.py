@@ -155,7 +155,7 @@ class TranscriptionWorker(QtCore.QThread):
                     except StopRequested:
                         raise
                     except Exception as exc:  # pragma: no cover - defensive logging
-                        self.fileFailed.emit(str(media_path), f"Embed failed: {exc}")
+                        raise RuntimeError(f"Embed failed: {exc}") from exc
                 if self.options.burn_subtitles and self.options.ffmpeg_bin:
                     if self._stop_event.is_set():
                         raise StopRequested
@@ -164,7 +164,7 @@ class TranscriptionWorker(QtCore.QThread):
                     except StopRequested:
                         raise
                     except Exception as exc:  # pragma: no cover - defensive logging
-                        self.fileFailed.emit(str(media_path), f"Burn failed: {exc}")
+                        raise RuntimeError(f"Burn failed: {exc}") from exc
                 summary_parts = [str(srt_path)]
                 if embed_output:
                     summary_parts.append(f"embedded → {embed_output}")
