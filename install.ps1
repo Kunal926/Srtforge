@@ -698,29 +698,19 @@ Invoke-WithArgs -Command @($venvPython) -Args @(
     '-m','pip','install',$nemoRequirement
 )
 
-$verifyNeMoScript = @'
-import importlib
-import signal
-import sys
-
-if not hasattr(signal, "SIGKILL"):
-    _sigkill_fallback = getattr(signal, "SIGTERM", getattr(signal, "SIGABRT", 9))
-    setattr(signal, "SIGKILL", _sigkill_fallback)
-
-try:
-    importlib.import_module("nemo.collections.asr")
-except Exception as exc:
-    print(
-        "ERROR: NVIDIA NeMo ASR components failed to import after installation. "
-        "This usually means one of its dependencies (such as numpy, pyarrow or matplotlib) "
-        "was not installed correctly.",
-        file=sys.stderr,
-    )
-    print(f"       Original import error: {exc}", file=sys.stderr)
-    sys.exit(1)
-else:
-    print("Verified NVIDIA NeMo ASR modules are importable.")
-'@
+$verifyNeMoScript = @(
+    'import importlib, signal, sys',
+    'if not hasattr(signal, "SIGKILL"):',
+    '    setattr(signal, "SIGKILL", getattr(signal, "SIGTERM", getattr(signal, "SIGABRT", 9)))',
+    'try:',
+    '    importlib.import_module("nemo.collections.asr")',
+    'except Exception as exc:',
+    '    print("ERROR: NVIDIA NeMo ASR components failed to import after installation. This usually means one of its dependencies (such as numpy, pyarrow or matplotlib) was not installed correctly.", file=sys.stderr)',
+    '    print(f"       Original import error: {exc}", file=sys.stderr)',
+    '    sys.exit(1)',
+    'else:',
+    '    print("Verified NVIDIA NeMo ASR modules are importable.")'
+) -join "`n"
 
 Invoke-CommandWithScript -Command @($venvPython) -ScriptContent $verifyNeMoScript
 
