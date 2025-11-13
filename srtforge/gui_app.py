@@ -194,7 +194,11 @@ class TranscriptionWorker(QtCore.QThread):
 
     # ---- helpers -----------------------------------------------------------------
     def _run_pipeline_subprocess(self, media: Path) -> Path:
-        command = [sys.executable, "-m", "srtforge.cli", "run", str(media)]
+        cli_binary = locate_cli_executable()
+        if cli_binary:
+            command = [str(cli_binary), "run", str(media)]
+        else:
+            command = [sys.executable, "-m", "srtforge.cli", "run", str(media)]
         if not self.options.prefer_gpu:
             command.append("--cpu")
         env = os.environ.copy()
@@ -353,6 +357,24 @@ def locate_ffmpeg_binaries() -> Optional[FFmpegBinaries]:
     ffprobe_which = shutil_which("ffprobe")
     if ffmpeg_which and ffprobe_which:
         return FFmpegBinaries(Path(ffmpeg_which), Path(ffprobe_which))
+    return None
+
+
+def locate_cli_executable() -> Optional[Path]:
+    """Return a packaged CLI binary if it exists alongside the GUI."""
+
+    env_cli = os.environ.get("SRTFORGE_CLI_BIN")
+    if env_cli:
+        candidate = Path(env_cli).expanduser()
+        if candidate.exists():
+            return candidate
+
+    suffix = ".exe" if os.name == "nt" else ""
+    cli_name = f"SrtforgeCLI{suffix}"
+    executable = Path(sys.executable).resolve()
+    cli_candidate = executable.with_name(cli_name)
+    if cli_candidate.exists():
+        return cli_candidate
     return None
 
 

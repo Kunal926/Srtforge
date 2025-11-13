@@ -201,7 +201,9 @@ environment created by `install.ps1`:
    ```
 5. Ship the contents of `dist/SrtforgeGUI/` to end users. Keep the `models/`
    directory alongside `SrtforgeGUI.exe`; the binary looks up Parakeet/Nemo
-   assets there at runtime.
+   assets there at runtime. The build now also outputs `SrtforgeCLI.exe` in the
+   same folder—the GUI shells out to this console companion to execute the
+   transcription pipeline, so be sure to distribute both executables together.
 
 The resulting application boots straight into the GUI and requires no system-wide
 Python installation. FFmpeg stays inside the bundle, fulfilling the requirement
