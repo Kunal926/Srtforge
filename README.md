@@ -159,9 +159,9 @@ desktop experience:
   the video via FFmpeg without re-encoding) and **Burn subtitles** (hard-coded
   overlay produced by FFmpeg’s `subtitles` filter).
 * The progress bar, log console, and toast-style messages keep you informed
-  about each file’s status. Stopping the queue requests cancellation after the
-  current item finishes, and an optional toggle clears CUDA caches via
-  `torch.cuda.empty_cache()` once the worker shuts down.
+  about each file’s status. **Stop** halts the current job immediately by
+  terminating the pipeline/FFmpeg subprocesses, and an optional toggle clears
+  CUDA caches via `torch.cuda.empty_cache()` once the worker shuts down.
 
 Run the GUI once the virtual environment is activated:
 

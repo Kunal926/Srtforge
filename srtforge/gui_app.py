@@ -12,8 +12,8 @@ from typing import Iterable, List, Optional
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from .ffmpeg import FFmpegTooling
-from .pipeline import PipelineConfig, run_pipeline
+from .config import DEFAULT_OUTPUT_SUFFIX
+from .settings import settings
 
 
 @dataclass(slots=True)
@@ -92,6 +92,23 @@ def _normalize_paths(paths: Iterable[str]) -> List[Path]:
     return unique
 
 
+def _expected_srt_path(media: Path) -> Path:
+    output_dir = settings.paths.output_dir
+    if output_dir:
+        return output_dir / f"{media.stem}{DEFAULT_OUTPUT_SUFFIX}"
+    return media.with_suffix(DEFAULT_OUTPUT_SUFFIX)
+
+
+def _ffmpeg_directory_from_options(options: WorkerOptions) -> Optional[Path]:
+    if options.ffmpeg_bin:
+        return Path(options.ffmpeg_bin).resolve().parent
+    return None
+
+
+class StopRequested(Exception):
+    """Raised when the user cancels the current operation."""
+
+
 class TranscriptionWorker(QtCore.QThread):
     """Background worker that processes queued media sequentially."""
 
@@ -118,10 +135,6 @@ class TranscriptionWorker(QtCore.QThread):
             process.terminate()
 
     def run(self) -> None:  # noqa: D401 - Qt override
-        if self.options.ffmpeg_bin and self.options.ffprobe_bin:
-            tooling = FFmpegTooling(self.options.ffmpeg_bin, self.options.ffprobe_bin)
-        else:
-            tooling = FFmpegTooling()
         total = len(self.files)
         self.progress.emit(0, total)
         for index, media_path in enumerate(self.files, start=1):
@@ -129,39 +142,38 @@ class TranscriptionWorker(QtCore.QThread):
                 break
             self.fileStarted.emit(str(media_path))
             try:
-                config = PipelineConfig(
-                    media_path=media_path,
-                    tools=tooling,
-                    prefer_gpu=self.options.prefer_gpu,
-                    separation_prefer_gpu=self.options.prefer_gpu,
-                )
-                result = run_pipeline(config)
-                if result.skipped:
-                    reason = result.reason or "Pipeline skipped"
-                    self.fileFailed.emit(str(media_path), reason)
-                else:
-                    srt_path = result.output_path
-                    if not srt_path:
-                        self.fileFailed.emit(str(media_path), "SRT output missing")
-                    else:
-                        embed_output = None
-                        burn_output = None
-                        if self.options.embed_subtitles and self.options.ffmpeg_bin:
-                            try:
-                                embed_output = self._embed_subtitles(media_path, srt_path)
-                            except Exception as exc:  # pragma: no cover - defensive logging
-                                self.fileFailed.emit(str(media_path), f"Embed failed: {exc}")
-                        if self.options.burn_subtitles and self.options.ffmpeg_bin:
-                            try:
-                                burn_output = self._burn_subtitles(media_path, srt_path)
-                            except Exception as exc:  # pragma: no cover - defensive logging
-                                self.fileFailed.emit(str(media_path), f"Burn failed: {exc}")
-                        summary_parts = [str(srt_path)]
-                        if embed_output:
-                            summary_parts.append(f"embedded → {embed_output}")
-                        if burn_output:
-                            summary_parts.append(f"burned → {burn_output}")
-                        self.fileCompleted.emit(str(media_path), "; ".join(summary_parts))
+                srt_path = self._run_pipeline_subprocess(media_path)
+                if self._stop_event.is_set():
+                    raise StopRequested
+                embed_output = None
+                burn_output = None
+                if self.options.embed_subtitles and self.options.ffmpeg_bin:
+                    if self._stop_event.is_set():
+                        raise StopRequested
+                    try:
+                        embed_output = self._embed_subtitles(media_path, srt_path)
+                    except StopRequested:
+                        raise
+                    except Exception as exc:  # pragma: no cover - defensive logging
+                        self.fileFailed.emit(str(media_path), f"Embed failed: {exc}")
+                if self.options.burn_subtitles and self.options.ffmpeg_bin:
+                    if self._stop_event.is_set():
+                        raise StopRequested
+                    try:
+                        burn_output = self._burn_subtitles(media_path, srt_path)
+                    except StopRequested:
+                        raise
+                    except Exception as exc:  # pragma: no cover - defensive logging
+                        self.fileFailed.emit(str(media_path), f"Burn failed: {exc}")
+                summary_parts = [str(srt_path)]
+                if embed_output:
+                    summary_parts.append(f"embedded → {embed_output}")
+                if burn_output:
+                    summary_parts.append(f"burned → {burn_output}")
+                self.fileCompleted.emit(str(media_path), "; ".join(summary_parts))
+            except StopRequested:
+                self.fileFailed.emit(str(media_path), "Cancelled by user")
+                break
             except Exception as exc:  # pragma: no cover - defensive safeguard
                 self.fileFailed.emit(str(media_path), str(exc))
             self.progress.emit(index, total)
@@ -169,6 +181,29 @@ class TranscriptionWorker(QtCore.QThread):
         self.queueFinished.emit(stopped)
 
     # ---- helpers -----------------------------------------------------------------
+    def _run_pipeline_subprocess(self, media: Path) -> Path:
+        command = [sys.executable, "-m", "srtforge.cli", "run", str(media)]
+        if not self.options.prefer_gpu:
+            command.append("--cpu")
+        env = os.environ.copy()
+        ffmpeg_dir = _ffmpeg_directory_from_options(self.options)
+        if ffmpeg_dir:
+            env_path = env.get("PATH", "")
+            env["PATH"] = os.pathsep.join(str(part) for part in (ffmpeg_dir, env_path) if part)
+        return_code, stdout, stderr = self._run_command(command, "Transcription", env=env, check=False)
+        if return_code == 0:
+            output_path = _expected_srt_path(media)
+            if output_path.exists():
+                return output_path
+            raise RuntimeError("SRT output missing")
+        if self._stop_event.is_set():
+            raise StopRequested
+        if return_code == 2:
+            reason = (stderr or stdout or "Pipeline skipped").strip()
+            raise RuntimeError(reason or "Pipeline skipped")
+        message = (stderr or stdout or f"Pipeline exited with code {return_code}").strip()
+        raise RuntimeError(message)
+
     def _embed_subtitles(self, media: Path, subtitles: Path) -> Path:
         output = media.with_name(f"{media.stem}_subbed{media.suffix}")
         codec = "mov_text" if media.suffix.lower() in {".mp4", ".m4v", ".mov"} else "srt"
@@ -198,14 +233,14 @@ class TranscriptionWorker(QtCore.QThread):
 
     def _burn_subtitles(self, media: Path, subtitles: Path) -> Path:
         output = media.with_name(f"{media.stem}_burned{media.suffix}")
-        subtitles_arg = subtitles.as_posix()
+        subtitles_arg = subtitles.as_posix().replace(":", r"\:")
         command = [
             self.options.ffmpeg_bin or "ffmpeg",
             "-y",
             "-i",
             str(media),
             "-vf",
-            f"subtitles={subtitles_arg}:force_style='Fontsize=24'",
+            f"subtitles='{subtitles_arg}':force_style='Fontsize=24'",
             "-c:a",
             "copy",
             str(output),
@@ -213,15 +248,39 @@ class TranscriptionWorker(QtCore.QThread):
         self._run_command(command, "Burn subtitles")
         return output
 
-    def _run_command(self, command: List[str], description: str) -> None:
+    def _run_command(
+        self,
+        command: List[str],
+        description: str,
+        *,
+        env: Optional[dict[str, str]] = None,
+        check: bool = True,
+    ) -> tuple[int, str, str]:
         self.logMessage.emit(f"{description}: {' '.join(command)}")
-        process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        process = subprocess.Popen(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            env=env,
+        )
         self._active_process = process
-        stdout, stderr = process.communicate()
-        self._active_process = None
-        if process.returncode != 0:
+        stdout = ""
+        stderr = ""
+        try:
+            stdout, stderr = process.communicate()
+        finally:
+            self._active_process = None
+        for stream in (stdout, stderr):
+            for line in (stream or "").splitlines():
+                if line.strip():
+                    self.logMessage.emit(line)
+        if check and process.returncode != 0:
+            if self._stop_event.is_set():
+                raise StopRequested
             message = stderr.strip() or stdout.strip() or f"{description} failed"
             raise RuntimeError(message)
+        return process.returncode or 0, stdout or "", stderr or ""
 
 
 def locate_ffmpeg_binaries() -> Optional[FFmpegBinaries]:
@@ -505,7 +564,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def _stop_processing(self) -> None:
         if not self._worker:
             return
-        self._append_log("Stopping after current task…")
+        self._append_log("Stopping current task…")
         self._worker.request_stop()
 
     def _set_running_state(self, running: bool) -> None:
