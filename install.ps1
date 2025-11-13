@@ -55,7 +55,8 @@ function Invoke-CommandWithScript {
 
     try {
         Invoke-WithArgs -Command $Command -Args @($tempScript)
-    } finally {
+    }
+    finally {
         Remove-Item -Path $tempScript -ErrorAction SilentlyContinue
         Remove-Item -Path $tempBase -ErrorAction SilentlyContinue
     }
@@ -76,7 +77,8 @@ except Exception as e:
         $out = Invoke-CommandWithScript -Command @($PythonExe) -ScriptContent $probe
         $txt = ($out | Out-String).Trim()
         return $txt -like 'OK*'
-    } catch {
+    }
+    catch {
         return $false
     }
 }
@@ -97,7 +99,8 @@ function Install-Cuda12Runtime {
             '--extra-index-url','https://pypi.ngc.nvidia.com',
             'cuda-toolkit[cudart]==12.9.*'
         )
-    } catch {
+    }
+    catch {
         $ok = $false
         Write-Warning "cuda-toolkit[cudart]==12.9.* installation failed, falling back to nvidia-cuda-runtime-cu12"
     }
@@ -110,7 +113,8 @@ function Install-Cuda12Runtime {
                 'nvidia-cuda-runtime-cu12==12.9.*'
             )
             $ok = $true
-        } catch {
+        }
+        catch {
             $ok = $false
         }
     }
@@ -177,9 +181,11 @@ function Get-PythonInfo {
             Executable  = $data.executable
             IsCompatible = $isCompatible
         }
-    } catch {
+    }
+    catch {
         return $null
-    } finally {
+    }
+    finally {
         Remove-Item -Path $tempScript -ErrorAction SilentlyContinue
         Remove-Item -Path $tempBase -ErrorAction SilentlyContinue
     }
@@ -286,7 +292,8 @@ function Resolve-PythonCommand {
                         }
                     }
                 }
-            } catch {
+            }
+            catch {
                 # Ignore py launcher enumeration failures and fall back to manual guesses.
             }
         }
@@ -453,7 +460,8 @@ function Ensure-FfmpegBinaries {
         $env:SRTFORGE_FFMPEG_DIR = $ffmpegBinDir
         try {
             [Environment]::SetEnvironmentVariable('SRTFORGE_FFMPEG_DIR', $ffmpegBinDir, 'User')
-        } catch {
+        }
+        catch {
             Write-Warning 'Unable to persist SRTFORGE_FFMPEG_DIR user environment variable.'
         }
         return
@@ -471,7 +479,8 @@ function Ensure-FfmpegBinaries {
             Invoke-WebRequest -Uri $url -OutFile $tempZip -UseBasicParsing
             $downloaded = $true
             break
-        } catch {
+        }
+        catch {
             Write-Warning "FFmpeg download failed from $url — $_"
         }
     }
@@ -505,7 +514,8 @@ function Ensure-FfmpegBinaries {
     $env:SRTFORGE_FFMPEG_DIR = $ffmpegBinDir
     try {
         [Environment]::SetEnvironmentVariable('SRTFORGE_FFMPEG_DIR', $ffmpegBinDir, 'User')
-    } catch {
+    }
+    catch {
         Write-Warning 'Unable to persist SRTFORGE_FFMPEG_DIR user environment variable.'
     }
 
@@ -548,7 +558,8 @@ function Get-TorchCudaInfo {
         }
 
         return $json | ConvertFrom-Json
-    } catch {
+    }
+    catch {
         return $null
     }
 }
@@ -595,7 +606,8 @@ function Install-OnnxRuntime($device) {
         try {
             & $venvPip install "onnxruntime-gpu>=1.23.2"
             return $true
-        } catch {
+        }
+        catch {
             Write-Warning "Failed to install onnxruntime-gpu. Ensure a compatible NVIDIA driver is available if you expect GPU vocal separation. Falling back to the CPU build."
             & $venvPip install "onnxruntime>=1.23.2"
             return $false
@@ -655,7 +667,8 @@ function Ensure-CudaToolkit {
 
         & winget.exe @arguments
         return $true
-    } catch {
+    }
+    catch {
         Write-Warning "Failed to install CUDA toolkit automatically. Install it manually from NVIDIA's website."
         return $false
     }
@@ -744,7 +757,8 @@ function Download-Model($item) {
     Write-Host "Downloading $($item.File)"
     try {
         Invoke-WebRequest -Uri $item.Url -Headers $headers -OutFile $target -UseBasicParsing
-    } catch {
+    }
+    catch {
         if ($_.Exception.Response.StatusCode.Value__ -eq 401) {
             Write-Error "Authorization required for $($item.Url). Set HF_TOKEN with a valid Hugging Face token."
         }
