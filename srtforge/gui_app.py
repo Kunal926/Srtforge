@@ -274,7 +274,7 @@ class TranscriptionWorker(QtCore.QThread):
 
     def _burn_subtitles(self, media: Path, subtitles: Path) -> Path:
         output = media.with_name(f"{media.stem}_burned{media.suffix}")
-        subtitles_arg = subtitles.as_posix().replace(":", r"\:")
+        subtitles_arg = _escape_subtitles_filter_path(subtitles)
         command = [
             self.options.ffmpeg_bin or "ffmpeg",
             "-y",
@@ -322,6 +322,23 @@ class TranscriptionWorker(QtCore.QThread):
             message = stderr.strip() or stdout.strip() or f"{description} failed"
             raise RuntimeError(message)
         return process.returncode or 0, stdout or "", stderr or ""
+
+
+def _escape_subtitles_filter_path(path: Path) -> str:
+    """Escape characters that are special to FFmpeg's subtitles filter."""
+
+    escaped = path.as_posix()
+    # Escape path separators, drive-letter colons, and embedded quotes so the
+    # string remains valid when wrapped in single quotes within the -vf value.
+    replacements = {
+        "\\": r"\\",
+        ":": r"\:",
+        "'": r"\'",
+    }
+    for target, replacement in replacements.items():
+        if target in escaped:
+            escaped = escaped.replace(target, replacement)
+    return escaped
 
 
 def locate_ffmpeg_binaries() -> Optional[FFmpegBinaries]:
