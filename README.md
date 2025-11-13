@@ -127,19 +127,6 @@ passes `use_autocast=True` to `audio_separator` when `onnxruntime-gpu` is
 present, logging whether CUDA, DirectML, or pure CPU execution is being used
 before the FV4 stem is rendered.
 
-### ONNX Runtime vs direct PyTorch FV4
-
-The FV4 Roformer checkpoint can run directly through the vendored PyTorch
-modules (`mel_band_roformer.py`, `bs_roformer.py`, etc.), but srtforge wraps the
-same checkpoint with `audio-separator`, an ONNX Runtime-based runner. The ONNX
-approach simplifies distribution—hardware providers are handled by
-`onnxruntime` and the installer can swap between the CPU and CUDA builds
-automatically—while remaining compatible with the weights and configuration
-files that ship in `models/`. Users who prefer the original PyTorch code path
-can disable ONNX acceleration by setting `separation.prefer_gpu: false` and
-installing only the CPU runtime, but by default the project will consume GPU
-resources whenever CUDA is detected to deliver the fastest possible turnaround.
-
 ## Usage examples
 
 ```bash
