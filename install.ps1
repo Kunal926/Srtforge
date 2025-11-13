@@ -416,6 +416,104 @@ $venvPip = Join-Path $venvDir "Scripts/pip.exe"
 & $venvPython -m pip install --upgrade pip wheel
 & $venvPip install -r requirements.txt
 
+Write-Host 'Installing PyInstaller so Windows bundles can be produced immediately'
+& $venvPip install pyinstaller
+
+$global:ffmpegDownloadUrls = @(
+    # GitHub-hosted nightly build maintained by BtbN. Stable URL that always
+    # serves the most recent GPL-configured Win64 build with ffmpeg/ffprobe
+    # binaries in the ./bin directory.
+    'https://github.com/BtbN/FFmpeg-Builds/releases/latest/download/ffmpeg-master-latest-win64-gpl.zip',
+    # Legacy mirror (gyan.dev). This site occasionally responds with 404s, so
+    # keep it as a fallback instead of the primary source.
+    'https://www.gyan.dev/ffmpeg/builds/packages/ffmpeg-6.1.1-essentials_build.zip'
+)
+
+function Ensure-Directory {
+    param([string]$Path)
+
+    if (-not (Test-Path $Path)) {
+        New-Item -ItemType Directory -Path $Path -Force | Out-Null
+    }
+}
+
+function Ensure-FfmpegBinaries {
+    $ffmpegBaseDir = Join-Path (Get-Location) 'packaging'
+    $ffmpegBaseDir = Join-Path $ffmpegBaseDir 'windows'
+    $ffmpegBaseDir = Join-Path $ffmpegBaseDir 'ffmpeg'
+    $ffmpegBinDir = Join-Path $ffmpegBaseDir 'bin'
+
+    Ensure-Directory $ffmpegBinDir
+
+    $ffmpegExe = Join-Path $ffmpegBinDir 'ffmpeg.exe'
+    $ffprobeExe = Join-Path $ffmpegBinDir 'ffprobe.exe'
+
+    if ((Test-Path $ffmpegExe) -and (Test-Path $ffprobeExe)) {
+        Write-Host "FFmpeg already present in $ffmpegBinDir"
+        $env:SRTFORGE_FFMPEG_DIR = $ffmpegBinDir
+        try {
+            [Environment]::SetEnvironmentVariable('SRTFORGE_FFMPEG_DIR', $ffmpegBinDir, 'User')
+        } catch {
+            Write-Warning 'Unable to persist SRTFORGE_FFMPEG_DIR user environment variable.'
+        }
+        return
+    }
+
+    $tempBase = [System.IO.Path]::GetTempFileName()
+    $tempZip = [System.IO.Path]::ChangeExtension($tempBase, '.zip')
+    Move-Item -Path $tempBase -Destination $tempZip -Force
+
+    Write-Host "Downloading FFmpeg build to support the GUI bundler"
+    $downloaded = $false
+    foreach ($url in $global:ffmpegDownloadUrls) {
+        Write-Host "Attempting download from $url"
+        try {
+            Invoke-WebRequest -Uri $url -OutFile $tempZip -UseBasicParsing
+            $downloaded = $true
+            break
+        } catch {
+            Write-Warning "FFmpeg download failed from $url — $_"
+        }
+    }
+
+    if (-not $downloaded) {
+        throw 'Unable to download FFmpeg binaries from any configured mirror.'
+    }
+
+    $tempExtract = Join-Path ([System.IO.Path]::GetTempPath()) ([System.IO.Path]::GetRandomFileName())
+    Ensure-Directory $tempExtract
+    Expand-Archive -LiteralPath $tempZip -DestinationPath $tempExtract -Force
+
+    $expandedRoot = Get-ChildItem -Directory -Path $tempExtract | Select-Object -First 1
+    if (-not $expandedRoot) {
+        throw 'FFmpeg archive structure unexpected; bin directory not found.'
+    }
+
+    $sourceBin = Join-Path $expandedRoot.FullName 'bin'
+    $sourceFfmpeg = Join-Path $sourceBin 'ffmpeg.exe'
+    $sourceFfprobe = Join-Path $sourceBin 'ffprobe.exe'
+    if (-not ((Test-Path $sourceFfmpeg) -and (Test-Path $sourceFfprobe))) {
+        throw 'Downloaded FFmpeg package is missing ffmpeg.exe/ffprobe.exe.'
+    }
+
+    Copy-Item -Path $sourceFfmpeg -Destination $ffmpegExe -Force
+    Copy-Item -Path $sourceFfprobe -Destination $ffprobeExe -Force
+
+    Remove-Item -Path $tempZip -ErrorAction SilentlyContinue
+    Remove-Item -Path $tempExtract -Recurse -Force -ErrorAction SilentlyContinue
+
+    $env:SRTFORGE_FFMPEG_DIR = $ffmpegBinDir
+    try {
+        [Environment]::SetEnvironmentVariable('SRTFORGE_FFMPEG_DIR', $ffmpegBinDir, 'User')
+    } catch {
+        Write-Warning 'Unable to persist SRTFORGE_FFMPEG_DIR user environment variable.'
+    }
+
+    Write-Host "FFmpeg binaries downloaded to $ffmpegBinDir"
+}
+
+Ensure-FfmpegBinaries
+
 $torchInfoScript = @'
 import json
 

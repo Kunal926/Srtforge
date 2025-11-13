@@ -181,20 +181,20 @@ Python interpreter, PySide6 runtime, and the rest of the project code. The
 provided spec file assumes you are running on Windows with the virtual
 environment created by `install.ps1`:
 
-1. Install the build dependencies inside the virtual environment:
+1. Run `install.ps1` (or `install.sh` on WSL) at least once. The installer now
+   adds PyInstaller to the managed virtual environment, downloads a known-good
+   FFmpeg build from the BtbN GitHub mirror (with a legacy gyan.dev fallback)
+   into `packaging/windows/ffmpeg/bin`, and registers `SRTFORGE_FFMPEG_DIR` so
+   the spec automatically bundles `ffmpeg.exe` and `ffprobe.exe`.
+2. Activate the environment before building:
    ```powershell
-   pip install pyinstaller
+   .\.venv\Scripts\Activate.ps1
    ```
-2. Download an FFmpeg build (e.g. from [https://www.gyan.dev/ffmpeg/builds/])
-   and set an environment variable that points at the directory containing
-   `ffmpeg.exe` and `ffprobe.exe`:
-   ```powershell
-   setx SRTFORGE_FFMPEG_DIR "C:\\path\\to\\ffmpeg\\bin"
-   ```
-   The spec copies both binaries into `dist/SrtforgeGUI/ffmpeg/` so the packaged
-   app can find them at runtime.
-3. (Optional) Place the trained model files inside `models/` before building so
-   they are copied next to the executable rather than downloaded on first run.
+3. (Optional) If you are building on a machine that has **not** run the
+   installer—such as a clean CI agent—place the trained model files inside
+   `models/` before building. When `install.ps1` has already been executed on the
+   workstation this step is automatically satisfied because the script stores
+   `parakeet-tdt-0.6b-v2.nemo` and `voc_fv4.ckpt` there for you.
 4. Run PyInstaller with the provided spec:
    ```powershell
    pyinstaller packaging/windows/srtforge_gui.spec --noconfirm
