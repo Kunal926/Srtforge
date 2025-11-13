@@ -421,8 +421,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.stop_button = QtWidgets.QPushButton("Stop")
         self.stop_button.clicked.connect(self._stop_processing)
         self.stop_button.setEnabled(False)
+        pointer_cursor = QtGui.QCursor(QtCore.Qt.CursorShape.PointingHandCursor)
         for button in (self.start_button, self.stop_button):
-            button.setCursor(QtGui.QCursor(QtCore.Qt.CursorShape.PointingHandCursor))
+            button.setCursor(pointer_cursor)
         button_row.addWidget(self.start_button)
         button_row.addWidget(self.stop_button)
         layout.addLayout(button_row)
