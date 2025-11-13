@@ -1,6 +1,6 @@
-# srtforge (Parakeet‑TDT‑0.6B‑V2)
+# Srtforge (Parakeet‑TDT‑0.6B‑V2)
 
-srtforge is an automated subtitle generation toolkit built around the
+Srtforge is an automated subtitle generation toolkit built around the
 Parakeet‑TDT‑0.6B‑V2 speech recognition model. It ingests media files,
 selects the best English audio stream, performs high-fidelity vocal isolation,
 preprocesses the result with FFmpeg, and produces polished subtitles using the
