@@ -4,6 +4,8 @@
 import os
 from pathlib import Path
 
+from PyInstaller.building.datastruct import Tree
+
 block_cipher = None
 
 here = Path(__file__).resolve().parent.parent
@@ -14,7 +16,7 @@ datas = []
 
 models_dir = project_root / "models"
 if models_dir.exists():
-    datas.append((str(models_dir), "models"))
+    datas.append(Tree(str(models_dir), prefix="models"))
 
 config_yaml = project_root / "srtforge" / "config.yaml"
 if config_yaml.exists():
