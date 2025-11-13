@@ -424,8 +424,7 @@ class MainWindow(QtWidgets.QMainWindow):
         pointer_cursor = QtGui.QCursor(QtCore.Qt.CursorShape.PointingHandCursor)
         for button in (self.start_button, self.stop_button):
             button.setCursor(pointer_cursor)
-        button_row.addWidget(self.start_button)
-        button_row.addWidget(self.stop_button)
+            button_row.addWidget(button)
         layout.addLayout(button_row)
 
         self.ffmpeg_status = QtWidgets.QLabel()
