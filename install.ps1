@@ -481,7 +481,7 @@ function Ensure-FfmpegBinaries {
             break
         }
         catch {
-            Write-Warning "FFmpeg download failed from $url — $_"
+            Write-Warning "FFmpeg download failed from $url - $_"
         }
     }
 
@@ -729,7 +729,6 @@ b3J0IGVycm9yOiB7ZXhjfSIsIGZpbGU9c3lzLnN0ZGVycikKICAgIHN5cy5leGl0KDEpCmVsc2U6CiAg
 ICBwcmludCgiVmVyaWZpZWQgTlZJRElBIE5lTW8gQVNSIG1vZHVsZXMgYXJlIGltcG9ydGFibGUuIikK
 '@
 
-# .NET's Base64 decoder ignores whitespace; no regex needed (avoids PS5 parsing quirks)
 $verifyNeMoScript = [System.Text.Encoding]::UTF8.GetString(
     [System.Convert]::FromBase64String($verifyNeMoScriptB64)
 )
@@ -783,5 +782,5 @@ foreach ($item in $downloads) {
     Download-Model $item
 }
 
-# Final message — NOTE: no extra quote at the end of this line
+# Final message - NOTE: no extra quote at the end of this line
 Write-Host "Installation complete. Activate the virtual environment with '.\.venv\Scripts\Activate.ps1'."
