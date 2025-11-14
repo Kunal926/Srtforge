@@ -420,11 +420,11 @@ if (-not (Test-Path $venvDir)) {
 $venvPython = Join-Path $venvDir "Scripts/python.exe"
 $venvPip = Join-Path $venvDir "Scripts/pip.exe"
 
-& $venvPython -m pip install --upgrade pip wheel
-& $venvPip install -r requirements.txt
+Invoke-WithArgs -Command @($venvPython) -Args @('-m', 'pip', 'install', '--upgrade', 'pip', 'wheel')
+Invoke-WithArgs -Command @($venvPip) -Args @('install', '-r', 'requirements.txt')
 
 Write-Host 'Installing PyInstaller so Windows bundles can be produced immediately'
-& $venvPip install pyinstaller
+Invoke-WithArgs -Command @($venvPip) -Args @('install', 'pyinstaller')
 
 $global:ffmpegDownloadUrls = @(
     # GitHub-hosted nightly build maintained by BtbN. Stable URL that always
@@ -596,7 +596,11 @@ function Install-Torch($device) {
         }
     } else {
         Write-Host "Installing Torch CPU wheels"
-        & $venvPip install --index-url https://download.pytorch.org/whl/cpu torch torchvision torchaudio
+        Invoke-WithArgs -Command @($venvPip) -Args @(
+            'install',
+            '--index-url', 'https://download.pytorch.org/whl/cpu',
+            'torch', 'torchvision', 'torchaudio'
+        )
     }
 }
 
@@ -604,17 +608,17 @@ function Install-OnnxRuntime($device) {
     if ($device -eq 'gpu') {
         Write-Host "Installing ONNX Runtime GPU package"
         try {
-            & $venvPip install "onnxruntime-gpu>=1.23.2"
+            Invoke-WithArgs -Command @($venvPip) -Args @('install', 'onnxruntime-gpu>=1.23.2')
             return $true
         }
         catch {
             Write-Warning "Failed to install onnxruntime-gpu. Ensure a compatible NVIDIA driver is available if you expect GPU vocal separation. Falling back to the CPU build."
-            & $venvPip install "onnxruntime>=1.23.2"
+            Invoke-WithArgs -Command @($venvPip) -Args @('install', 'onnxruntime>=1.23.2')
             return $false
         }
     } else {
         Write-Host "Installing ONNX Runtime CPU package"
-        & $venvPip install "onnxruntime>=1.23.2"
+        Invoke-WithArgs -Command @($venvPip) -Args @('install', 'onnxruntime>=1.23.2')
         return $true
     }
 }
@@ -665,7 +669,7 @@ function Ensure-CudaToolkit {
             $arguments += '--silent'
         }
 
-        & winget.exe @arguments
+        Invoke-WithArgs -Command @('winget.exe') -Args $arguments
         return $true
     }
     catch {
@@ -727,7 +731,7 @@ $verifyNeMoScript = @(
 
 Invoke-CommandWithScript -Command @($venvPython) -ScriptContent $verifyNeMoScript
 
-& $venvPip install -e .
+Invoke-WithArgs -Command @($venvPip) -Args @('install', '-e', '.')
 
 $modelsDir = Join-Path (Get-Location) 'models'
 if (-not (Test-Path $modelsDir)) {
