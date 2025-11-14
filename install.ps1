@@ -710,12 +710,12 @@ Invoke-WithArgs -Command @($venvPython) -Args @('-m', 'pip', 'install', 'cuda-py
 # Ensure cudart64_12*.dll is available inside the venv for cuda-python 12.9
 Install-Cuda12Runtime -PythonExe $venvPython -PipExe $venvPip
 
-$nemoRequirement = 'nemo_toolkit[asr]>=2.5.1,<2.6'
+$nemoRequirement = 'nemo_toolkit[asr]~=2.5.1'
 Invoke-WithArgs -Command @($venvPython) -Args @(
     '-m','pip','install',$nemoRequirement
 )
 
-# --- Build the NeMo verification script via Base64 to avoid all PS5 parsing edge cases ---
+# --- Build the NeMo verification script via Base64 (exact Python content from your comments) ---
 $verifyNeMoScriptB64 = @'
 aW1wb3J0IGltcG9ydGxpYiwgc2lnbmFsLCBzeXMKaWYgbm90IGhhc2F0dHIoc2lnbmFsLCAiU0lHS0lM
 TCIpOgogICAgc2V0YXR0cihzaWduYWwsICJTSUdLSUxMIiwgZ2V0YXR0cihzaWduYWwsICJTSUdURVJN
@@ -729,14 +729,19 @@ b3J0IGVycm9yOiB7ZXhjfSIsIGZpbGU9c3lzLnN0ZGVycikKICAgIHN5cy5leGl0KDEpCmVsc2U6CiAg
 ICBwcmludCgiVmVyaWZpZWQgTlZJRElBIE5lTW8gQVNSIG1vZHVsZXMgYXJlIGltcG9ydGFibGUuIikK
 '@
 
+# .NET's Base64 decoder ignores whitespace; no regex needed (avoids PS5 parsing quirks)
 $verifyNeMoScript = [System.Text.Encoding]::UTF8.GetString(
     [System.Convert]::FromBase64String($verifyNeMoScriptB64)
 )
 
 Invoke-CommandWithScript -Command @($venvPython) -ScriptContent $verifyNeMoScript
 
+# Install the local package in editable mode
 Invoke-WithArgs -Command @($venvPip) -Args @('install', '-e', '.')
 
+# ----------------------------------------------------------------------
+# Models
+# ----------------------------------------------------------------------
 $modelsDir = Join-Path (Get-Location) 'models'
 if (-not (Test-Path $modelsDir)) {
     New-Item -ItemType Directory -Path $modelsDir | Out-Null
@@ -747,7 +752,7 @@ $downloads = @(
     @{ Url = 'https://huggingface.co/nvidia/parakeet-tdt-0.6b-v2/resolve/main/parakeet-tdt-0.6b-v2.nemo?download=1'; File = 'parakeet-tdt-0.6b-v2.nemo' }
 )
 
-function Download-Model($item) {
+function Download-Model([hashtable]$item) {
     $target = Join-Path $modelsDir $item.File
     if (Test-Path $target -PathType Leaf) {
         $existingFile = Get-Item $target -ErrorAction SilentlyContinue
@@ -778,4 +783,5 @@ foreach ($item in $downloads) {
     Download-Model $item
 }
 
+# Final message — NOTE: no extra quote at the end of this line
 Write-Host "Installation complete. Activate the virtual environment with '.\.venv\Scripts\Activate.ps1'."
