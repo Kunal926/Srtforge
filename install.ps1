@@ -710,24 +710,28 @@ Invoke-WithArgs -Command @($venvPython) -Args @('-m', 'pip', 'install', 'cuda-py
 # Ensure cudart64_12*.dll is available inside the venv for cuda-python 12.9
 Install-Cuda12Runtime -PythonExe $venvPython -PipExe $venvPip
 
-$nemoRequirement = "nemo_toolkit[asr]>=2.5.1,`<2.6"
+$nemoRequirement = 'nemo_toolkit[asr]>=2.5.1,<2.6'
 Invoke-WithArgs -Command @($venvPython) -Args @(
     '-m','pip','install',$nemoRequirement
 )
 
-$verifyNeMoScript = @(
-    'import importlib, signal, sys',
-    'if not hasattr(signal, "SIGKILL"):',
-    '    setattr(signal, "SIGKILL", getattr(signal, "SIGTERM", getattr(signal, "SIGABRT", 9)))',
-    'try:',
-    '    importlib.import_module("nemo.collections.asr")',
-    'except Exception as exc:',
-    '    print("ERROR: NVIDIA NeMo ASR components failed to import after installation. This usually means one of its dependencies (such as numpy, pyarrow or matplotlib) was not installed correctly.", file=sys.stderr)',
-    '    print(f"       Original import error: {exc}", file=sys.stderr)',
-    '    sys.exit(1)',
-    'else:',
-    '    print("Verified NVIDIA NeMo ASR modules are importable.")'
-) -join "`n"
+# --- Build the NeMo verification script via Base64 to avoid all PS5 parsing edge cases ---
+$verifyNeMoScriptB64 = @'
+aW1wb3J0IGltcG9ydGxpYiwgc2lnbmFsLCBzeXMKaWYgbm90IGhhc2F0dHIoc2lnbmFsLCAiU0lHS0lM
+TCIpOgogICAgc2V0YXR0cihzaWduYWwsICJTSUdLSUxMIiwgZ2V0YXR0cihzaWduYWwsICJTSUdURVJN
+IiwgZ2V0YXR0cihzaWduYWwsICJTSUdBQlJUIiwgOSkpKQp0cnk6CiAgICBpbXBvcnRsaWIuaW1wb3J0
+X21vZHVsZSgibmVtby5jb2xsZWN0aW9ucy5hc3IiKQpleGNlcHQgRXhjZXB0aW9uIGFzIGV4YzoKICAg
+IHByaW50KCJFUlJPUjogTlZJRElBIE5lTW8gQVNSIGNvbXBvbmVudHMgZmFpbGVkIHRvIGltcG9ydCBh
+ZnRlciBpbnN0YWxsYXRpb24uIFRoaXMgdXN1YWxseSBtZWFucyBvbmUgb2YgaXRzIGRlcGVuZGVuY2ll
+cyAoc3VjaCBhcyBudW1weSwgcHlhcnJvdyBvciBtYXRwbG90bGliKSB3YXMgbm90IGluc3RhbGxlZCBj
+b3JyZWN0bHkuIiwgZmlsZT1zeXMuc3RkZXJyKQogICAgcHJpbnQoZiIgICAgICAgT3JpZ2luYWwgaW1w
+b3J0IGVycm9yOiB7ZXhjfSIsIGZpbGU9c3lzLnN0ZGVycikKICAgIHN5cy5leGl0KDEpCmVsc2U6CiAg
+ICBwcmludCgiVmVyaWZpZWQgTlZJRElBIE5lTW8gQVNSIG1vZHVsZXMgYXJlIGltcG9ydGFibGUuIikK
+'@
+
+$verifyNeMoScript = [System.Text.Encoding]::UTF8.GetString(
+    [System.Convert]::FromBase64String($verifyNeMoScriptB64)
+)
 
 Invoke-CommandWithScript -Command @($venvPython) -ScriptContent $verifyNeMoScript
 
@@ -763,7 +767,7 @@ function Download-Model($item) {
         Invoke-WebRequest -Uri $item.Url -Headers $headers -OutFile $target -UseBasicParsing
     }
     catch {
-        if ($_.Exception.Response.StatusCode.Value__ -eq 401) {
+        if ($_.Exception.Response -and $_.Exception.Response.StatusCode.Value__ -eq 401) {
             Write-Error "Authorization required for $($item.Url). Set HF_TOKEN with a valid Hugging Face token."
         }
         throw
@@ -774,4 +778,4 @@ foreach ($item in $downloads) {
     Download-Model $item
 }
 
-Write-Host 'Installation complete. Activate the virtual environment with ''.\.venv\Scripts\Activate.ps1''.'
+Write-Host "Installation complete. Activate the virtual environment with '.\.venv\Scripts\Activate.ps1'."
