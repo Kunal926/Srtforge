@@ -6,6 +6,7 @@ import importlib.resources as resources
 import json
 import os
 import re
+import signal
 import subprocess
 import sys
 import threading
@@ -166,6 +167,15 @@ class TranscriptionWorker(QtCore.QThread):
                     2000,
                     lambda: self._queue_cli_kill(),
                 )
+                if _os.name != "nt":
+                    QtCore.QTimer.singleShot(
+                        2200,
+                        lambda: self._posix_terminate_cli_tree(force=False),
+                    )
+                    QtCore.QTimer.singleShot(
+                        4200,
+                        lambda: self._posix_terminate_cli_tree(force=True),
+                    )
                 if _os.name == "nt":
                     QtCore.QTimer.singleShot(
                         3500,
@@ -180,6 +190,7 @@ class TranscriptionWorker(QtCore.QThread):
                         "kill",
                         QtCore.Qt.QueuedConnection,
                     )
+                    self._posix_terminate_cli_tree(force=False)
         process = self._active_process
         if process and process.poll() is None:
             try:
@@ -225,6 +236,74 @@ class TranscriptionWorker(QtCore.QThread):
             "kill",
             QtCore.Qt.QueuedConnection,
         )
+
+    def _posix_terminate_cli_tree(self, *, force: bool = False) -> None:
+        """Terminate the CLI process and its descendants on POSIX platforms."""
+
+        if os.name == "nt":
+            return
+        pid = self._cli_pid or 0
+        if pid <= 0:
+            return
+
+        sig = signal.SIGKILL if force else signal.SIGTERM
+
+        def _children(parent: int) -> list[int]:
+            try:
+                output = subprocess.check_output(
+                    ["pgrep", "-P", str(parent)],
+                    text=True,
+                    stderr=subprocess.DEVNULL,
+                )
+            except FileNotFoundError:
+                return _children_via_ps(parent)
+            except subprocess.CalledProcessError:
+                return []
+            return [int(line.strip()) for line in output.splitlines() if line.strip()]
+
+        def _children_via_ps(parent: int) -> list[int]:
+            try:
+                output = subprocess.check_output(
+                    ["ps", "-eo", "pid=", "-o", "ppid="],
+                    text=True,
+                    stderr=subprocess.DEVNULL,
+                )
+            except Exception:
+                return []
+            result: list[int] = []
+            for row in output.splitlines():
+                parts = row.split()
+                if len(parts) != 2:
+                    continue
+                child_pid, parent_pid = parts
+                try:
+                    if int(parent_pid) == parent:
+                        result.append(int(child_pid))
+                except ValueError:
+                    continue
+            return result
+
+        def _kill_tree(root: int, signal_number: int) -> None:
+            visited: set[int] = set()
+
+            def _walk(node: int) -> None:
+                if node <= 0 or node in visited:
+                    return
+                visited.add(node)
+                for child in _children(node):
+                    _walk(child)
+                try:
+                    os.kill(node, signal_number)
+                except ProcessLookupError:
+                    pass
+                except PermissionError:
+                    pass
+                except OSError:
+                    pass
+
+            _walk(root)
+
+        threading.Thread(target=_kill_tree, args=(pid, sig), daemon=True).start()
 
     def _windows_taskkill_fallback(self) -> None:
         """Forcefully terminate the CLI tree on Windows if it survives termination."""
