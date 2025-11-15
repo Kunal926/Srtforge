@@ -23,6 +23,7 @@ class AudioStream:
     codec_name: str
     language: Optional[str]
     channels: Optional[int]
+    channel_layout: Optional[str]
     sample_rate: Optional[int]
 
     @classmethod
@@ -31,11 +32,13 @@ class AudioStream:
         language = tags.get("language") or tags.get("LANGUAGE")
         sample_rate = int(data["sample_rate"]) if data.get("sample_rate") else None
         channels = int(data.get("channels")) if data.get("channels") else None
+        layout = data.get("channel_layout")
         return cls(
             index=int(data["index"]),
             codec_name=data.get("codec_name", "unknown"),
             language=language,
             channels=channels,
+            channel_layout=layout,
             sample_rate=sample_rate,
         )
 
@@ -147,7 +150,7 @@ class FFmpegTooling:
             "-select_streams",
             "a",
             "-show_entries",
-            "stream=index,codec_name,channels,sample_rate:stream_tags=language,LANGUAGE",
+            "stream=index,codec_name,channels,sample_rate,channel_layout:stream_tags=language,LANGUAGE",
             "-of",
             "json",
             str(media),

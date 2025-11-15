@@ -141,10 +141,19 @@ class TranscriptionWorker(QtCore.QThread):
     def request_stop(self) -> None:
         """Ask the worker to stop after the current task finishes."""
 
+        import signal as _signal
+        import os as _os
         self._stop_event.set()
         process = self._active_process
         if process and process.poll() is None:
-            process.terminate()
+            try:
+                if _os.name == "nt":
+                    # Signal the process group spawned with CREATE_NEW_PROCESS_GROUP
+                    process.send_signal(_signal.CTRL_BREAK_EVENT)  # type: ignore[attr-defined]
+                else:
+                    _os.killpg(process.pid, _signal.SIGTERM)  # type: ignore[attr-defined]
+            except Exception:
+                process.terminate()
 
     def run(self) -> None:  # noqa: D401 - Qt override
         total = len(self.files)
@@ -208,6 +217,17 @@ class TranscriptionWorker(QtCore.QThread):
             env["PATH"] = os.pathsep.join(str(part) for part in (ffmpeg_dir, env_path) if part)
         return_code, stdout, stderr = self._run_command(command, "Transcription", env=env, check=False)
         if return_code == 0:
+            import re as _re
+            # Prefer an explicit path printed by the CLI (robust even if output dir is overridden)
+            m = None
+            for line in (stdout or "").splitlines():
+                # Match "... SRT written to <path>.srt"
+                m = _re.search(r"SRT written to\s+(?P<path>.*?\.srt)\s*$", line)
+                if m:
+                    candidate = Path(m.group("path")).expanduser()
+                    if candidate.exists():
+                        return candidate
+            # Fallback to expected path derived from settings
             output_path = _expected_srt_path(media)
             if output_path.exists():
                 return output_path
@@ -282,8 +302,10 @@ class TranscriptionWorker(QtCore.QThread):
             str(media),
             "-vf",
             f"subtitles='{subtitles_arg}':force_style='Fontsize=24'",
-            "-c:a",
-            "copy",
+            "-c:v", "libx264",
+            "-crf", "18",
+            "-preset", "medium",
+            "-c:a", "copy",
             str(output),
         ]
         self._run_command(command, "Burn subtitles")
@@ -298,12 +320,22 @@ class TranscriptionWorker(QtCore.QThread):
         check: bool = True,
     ) -> tuple[int, str, str]:
         self.logMessage.emit(f"{description}: {' '.join(command)}")
+        kwargs: dict[str, object] = {}
+        if os.name == "nt":
+            # Create a new process group so we can send CTRL_BREAK to the whole tree
+            kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP  # type: ignore[attr-defined]
+        else:
+            # Start a new session (new process group) on POSIX
+            import os as _os
+            kwargs["preexec_fn"] = _os.setsid  # type: ignore[attr-defined]
+
         process = subprocess.Popen(
             command,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
             env=env,
+            **kwargs,
         )
         self._active_process = process
         stdout = ""

@@ -67,6 +67,7 @@ class SeparationSettings:
     sep_hz: int = 48000
     prefer_center: bool = False
     prefer_gpu: bool = True
+    allow_untagged_english: bool = False
     fv4: FV4Settings = field(default_factory=FV4Settings)
 
 

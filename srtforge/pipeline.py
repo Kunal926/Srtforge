@@ -36,6 +36,7 @@ class PipelineConfig:
     separation_backend: str = settings.separation.backend
     separation_prefer_center: bool = settings.separation.prefer_center
     separation_prefer_gpu: bool = settings.separation.prefer_gpu
+    allow_untagged_english: bool = settings.separation.allow_untagged_english
     ffmpeg_filter_chain: str = settings.ffmpeg.filter_chain
     ffmpeg_prefer_center: bool = settings.ffmpeg.prefer_center
     force_float32: bool = settings.parakeet.force_float32
@@ -143,6 +144,7 @@ class Pipeline:
                         raise ValueError(message)
 
                     filter_chain = self.config.ffmpeg_filter_chain
+                    pan_expr = None
                     if (
                         filter_chain
                         and self.config.ffmpeg_prefer_center
@@ -150,7 +152,13 @@ class Pipeline:
                         and english_stream.channels >= 3
                         and "pan=" not in filter_chain
                     ):
-                        filter_chain = f"pan=mono|c0=c2,{filter_chain}"
+                        # Prefer named center (FC) if layout suggests it; else fall back to c2
+                        if getattr(english_stream, "channel_layout", None) and "FC" in english_stream.channel_layout.upper():
+                            pan_expr = "pan=mono|c0=FC"
+                        else:
+                            pan_expr = "pan=mono|c0=c2"
+                    if pan_expr:
+                        filter_chain = f"{pan_expr},{filter_chain}"
                     with status("Applying FFmpeg preprocessing filters"), run_logger.step(
                         "FFmpeg preprocessing"
                     ):
@@ -197,13 +205,18 @@ class Pipeline:
             lang = (stream.language or "").lower()
             if lang in {"en", "eng", "english"}:
                 english_streams.append(stream)
-        if not english_streams:
-            return None
-        if self.config.separation_prefer_center:
-            for stream in english_streams:
-                if stream.channels == 1:
-                    return stream
-        return english_streams[0]
+        if english_streams:
+            if self.config.separation_prefer_center:
+                for stream in english_streams:
+                    if stream.channels == 1:
+                        return stream
+            return english_streams[0]
+        # Fallback path when opt-in setting is enabled
+        if getattr(self.config, "allow_untagged_english", False):
+            # Pick the first audio stream as a best-effort default
+            for stream in streams:
+                return stream
+        return None
 
     def _resolve_parakeet_checkpoint(self) -> Optional[Path]:
         """Locate a local Parakeet checkpoint if available."""
