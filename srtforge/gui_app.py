@@ -280,7 +280,7 @@ class TranscriptionWorker(QtCore.QThread):
 
     def _embed_subtitles(self, media: Path, subtitles: Path) -> Path:
         output = media.with_name(f"{media.stem}_subbed{media.suffix}")
-        codec = "mov_text" if media.suffix.lower() in {".mp4", ".m4v", ".mov"} else "srt"
+        codec = "mov_text" if media.suffix.lower() in {".mp4", ".m4v", ".mov"} else "subrip"
         subtitle_index = self._count_subtitle_streams(media)
         command = [
             self.options.ffmpeg_bin or "ffmpeg",
