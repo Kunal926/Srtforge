@@ -20,32 +20,19 @@ from .settings import settings
 from .utils import probe_video_fps
 
 
-CENTER_CHANNEL_LAYOUTS = {
-    "3.0",
-    "3.1",
-    "4.0",
-    "4.1",
-    "5.0",
-    "5.0(SIDE)",
-    "5.0(BACK)",
-    "5.1",
-    "5.1(SIDE)",
-    "5.1(BACK)",
-    "6.0",
-    "6.0(SIDE)",
-    "6.0(BACK)",
-    "6.1",
-    "6.1(SIDE)",
-    "6.1(BACK)",
-    "7.0",
-    "7.0(FRONT)",
-    "7.0(SIDE)",
-    "7.1",
-    "7.1(WIDE)",
-    "7.1(WIDE-SIDE)",
-    "7.1(TOP)",
-    "7.1(FRONT)",
-}
+def _has_center_channel(layout: str | None, channels: int | None) -> bool:
+    """Return ``True`` if the probed layout strongly indicates a center channel."""
+
+    if not channels:
+        return False
+    text = (layout or "").upper()
+    # Modern ffprobe exposes ``ch_layout`` as symbolic channel names (``FL+FR+FC``...)
+    if "+" in text and "FC" in text:
+        return True
+    # Legacy ``channel_layout`` names provide less detail; fall back to conservative heuristics
+    if channels >= 3 and any(tag in text for tag in {"3.0", "3.1", "4.0", "4.1", "5.0", "5.1", "6.1", "7.1"}):
+        return True
+    return False
 
 
 @dataclass(slots=True)
@@ -174,14 +161,16 @@ class Pipeline:
 
                     filter_chain = self.config.ffmpeg_filter_chain
                     pan_expr = None
-                    layout = (getattr(english_stream, "channel_layout", None) or "").upper()
+                    layout = getattr(english_stream, "channel_layout", None)
                     channels = english_stream.channels or 0
-                    has_center = channels >= 3 and layout in CENTER_CHANNEL_LAYOUTS
+                    has_center = _has_center_channel(layout, channels)
                     if (
                         self.config.ffmpeg_prefer_center
                         and channels >= 2
                         and (not filter_chain or "pan=" not in filter_chain)
                     ):
+                        # FFmpeg's ``pan`` filter addresses channels by symbolic names
+                        # such as ``FL``, ``FR``, and ``FC``.
                         pan_expr = "pan=mono|c0=FC" if has_center else "pan=mono|c0=0.5*FL+0.5*FR"
                     if pan_expr:
                         filter_chain = f"{pan_expr},{filter_chain}" if filter_chain else pan_expr

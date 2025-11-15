@@ -35,7 +35,7 @@ class AudioStream:
         except (TypeError, ValueError):  # pragma: no cover - defensive against exotic ffprobe output
             sample_rate = None
         channels = int(data.get("channels")) if data.get("channels") else None
-        layout = data.get("channel_layout") or None
+        layout = data.get("ch_layout") or data.get("channel_layout") or None
         try:
             index_value = int(data["index"])
         except (TypeError, ValueError, KeyError):  # pragma: no cover - defensive parsing
@@ -157,7 +157,7 @@ class FFmpegTooling:
             "-select_streams",
             "a",
             "-show_entries",
-            "stream=index,codec_name,channels,sample_rate,channel_layout:stream_tags=language,LANGUAGE",
+            "stream=index,codec_name,channels,sample_rate,channel_layout,ch_layout:stream_tags=language,LANGUAGE",
             "-of",
             "json",
             str(media),
