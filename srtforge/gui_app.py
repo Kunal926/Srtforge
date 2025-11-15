@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib.resources as resources
 import json
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -15,7 +16,7 @@ from typing import Callable, Iterable, List, Optional, TextIO
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from .config import DEFAULT_OUTPUT_SUFFIX
-from .logging import LATEST_LOG
+from .logging import LATEST_LOG, LOGS_DIR
 from .settings import settings
 from .win11_backdrop import apply_win11_look, get_windows_accent_qcolor
 
@@ -132,6 +133,7 @@ class TranscriptionWorker(QtCore.QThread):
     fileCompleted = QtCore.Signal(str, str)
     fileFailed = QtCore.Signal(str, str)
     queueFinished = QtCore.Signal(bool)
+    runLogReady = QtCore.Signal(str)
 
     def __init__(self, files: Iterable[str], options: WorkerOptions, parent: Optional[QtCore.QObject] = None) -> None:
         super().__init__(parent)
@@ -140,6 +142,10 @@ class TranscriptionWorker(QtCore.QThread):
         self._stop_event = threading.Event()
         self._active_process: Optional[subprocess.Popen[str]] = None
         self._cli_qprocess: Optional[QtCore.QProcess] = None
+        self._last_srt_path: Optional[Path] = None
+        self._current_run_id: Optional[str] = None
+
+    _RUN_ID_PATTERN = re.compile(r"Run ID[:\s]+([0-9A-Za-z-]+)")
 
     def request_stop(self) -> None:
         """Ask the worker to stop after the current task finishes."""
@@ -268,13 +274,32 @@ class TranscriptionWorker(QtCore.QThread):
         if not self.options.prefer_gpu:
             command.append("--cpu")
         env = os.environ.copy()
-        # Also request unbuffered output via env for robustness
+        # Also request unbuffered output via env for robustness (Python docs: PYTHONUNBUFFERED)
         env["PYTHONUNBUFFERED"] = "1"
         ffmpeg_dir = _ffmpeg_directory_from_options(self.options)
         if ffmpeg_dir:
             env_path = env.get("PATH", "")
             env["PATH"] = os.pathsep.join(str(part) for part in (ffmpeg_dir, env_path) if part)
         return command, env
+
+    def _process_cli_line(self, text: str) -> None:
+        if not text:
+            return
+        match = self._RUN_ID_PATTERN.search(text)
+        if match:
+            run_id = match.group(1)
+            if run_id and run_id != self._current_run_id:
+                self._current_run_id = run_id
+                self.runLogReady.emit(run_id)
+        try:
+            payload = json.loads(text)
+        except Exception:
+            return
+        if isinstance(payload, dict) and payload.get("event") == "srt_written":
+            candidate = Path(str(payload.get("path", ""))).expanduser()
+            if candidate.exists() and candidate != self._last_srt_path:
+                self._last_srt_path = candidate
+                self.logMessage.emit(f"SRT ready: {candidate}")
 
     def _run_pipeline_qprocess(self, media: Path) -> tuple[int, str, str]:
         command, env = self._prepare_cli_invocation(media)
@@ -303,6 +328,7 @@ class TranscriptionWorker(QtCore.QThread):
             for segment in segments:
                 text = segment.rstrip("\r\n")
                 if text:
+                    self._process_cli_line(text)
                     self.logMessage.emit(text)
             return remainder
 
@@ -326,7 +352,7 @@ class TranscriptionWorker(QtCore.QThread):
             stderr_buffer += chunk
             stderr_buffer = _flush_lines(stderr_buffer)
 
-        process.readyReadStandardOutput.connect(_handle_stdout)
+        process.readyReadStandardOutput.connect(_handle_stdout)  # Qt docs: readyRead* fire as new data arrives
         process.readyReadStandardError.connect(_handle_stderr)
 
         loop = QtCore.QEventLoop()
@@ -348,10 +374,12 @@ class TranscriptionWorker(QtCore.QThread):
         if stdout_buffer:
             text = stdout_buffer.rstrip("\r\n")
             if text:
+                self._process_cli_line(text)
                 self.logMessage.emit(text)
         if stderr_buffer:
             text = stderr_buffer.rstrip("\r\n")
             if text:
+                self._process_cli_line(text)
                 self.logMessage.emit(text)
 
         stdout = "".join(stdout_parts)
@@ -359,6 +387,8 @@ class TranscriptionWorker(QtCore.QThread):
         return process.exitCode(), stdout, stderr
 
     def _run_pipeline_subprocess(self, media: Path) -> Path:
+        self._last_srt_path = None
+        self._current_run_id = None
         use_qprocess = os.getenv("SRTFORGE_USE_QPROCESS", "1") != "0"
         if use_qprocess:
             return_code, stdout, stderr = self._run_pipeline_qprocess(media)
@@ -371,6 +401,8 @@ class TranscriptionWorker(QtCore.QThread):
                 check=False,
             )
         if return_code == 0:
+            if self._last_srt_path and self._last_srt_path.exists():
+                return self._last_srt_path
             import re as _re
 
             # Prefer a structured event line emitted by the CLI
@@ -507,8 +539,10 @@ class TranscriptionWorker(QtCore.QThread):
             command,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            text=True,  # text mode => str lines
-            bufsize=1,  # request line-buffered pipes where possible
+            text=True,  # text mode => str lines (required for line buffering per Python docs)
+            bufsize=1,  # request line-buffered pipes where possible for responsive logs
+            encoding="utf-8",
+            errors="replace",
             env=env,
             **kwargs,
         )
@@ -525,6 +559,7 @@ class TranscriptionWorker(QtCore.QThread):
                         break
                     text = line.rstrip("\r\n")
                     if text:
+                        self._process_cli_line(text)
                         self.logMessage.emit(text)
                     sink.append(line)
             except Exception:
@@ -644,7 +679,7 @@ def cleanup_gpu_memory() -> None:
 
 
 class LogTailer(QtCore.QObject):
-    """Poll ``LATEST_LOG`` and forward structured run markers to the GUI."""
+    """Poll structured run logs and forward step markers to the GUI."""
 
     _MARKERS = ("START ", "END ", "Run ", "ASR device:")
 
@@ -656,26 +691,47 @@ class LogTailer(QtCore.QObject):
         self._timer.timeout.connect(self._poll)
         self._offset = 0
         self._buffer = ""
+        self._active = False
+        self._target_path = LATEST_LOG
 
     def start(self) -> None:
+        self._timer.stop()
+        self._active = True
+        self._target_path = LATEST_LOG
         self._offset = 0
         self._buffer = ""
         self._timer.start()
 
     def stop(self) -> None:
+        self._active = False
         self._timer.stop()
         self._offset = 0
         self._buffer = ""
 
+    def set_run_id(self, run_id: str) -> None:
+        if not run_id:
+            return
+        new_target = LOGS_DIR / f"{run_id}.log"
+        if self._target_path == new_target:
+            if self._active and not self._timer.isActive():
+                self._timer.start()
+            return
+        self._timer.stop()
+        self._target_path = new_target
+        self._offset = 0
+        self._buffer = ""
+        if self._active:
+            self._timer.start()
+
     def _poll(self) -> None:
         try:
-            size = LATEST_LOG.stat().st_size
+            size = self._target_path.stat().st_size
         except OSError:
             return
         if size < self._offset:
             self._offset = 0
         try:
-            with LATEST_LOG.open("r", encoding="utf8") as handle:
+            with self._target_path.open("r", encoding="utf8") as handle:
                 handle.seek(self._offset)
                 chunk = handle.read()
                 self._offset = handle.tell()
@@ -895,6 +951,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._worker.fileCompleted.connect(self._on_file_completed)
         self._worker.fileFailed.connect(self._on_file_failed)
         self._worker.queueFinished.connect(self._on_queue_finished)
+        self._worker.runLogReady.connect(self._handle_run_log_ready)
         self._worker.start()
         self._append_log("Started processing queue")
         self._set_running_state(True)
@@ -923,12 +980,13 @@ class MainWindow(QtWidgets.QMainWindow):
         else:
             self.progress_bar.setRange(0, total)
             self.progress_bar.setValue(current)
-        self.progress_label.setText(f"{current}/{total} files" if total else "Working…")
+        self.progress_label.setText(f"{current}/{total} files" if total > 0 else "Working…")
 
     def _on_file_started(self, path: str) -> None:
-        self.progress_bar.setRange(0, 0)
+        self.progress_bar.setRange(0, 0)  # Qt docs: 0/0 switches to indeterminate/busy state
         if self._log_tailer:
             self._log_tailer.start()
+        self.progress_label.setText("Working…")
         self._append_log(f"Processing {path}")
 
     def _on_file_completed(self, media: str, summary: str) -> None:
@@ -942,6 +1000,10 @@ class MainWindow(QtWidgets.QMainWindow):
         if self._log_tailer:
             self._log_tailer.stop()
         self._append_log(f"⚠️ {media}: {reason}")
+
+    def _handle_run_log_ready(self, run_id: str) -> None:
+        if self._log_tailer:
+            self._log_tailer.set_run_id(run_id)
 
     def _on_queue_finished(self, stopped: bool) -> None:
         self._append_log("Queue cancelled" if stopped else "All files processed")
