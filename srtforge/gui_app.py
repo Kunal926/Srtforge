@@ -10,7 +10,7 @@ import sys
 import threading
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, List, Optional
+from typing import Iterable, List, Optional, TextIO
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
@@ -231,10 +231,13 @@ class TranscriptionWorker(QtCore.QThread):
         if cli_binary:
             command = [str(cli_binary), "run", str(media)]
         else:
-            command = [sys.executable, "-m", "srtforge", "run", str(media)]
+            # -u => unbuffered stdout/stderr so the GUI can read lines as they appear
+            command = [sys.executable, "-u", "-m", "srtforge", "run", str(media)]
         if not self.options.prefer_gpu:
             command.append("--cpu")
         env = os.environ.copy()
+        # Also request unbuffered output via env for robustness
+        env["PYTHONUNBUFFERED"] = "1"
         ffmpeg_dir = _ffmpeg_directory_from_options(self.options)
         if ffmpeg_dir:
             env_path = env.get("PATH", "")
@@ -377,27 +380,48 @@ class TranscriptionWorker(QtCore.QThread):
             command,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            text=True,
+            text=True,  # text mode => str lines
+            bufsize=1,  # request line-buffered pipes where possible
             env=env,
             **kwargs,
         )
         self._active_process = process
-        stdout = ""
-        stderr = ""
+        stdout_lines: list[str] = []
+        stderr_lines: list[str] = []
+
+        def _pump(stream: Optional[TextIO], sink: list[str]) -> None:
+            if stream is None:
+                return
+            try:
+                for line in iter(stream.readline, ""):
+                    if not line:
+                        break
+                    text = line.rstrip("\r\n")
+                    if text:
+                        self.logMessage.emit(text)
+                    sink.append(line)
+            except Exception:
+                pass
+
+        t_out = threading.Thread(target=_pump, args=(process.stdout, stdout_lines), daemon=True)
+        t_err = threading.Thread(target=_pump, args=(process.stderr, stderr_lines), daemon=True)
+        t_out.start()
+        t_err.start()
         try:
-            stdout, stderr = process.communicate()
+            return_code = process.wait()
         finally:
+            t_out.join(0.2)
+            t_err.join(0.2)
             self._active_process = None
-        for stream in (stdout, stderr):
-            for line in (stream or "").splitlines():
-                if line.strip():
-                    self.logMessage.emit(line)
-        if check and process.returncode != 0:
+
+        stdout = "".join(stdout_lines)
+        stderr = "".join(stderr_lines)
+        if check and return_code != 0:
             if self._stop_event.is_set():
                 raise StopRequested
             message = stderr.strip() or stdout.strip() or f"{description} failed"
             raise RuntimeError(message)
-        return process.returncode or 0, stdout or "", stderr or ""
+        return return_code or 0, stdout or "", stderr or ""
 
 
 def _escape_subtitles_filter_path(path: Path) -> str:
