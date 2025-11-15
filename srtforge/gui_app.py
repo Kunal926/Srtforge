@@ -151,8 +151,21 @@ class TranscriptionWorker(QtCore.QThread):
                 if _os.name == "nt":
                     # Signal the process group spawned with CREATE_NEW_PROCESS_GROUP
                     process.send_signal(_signal.CTRL_BREAK_EVENT)  # type: ignore[attr-defined]
+                    try:
+                        process.wait(timeout=2)
+                    except Exception:
+                        subprocess.run(
+                            ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                            stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL,
+                            check=False,
+                        )
                 else:
                     _os.killpg(process.pid, _signal.SIGTERM)  # type: ignore[attr-defined]
+                    try:
+                        process.wait(timeout=2)
+                    except subprocess.TimeoutExpired:
+                        process.terminate()
             except Exception:
                 if _os.name == "nt":
                     subprocess.run(
@@ -348,9 +361,8 @@ class TranscriptionWorker(QtCore.QThread):
             # Create a new process group so we can send CTRL_BREAK to the whole tree
             kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP  # type: ignore[attr-defined]
         else:
-            # Start a new session (new process group) on POSIX
-            import os as _os
-            kwargs["preexec_fn"] = _os.setsid  # type: ignore[attr-defined]
+            # POSIX: start a new session safely (thread-friendly)
+            kwargs["start_new_session"] = True
 
         process = subprocess.Popen(
             command,
@@ -583,17 +595,9 @@ class MainWindow(QtWidgets.QMainWindow):
             self.setStyleSheet(stylesheet)
 
     def _load_win11_stylesheet(self, accent: QtGui.QColor) -> Optional[str]:
-        data: Optional[str] = None
         try:
             data = resources.files("srtforge.assets.styles").joinpath("win11.qss").read_text(encoding="utf-8")
-        except (FileNotFoundError, ModuleNotFoundError):  # pragma: no cover - packaging guard
-            try:
-                data = resources.files("srtforge").joinpath("win11.qss").read_text(encoding="utf-8")
-            except Exception:  # pragma: no cover - compatibility guard
-                return None
-        except Exception:  # pragma: no cover - defensive packaging guard
-            return None
-        if data is None:
+        except Exception:  # pragma: no cover - packaging guard
             return None
         lighter = QtGui.QColor(accent)
         lighter = lighter.lighter(115)

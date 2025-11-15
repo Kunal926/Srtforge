@@ -19,7 +19,7 @@ from .settings import settings
 from .utils import probe_video_fps
 
 
-@dataclass(slots=True, kw_only=True)
+@dataclass(slots=True)
 class PipelineConfig:
     """Configuration for a single processing run."""
 
@@ -36,11 +36,11 @@ class PipelineConfig:
     separation_backend: str = settings.separation.backend
     separation_prefer_center: bool = settings.separation.prefer_center
     separation_prefer_gpu: bool = settings.separation.prefer_gpu
-    allow_untagged_english: bool = settings.separation.allow_untagged_english
     ffmpeg_filter_chain: str = settings.ffmpeg.filter_chain
     ffmpeg_prefer_center: bool = settings.ffmpeg.prefer_center
     force_float32: bool = settings.parakeet.force_float32
     prefer_gpu: bool = settings.parakeet.prefer_gpu
+    allow_untagged_english: bool = settings.separation.allow_untagged_english
 
 
 @dataclass(slots=True)
