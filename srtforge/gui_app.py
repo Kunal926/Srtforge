@@ -729,7 +729,10 @@ class LogTailer(QtCore.QObject):
         self._timer.stop()
         self._active = True
         self._target_path = LATEST_LOG
-        self._offset = 0
+        try:
+            self._offset = self._target_path.stat().st_size
+        except OSError:
+            self._offset = 0
         self._buffer = ""
         self._timer.start()
 
