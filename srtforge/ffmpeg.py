@@ -36,8 +36,12 @@ class AudioStream:
             sample_rate = None
         channels = int(data.get("channels")) if data.get("channels") else None
         layout = data.get("channel_layout") or None
+        try:
+            index_value = int(data["index"])
+        except (TypeError, ValueError, KeyError):  # pragma: no cover - defensive parsing
+            index_value = 0
         return cls(
-            index=int(data["index"]),
+            index=index_value,
             codec_name=data.get("codec_name", "unknown"),
             language=language,
             channels=channels,

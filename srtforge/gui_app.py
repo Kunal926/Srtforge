@@ -149,7 +149,9 @@ class TranscriptionWorker(QtCore.QThread):
         if process and process.poll() is None:
             try:
                 if _os.name == "nt":
-                    # Signal the process group spawned with CREATE_NEW_PROCESS_GROUP
+                    # Signal the process group spawned with CREATE_NEW_PROCESS_GROUP.
+                    # GUI builds often have no attached console, so the taskkill fallback
+                    # below is expected to handle that scenario when CTRL_BREAK is ignored.
                     process.send_signal(_signal.CTRL_BREAK_EVENT)  # type: ignore[attr-defined]
                     try:
                         process.wait(timeout=2)
@@ -331,6 +333,9 @@ class TranscriptionWorker(QtCore.QThread):
     def _burn_subtitles(self, media: Path, subtitles: Path) -> Path:
         output = media.with_name(f"{media.stem}_burned{media.suffix}")
         subtitles_arg = _escape_subtitles_filter_path(subtitles)
+        mov_flags: list[str] = []
+        if output.suffix.lower() in {".mp4", ".m4v", ".mov"}:
+            mov_flags = ["-movflags", "+faststart"]
         command = [
             self.options.ffmpeg_bin or "ffmpeg",
             "-y",
@@ -342,8 +347,8 @@ class TranscriptionWorker(QtCore.QThread):
             "-crf", "18",
             "-preset", "medium",
             "-pix_fmt", "yuv420p",
-            "-movflags", "+faststart",
             "-c:a", "copy",
+            *mov_flags,
             str(output),
         ]
         self._run_command(command, "Burn subtitles")
