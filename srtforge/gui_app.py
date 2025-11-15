@@ -5,16 +5,19 @@ from __future__ import annotations
 import importlib.resources as resources
 import json
 import os
+import re
+import signal
 import subprocess
 import sys
 import threading
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, List, Optional
+from typing import Callable, Iterable, List, Optional, TextIO
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from .config import DEFAULT_OUTPUT_SUFFIX
+from .logging import LATEST_LOG, LOGS_DIR
 from .settings import settings
 from .win11_backdrop import apply_win11_look, get_windows_accent_qcolor
 
@@ -131,6 +134,7 @@ class TranscriptionWorker(QtCore.QThread):
     fileCompleted = QtCore.Signal(str, str)
     fileFailed = QtCore.Signal(str, str)
     queueFinished = QtCore.Signal(bool)
+    runLogReady = QtCore.Signal(str)
 
     def __init__(self, files: Iterable[str], options: WorkerOptions, parent: Optional[QtCore.QObject] = None) -> None:
         super().__init__(parent)
@@ -138,6 +142,12 @@ class TranscriptionWorker(QtCore.QThread):
         self.options = options
         self._stop_event = threading.Event()
         self._active_process: Optional[subprocess.Popen[str]] = None
+        self._cli_qprocess: Optional[QtCore.QProcess] = None
+        self._last_srt_path: Optional[Path] = None
+        self._current_run_id: Optional[str] = None
+        self._cli_pid: Optional[int] = None
+
+    _RUN_ID_PATTERN = re.compile(r"Run ID[:\s]+([0-9A-Za-z-]+)")
 
     def request_stop(self) -> None:
         """Ask the worker to stop after the current task finishes."""
@@ -145,6 +155,42 @@ class TranscriptionWorker(QtCore.QThread):
         import signal as _signal
         import os as _os
         self._stop_event.set()
+        qprocess = self._cli_qprocess
+        if qprocess and qprocess.state() != QtCore.QProcess.ProcessState.NotRunning:
+            try:
+                QtCore.QMetaObject.invokeMethod(
+                    qprocess,
+                    "terminate",
+                    QtCore.Qt.QueuedConnection,
+                )
+                QtCore.QTimer.singleShot(
+                    2000,
+                    lambda: self._queue_cli_kill(),
+                )
+                if _os.name != "nt":
+                    QtCore.QTimer.singleShot(
+                        2200,
+                        lambda: self._posix_terminate_cli_tree(force=False),
+                    )
+                    QtCore.QTimer.singleShot(
+                        4200,
+                        lambda: self._posix_terminate_cli_tree(force=True),
+                    )
+                if _os.name == "nt":
+                    QtCore.QTimer.singleShot(
+                        3500,
+                        lambda: self._windows_taskkill_fallback(),
+                    )
+            except Exception:
+                if _os.name == "nt":
+                    self._windows_taskkill_fallback()
+                else:
+                    QtCore.QMetaObject.invokeMethod(
+                        qprocess,
+                        "kill",
+                        QtCore.Qt.QueuedConnection,
+                    )
+                    self._posix_terminate_cli_tree(force=False)
         process = self._active_process
         if process and process.poll() is None:
             try:
@@ -178,6 +224,103 @@ class TranscriptionWorker(QtCore.QThread):
                     )
                 else:
                     process.terminate()
+
+    def _queue_cli_kill(self) -> None:
+        """Post a kill request for the active QProcess without blocking the UI."""
+
+        qprocess = self._cli_qprocess
+        if not qprocess:
+            return
+        QtCore.QMetaObject.invokeMethod(
+            qprocess,
+            "kill",
+            QtCore.Qt.QueuedConnection,
+        )
+
+    def _posix_terminate_cli_tree(self, *, force: bool = False) -> None:
+        """Terminate the CLI process and its descendants on POSIX platforms."""
+
+        if os.name == "nt":
+            return
+        pid = self._cli_pid or 0
+        if pid <= 0:
+            return
+
+        sig = signal.SIGKILL if force else signal.SIGTERM
+
+        def _children(parent: int) -> list[int]:
+            try:
+                output = subprocess.check_output(
+                    ["pgrep", "-P", str(parent)],
+                    text=True,
+                    stderr=subprocess.DEVNULL,
+                )
+            except FileNotFoundError:
+                return _children_via_ps(parent)
+            except subprocess.CalledProcessError:
+                return []
+            return [int(line.strip()) for line in output.splitlines() if line.strip()]
+
+        def _children_via_ps(parent: int) -> list[int]:
+            try:
+                output = subprocess.check_output(
+                    ["ps", "-eo", "pid=", "-o", "ppid="],
+                    text=True,
+                    stderr=subprocess.DEVNULL,
+                )
+            except Exception:
+                return []
+            result: list[int] = []
+            for row in output.splitlines():
+                parts = row.split()
+                if len(parts) != 2:
+                    continue
+                child_pid, parent_pid = parts
+                try:
+                    if int(parent_pid) == parent:
+                        result.append(int(child_pid))
+                except ValueError:
+                    continue
+            return result
+
+        def _kill_tree(root: int, signal_number: int) -> None:
+            visited: set[int] = set()
+
+            def _walk(node: int) -> None:
+                if node <= 0 or node in visited:
+                    return
+                visited.add(node)
+                for child in _children(node):
+                    _walk(child)
+                try:
+                    os.kill(node, signal_number)
+                except ProcessLookupError:
+                    pass
+                except PermissionError:
+                    pass
+                except OSError:
+                    pass
+
+            _walk(root)
+
+        threading.Thread(target=_kill_tree, args=(pid, sig), daemon=True).start()
+
+    def _windows_taskkill_fallback(self) -> None:
+        """Forcefully terminate the CLI tree on Windows if it survives termination."""
+
+        if os.name != "nt":
+            return
+        if not self._cli_qprocess:
+            return
+        pid = self._cli_pid or 0
+        if pid <= 0:
+            return
+        subprocess.run(
+            ["taskkill", "/PID", str(pid), "/T", "/F"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
 
     def run(self) -> None:  # noqa: D401 - Qt override
         total = len(self.files)
@@ -226,21 +369,150 @@ class TranscriptionWorker(QtCore.QThread):
         self.queueFinished.emit(stopped)
 
     # ---- helpers -----------------------------------------------------------------
-    def _run_pipeline_subprocess(self, media: Path) -> Path:
+    def _prepare_cli_invocation(self, media: Path) -> tuple[list[str], dict[str, str]]:
         cli_binary = locate_cli_executable()
         if cli_binary:
             command = [str(cli_binary), "run", str(media)]
         else:
-            command = [sys.executable, "-m", "srtforge", "run", str(media)]
+            # -u => unbuffered stdout/stderr so the GUI can read lines as they appear (Python docs)
+            command = [sys.executable, "-u", "-m", "srtforge", "run", str(media)]
         if not self.options.prefer_gpu:
             command.append("--cpu")
         env = os.environ.copy()
+        # Also request unbuffered output via env for robustness (Python docs: PYTHONUNBUFFERED)
+        env["PYTHONUNBUFFERED"] = "1"
+        env.setdefault("PYTHONIOENCODING", "UTF-8")
+        env.setdefault("PYTHONUTF8", "1")
         ffmpeg_dir = _ffmpeg_directory_from_options(self.options)
         if ffmpeg_dir:
             env_path = env.get("PATH", "")
             env["PATH"] = os.pathsep.join(str(part) for part in (ffmpeg_dir, env_path) if part)
-        return_code, stdout, stderr = self._run_command(command, "Transcription", env=env, check=False)
+        return command, env
+
+    def _process_cli_line(self, text: str) -> None:
+        if not text:
+            return
+        match = self._RUN_ID_PATTERN.search(text)
+        if match:
+            run_id = match.group(1)
+            if run_id and run_id != self._current_run_id:
+                self._current_run_id = run_id
+                self.runLogReady.emit(run_id)
+        try:
+            payload = json.loads(text)
+        except Exception:
+            return
+        if isinstance(payload, dict) and payload.get("event") == "srt_written":
+            candidate = Path(str(payload.get("path", ""))).expanduser()
+            if candidate.exists() and candidate != self._last_srt_path:
+                self._last_srt_path = candidate
+                self.logMessage.emit(f"SRT ready: {candidate}")
+
+    def _run_pipeline_qprocess(self, media: Path) -> tuple[int, str, str]:
+        command, env = self._prepare_cli_invocation(media)
+        self.logMessage.emit(f"Transcription: {' '.join(command)}")
+        process = QtCore.QProcess()
+        environment = QtCore.QProcessEnvironment()
+        for key, value in env.items():
+            environment.insert(key, value)
+        process.setProcessEnvironment(environment)
+        process.setProgram(command[0])
+        process.setArguments(command[1:])
+        process.setProcessChannelMode(QtCore.QProcess.ProcessChannelMode.SeparateChannels)
+
+        stdout_parts: list[str] = []
+        stderr_parts: list[str] = []
+        stdout_buffer = ""
+        stderr_buffer = ""
+
+        def _flush_lines(buffer: str) -> str:
+            if not buffer:
+                return ""
+            segments = buffer.splitlines(keepends=True)
+            remainder = ""
+            if segments and not segments[-1].endswith(("\n", "\r")):
+                remainder = segments.pop()
+            for segment in segments:
+                text = segment.rstrip("\r\n")
+                if text:
+                    self._process_cli_line(text)
+                    self.logMessage.emit(text)
+            return remainder
+
+        def _handle_stdout() -> None:
+            nonlocal stdout_buffer
+            data = process.readAllStandardOutput()
+            if not data:
+                return
+            chunk = bytes(data).decode("utf-8", errors="replace")
+            stdout_parts.append(chunk)
+            stdout_buffer += chunk
+            stdout_buffer = _flush_lines(stdout_buffer)
+
+        def _handle_stderr() -> None:
+            nonlocal stderr_buffer
+            data = process.readAllStandardError()
+            if not data:
+                return
+            chunk = bytes(data).decode("utf-8", errors="replace")
+            stderr_parts.append(chunk)
+            stderr_buffer += chunk
+            stderr_buffer = _flush_lines(stderr_buffer)
+
+        process.readyReadStandardOutput.connect(_handle_stdout)  # Qt docs: readyRead* fire as new data arrives
+        process.readyReadStandardError.connect(_handle_stderr)
+
+        loop = QtCore.QEventLoop()
+        process.finished.connect(loop.quit)
+        self._cli_qprocess = process
+        try:
+            process.start()
+            if not process.waitForStarted(5000):
+                error = process.errorString() or "unable to start transcription process"
+                raise RuntimeError(error)
+            pid = int(process.processId())
+            self._cli_pid = pid or None
+            if process.state() != QtCore.QProcess.ProcessState.NotRunning:
+                loop.exec()
+            _handle_stdout()
+            _handle_stderr()
+        finally:
+            self._cli_qprocess = None
+            self._cli_pid = None
+            process.deleteLater()
+
+        if stdout_buffer:
+            text = stdout_buffer.rstrip("\r\n")
+            if text:
+                self._process_cli_line(text)
+                self.logMessage.emit(text)
+        if stderr_buffer:
+            text = stderr_buffer.rstrip("\r\n")
+            if text:
+                self._process_cli_line(text)
+                self.logMessage.emit(text)
+
+        stdout = "".join(stdout_parts)
+        stderr = "".join(stderr_parts)
+        return process.exitCode(), stdout, stderr
+
+    def _run_pipeline_subprocess(self, media: Path) -> Path:
+        self._last_srt_path = None
+        self._current_run_id = None
+        use_qprocess = os.getenv("SRTFORGE_USE_QPROCESS", "1") != "0"
+        if use_qprocess:
+            return_code, stdout, stderr = self._run_pipeline_qprocess(media)
+        else:
+            command, env = self._prepare_cli_invocation(media)
+            return_code, stdout, stderr = self._run_command(
+                command,
+                "Transcription",
+                env=env,
+                check=False,
+            )
         if return_code == 0:
+            if self._last_srt_path and self._last_srt_path.exists():
+                return self._last_srt_path
             import re as _re
 
             # Prefer a structured event line emitted by the CLI
@@ -377,27 +649,53 @@ class TranscriptionWorker(QtCore.QThread):
             command,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            text=True,
+            text=True,  # text mode => str lines (required for line buffering per Python docs)
+            bufsize=1,  # request line-buffered pipes where possible for responsive logs
+            encoding="utf-8",
+            errors="replace",
             env=env,
             **kwargs,
         )
         self._active_process = process
-        stdout = ""
-        stderr = ""
+        stdout_lines: list[str] = []
+        stderr_lines: list[str] = []
+
+        def _pump(stream: Optional[TextIO], sink: list[str]) -> None:
+            if stream is None:
+                return
+            try:
+                for line in iter(stream.readline, ""):
+                    if not line:
+                        break
+                    text = line.rstrip("\r\n")
+                    if text:
+                        self._process_cli_line(text)
+                        self.logMessage.emit(text)
+                    sink.append(line)
+            except Exception:
+                pass
+
+        t_out = threading.Thread(target=_pump, args=(process.stdout, stdout_lines), daemon=True)
+        t_err = threading.Thread(target=_pump, args=(process.stderr, stderr_lines), daemon=True)
+        t_out.start()
+        t_err.start()
         try:
-            stdout, stderr = process.communicate()
+            return_code = process.wait()
         finally:
+            # Ensure the pump threads finish draining any remaining output before
+            # we build the combined stdout/stderr strings.
+            t_out.join()
+            t_err.join()
             self._active_process = None
-        for stream in (stdout, stderr):
-            for line in (stream or "").splitlines():
-                if line.strip():
-                    self.logMessage.emit(line)
-        if check and process.returncode != 0:
+
+        stdout = "".join(stdout_lines)
+        stderr = "".join(stderr_lines)
+        if check and return_code != 0:
             if self._stop_event.is_set():
                 raise StopRequested
             message = stderr.strip() or stdout.strip() or f"{description} failed"
             raise RuntimeError(message)
-        return process.returncode or 0, stdout or "", stderr or ""
+        return return_code or 0, stdout or "", stderr or ""
 
 
 def _escape_subtitles_filter_path(path: Path) -> str:
@@ -490,6 +788,84 @@ def cleanup_gpu_memory() -> None:
         torch.cuda.empty_cache()
 
 
+class LogTailer(QtCore.QObject):
+    """Poll structured run logs and forward step markers to the GUI."""
+
+    _MARKERS = ("START ", "END ", "Run ", "ASR device:")
+
+    def __init__(self, callback: Callable[[str], None], parent: Optional[QtCore.QObject] = None) -> None:
+        super().__init__(parent)
+        self._callback = callback
+        self._timer = QtCore.QTimer(self)
+        self._timer.setInterval(150)
+        self._timer.timeout.connect(self._poll)
+        self._offset = 0
+        self._buffer = ""
+        self._active = False
+        self._target_path = LATEST_LOG
+
+    def start(self) -> None:
+        self._timer.stop()
+        self._active = True
+        self._target_path = LATEST_LOG
+        try:
+            self._offset = self._target_path.stat().st_size
+        except OSError:
+            self._offset = 0
+        self._buffer = ""
+        self._timer.start()
+
+    def stop(self) -> None:
+        self._active = False
+        self._timer.stop()
+        self._offset = 0
+        self._buffer = ""
+
+    def set_run_id(self, run_id: str) -> None:
+        if not run_id:
+            return
+        new_target = LOGS_DIR / f"{run_id}.log"
+        if self._target_path == new_target:
+            if self._active and not self._timer.isActive():
+                self._timer.start()
+            return
+        self._timer.stop()
+        self._target_path = new_target
+        self._offset = 0
+        self._buffer = ""
+        if self._active:
+            self._timer.start()
+
+    def _poll(self) -> None:
+        try:
+            size = self._target_path.stat().st_size
+        except OSError:
+            return
+        if size < self._offset:
+            self._offset = 0
+        try:
+            with self._target_path.open("r", encoding="utf8") as handle:
+                handle.seek(self._offset)
+                chunk = handle.read()
+                self._offset = handle.tell()
+        except OSError:
+            return
+        if not chunk:
+            return
+        text = self._buffer + chunk
+        lines = text.splitlines(keepends=True)
+        self._buffer = ""
+        if lines and not lines[-1].endswith(("\n", "\r")):
+            self._buffer = lines.pop()
+        for raw_line in lines:
+            line = raw_line.strip()
+            if not line:
+                continue
+            body = line.split("] ", 1)[1] if "] " in line else line
+            if any(marker in body for marker in self._MARKERS):
+                self._callback(body)
+
+
 class MainWindow(QtWidgets.QMainWindow):
     """Main application window."""
 
@@ -499,8 +875,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.setMinimumSize(960, 640)
         self.setObjectName("MainWindow")
         self._worker: Optional[TranscriptionWorker] = None
+        self._log_tailer: Optional[LogTailer] = None
         self.ffmpeg_paths = locate_ffmpeg_binaries()
         self._build_ui()
+        self._log_tailer = LogTailer(self._append_log, self)
         self._apply_styles()
         self._update_ffmpeg_status()
         apply_win11_look(self)
@@ -568,6 +946,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.log_view = QtWidgets.QPlainTextEdit()
         self.log_view.setReadOnly(True)
         self.log_view.setMinimumHeight(180)
+        self.log_view.setMaximumBlockCount(10000)
         layout.addWidget(self.log_view)
 
         button_row = QtWidgets.QHBoxLayout()
@@ -685,6 +1064,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._worker.fileCompleted.connect(self._on_file_completed)
         self._worker.fileFailed.connect(self._on_file_failed)
         self._worker.queueFinished.connect(self._on_queue_finished)
+        self._worker.runLogReady.connect(self._handle_run_log_ready)
         self._worker.start()
         self._append_log("Started processing queue")
         self._set_running_state(True)
@@ -708,24 +1088,43 @@ class MainWindow(QtWidgets.QMainWindow):
         self.log_view.verticalScrollBar().setValue(self.log_view.verticalScrollBar().maximum())
 
     def _update_progress(self, current: int, total: int) -> None:
-        self.progress_bar.setRange(0, max(1, total))
-        self.progress_bar.setValue(current)
-        if total:
-            self.progress_label.setText(f"{current}/{total} files")
+        if total <= 0:
+            self.progress_bar.setRange(0, 0)
         else:
-            self.progress_label.setText("Idle")
+            self.progress_bar.setRange(0, total)
+            self.progress_bar.setValue(current)
+        self.progress_label.setText(f"{current}/{total} files" if total > 0 else "Working…")
 
     def _on_file_started(self, path: str) -> None:
+        self.progress_bar.setRange(0, 0)  # Qt docs: 0/0 switches to indeterminate/busy state
+        if self._log_tailer:
+            self._log_tailer.start()
+        self.progress_label.setText("Working…")
         self._append_log(f"Processing {path}")
 
     def _on_file_completed(self, media: str, summary: str) -> None:
+        self.progress_bar.setRange(0, max(1, self.queue_list.count()))
+        if self._log_tailer:
+            self._log_tailer.stop()
         self._append_log(f"✅ {media}: {summary}")
 
     def _on_file_failed(self, media: str, reason: str) -> None:
+        self.progress_bar.setRange(0, max(1, self.queue_list.count()))
+        if self._log_tailer:
+            self._log_tailer.stop()
         self._append_log(f"⚠️ {media}: {reason}")
+
+    def _handle_run_log_ready(self, run_id: str) -> None:
+        if self._log_tailer:
+            self._log_tailer.set_run_id(run_id)
 
     def _on_queue_finished(self, stopped: bool) -> None:
         self._append_log("Queue cancelled" if stopped else "All files processed")
+        if self._log_tailer:
+            self._log_tailer.stop()
+        self.progress_bar.setRange(0, 1)
+        self.progress_bar.setValue(0)
+        self.progress_label.setText("Idle")
         self._worker = None
         self._set_running_state(False)
         self._update_start_state()
