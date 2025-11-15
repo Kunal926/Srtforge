@@ -23,8 +23,8 @@ class AudioStream:
     codec_name: str
     language: Optional[str]
     channels: Optional[int]
-    channel_layout: Optional[str]
     sample_rate: Optional[int]
+    channel_layout: Optional[str] = None
 
     @classmethod
     def from_probe(cls, data: dict) -> "AudioStream":
@@ -38,8 +38,8 @@ class AudioStream:
             codec_name=data.get("codec_name", "unknown"),
             language=language,
             channels=channels,
-            channel_layout=layout,
             sample_rate=sample_rate,
+            channel_layout=layout,
         )
 
 

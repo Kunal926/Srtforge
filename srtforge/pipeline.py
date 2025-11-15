@@ -19,7 +19,7 @@ from .settings import settings
 from .utils import probe_video_fps
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, kw_only=True)
 class PipelineConfig:
     """Configuration for a single processing run."""
 

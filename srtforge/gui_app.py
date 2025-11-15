@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.resources as resources
+import json
 import os
 import subprocess
 import sys
@@ -153,7 +154,15 @@ class TranscriptionWorker(QtCore.QThread):
                 else:
                     _os.killpg(process.pid, _signal.SIGTERM)  # type: ignore[attr-defined]
             except Exception:
-                process.terminate()
+                if _os.name == "nt":
+                    subprocess.run(
+                        ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        check=False,
+                    )
+                else:
+                    process.terminate()
 
     def run(self) -> None:  # noqa: D401 - Qt override
         total = len(self.files)
@@ -218,10 +227,24 @@ class TranscriptionWorker(QtCore.QThread):
         return_code, stdout, stderr = self._run_command(command, "Transcription", env=env, check=False)
         if return_code == 0:
             import re as _re
-            # Prefer an explicit path printed by the CLI (robust even if output dir is overridden)
-            m = None
+
+            # Prefer a structured event line emitted by the CLI
             for line in (stdout or "").splitlines():
-                # Match "... SRT written to <path>.srt"
+                text = line.strip()
+                if not text:
+                    continue
+                try:
+                    payload = json.loads(text)
+                except Exception:
+                    pass
+                else:
+                    if isinstance(payload, dict) and payload.get("event") == "srt_written":
+                        candidate = Path(str(payload.get("path", ""))).expanduser()
+                        if candidate.exists():
+                            return candidate
+
+            # Fallback to legacy human-readable log lines
+            for line in (stdout or "").splitlines():
                 m = _re.search(r"SRT written to\s+(?P<path>.*?\.srt)\s*$", line)
                 if m:
                     candidate = Path(m.group("path")).expanduser()
@@ -560,9 +583,17 @@ class MainWindow(QtWidgets.QMainWindow):
             self.setStyleSheet(stylesheet)
 
     def _load_win11_stylesheet(self, accent: QtGui.QColor) -> Optional[str]:
+        data: Optional[str] = None
         try:
             data = resources.files("srtforge.assets.styles").joinpath("win11.qss").read_text(encoding="utf-8")
         except (FileNotFoundError, ModuleNotFoundError):  # pragma: no cover - packaging guard
+            try:
+                data = resources.files("srtforge").joinpath("win11.qss").read_text(encoding="utf-8")
+            except Exception:  # pragma: no cover - compatibility guard
+                return None
+        except Exception:  # pragma: no cover - defensive packaging guard
+            return None
+        if data is None:
             return None
         lighter = QtGui.QColor(accent)
         lighter = lighter.lighter(115)
