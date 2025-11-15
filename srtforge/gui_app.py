@@ -156,9 +156,19 @@ class TranscriptionWorker(QtCore.QThread):
         qprocess = self._cli_qprocess
         if qprocess and qprocess.state() != QtCore.QProcess.ProcessState.NotRunning:
             try:
-                if _os.name == "nt":
-                    qprocess.kill()
-                    if not qprocess.waitForFinished(2000):
+                QtCore.QMetaObject.invokeMethod(
+                    qprocess,
+                    "terminate",
+                    QtCore.Qt.QueuedConnection,
+                )
+                if not qprocess.waitForFinished(2000):
+                    QtCore.QMetaObject.invokeMethod(
+                        qprocess,
+                        "kill",
+                        QtCore.Qt.QueuedConnection,
+                    )
+                    finished = qprocess.waitForFinished(1000)
+                    if _os.name == "nt" and not finished:
                         pid = int(qprocess.processId())
                         if pid:
                             subprocess.run(
@@ -167,10 +177,6 @@ class TranscriptionWorker(QtCore.QThread):
                                 stderr=subprocess.DEVNULL,
                                 check=False,
                             )
-                else:
-                    qprocess.terminate()
-                    if not qprocess.waitForFinished(2000):
-                        qprocess.kill()
             except Exception:
                 if _os.name == "nt":
                     pid = int(qprocess.processId())
@@ -182,7 +188,11 @@ class TranscriptionWorker(QtCore.QThread):
                             check=False,
                         )
                 else:
-                    qprocess.kill()
+                    QtCore.QMetaObject.invokeMethod(
+                        qprocess,
+                        "kill",
+                        QtCore.Qt.QueuedConnection,
+                    )
         process = self._active_process
         if process and process.poll() is None:
             try:
@@ -269,13 +279,15 @@ class TranscriptionWorker(QtCore.QThread):
         if cli_binary:
             command = [str(cli_binary), "run", str(media)]
         else:
-            # -u => unbuffered stdout/stderr so the GUI can read lines as they appear
+            # -u => unbuffered stdout/stderr so the GUI can read lines as they appear (Python docs)
             command = [sys.executable, "-u", "-m", "srtforge", "run", str(media)]
         if not self.options.prefer_gpu:
             command.append("--cpu")
         env = os.environ.copy()
         # Also request unbuffered output via env for robustness (Python docs: PYTHONUNBUFFERED)
         env["PYTHONUNBUFFERED"] = "1"
+        env.setdefault("PYTHONIOENCODING", "UTF-8")
+        env.setdefault("PYTHONUTF8", "1")
         ffmpeg_dir = _ffmpeg_directory_from_options(self.options)
         if ffmpeg_dir:
             env_path = env.get("PATH", "")
@@ -304,7 +316,7 @@ class TranscriptionWorker(QtCore.QThread):
     def _run_pipeline_qprocess(self, media: Path) -> tuple[int, str, str]:
         command, env = self._prepare_cli_invocation(media)
         self.logMessage.emit(f"Transcription: {' '.join(command)}")
-        process = QtCore.QProcess(self)
+        process = QtCore.QProcess()
         environment = QtCore.QProcessEnvironment()
         for key, value in env.items():
             environment.insert(key, value)
