@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.resources as resources
+import json
 import os
 import subprocess
 import sys
@@ -141,10 +142,42 @@ class TranscriptionWorker(QtCore.QThread):
     def request_stop(self) -> None:
         """Ask the worker to stop after the current task finishes."""
 
+        import signal as _signal
+        import os as _os
         self._stop_event.set()
         process = self._active_process
         if process and process.poll() is None:
-            process.terminate()
+            try:
+                if _os.name == "nt":
+                    # Signal the process group spawned with CREATE_NEW_PROCESS_GROUP.
+                    # GUI builds often have no attached console, so the taskkill fallback
+                    # below is expected to handle that scenario when CTRL_BREAK is ignored.
+                    process.send_signal(_signal.CTRL_BREAK_EVENT)  # type: ignore[attr-defined]
+                    try:
+                        process.wait(timeout=2)
+                    except Exception:
+                        subprocess.run(
+                            ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                            stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL,
+                            check=False,
+                        )
+                else:
+                    _os.killpg(process.pid, _signal.SIGTERM)  # type: ignore[attr-defined]
+                    try:
+                        process.wait(timeout=2)
+                    except subprocess.TimeoutExpired:
+                        process.terminate()
+            except Exception:
+                if _os.name == "nt":
+                    subprocess.run(
+                        ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        check=False,
+                    )
+                else:
+                    process.terminate()
 
     def run(self) -> None:  # noqa: D401 - Qt override
         total = len(self.files)
@@ -208,6 +241,31 @@ class TranscriptionWorker(QtCore.QThread):
             env["PATH"] = os.pathsep.join(str(part) for part in (ffmpeg_dir, env_path) if part)
         return_code, stdout, stderr = self._run_command(command, "Transcription", env=env, check=False)
         if return_code == 0:
+            import re as _re
+
+            # Prefer a structured event line emitted by the CLI
+            for line in (stdout or "").splitlines():
+                text = line.strip()
+                if not text:
+                    continue
+                try:
+                    payload = json.loads(text)
+                except Exception:
+                    pass
+                else:
+                    if isinstance(payload, dict) and payload.get("event") == "srt_written":
+                        candidate = Path(str(payload.get("path", ""))).expanduser()
+                        if candidate.exists():
+                            return candidate
+
+            # Fallback to legacy human-readable log lines
+            for line in (stdout or "").splitlines():
+                m = _re.search(r"SRT written to\s+(?P<path>.*?\.srt)\s*$", line)
+                if m:
+                    candidate = Path(m.group("path")).expanduser()
+                    if candidate.exists():
+                        return candidate
+            # Fallback to expected path derived from settings
             output_path = _expected_srt_path(media)
             if output_path.exists():
                 return output_path
@@ -222,7 +280,7 @@ class TranscriptionWorker(QtCore.QThread):
 
     def _embed_subtitles(self, media: Path, subtitles: Path) -> Path:
         output = media.with_name(f"{media.stem}_subbed{media.suffix}")
-        codec = "mov_text" if media.suffix.lower() in {".mp4", ".m4v", ".mov"} else "srt"
+        codec = "mov_text" if media.suffix.lower() in {".mp4", ".m4v", ".mov"} else "subrip"
         subtitle_index = self._count_subtitle_streams(media)
         command = [
             self.options.ffmpeg_bin or "ffmpeg",
@@ -231,14 +289,16 @@ class TranscriptionWorker(QtCore.QThread):
             str(media),
             "-i",
             str(subtitles),
+            # Explicitly select all streams from the media (input 0) and the
+            # first subtitle stream from the SRT input (input 1).
+            "-map",
+            "0",
+            "-map",
+            "1:s:0",
             "-c",
             "copy",
             "-c:s",
             codec,
-            "-map",
-            "0",
-            "-map",
-            "1",
             f"-disposition:s:{subtitle_index}",
             "default",
             f"-metadata:s:s:{subtitle_index}",
@@ -275,6 +335,9 @@ class TranscriptionWorker(QtCore.QThread):
     def _burn_subtitles(self, media: Path, subtitles: Path) -> Path:
         output = media.with_name(f"{media.stem}_burned{media.suffix}")
         subtitles_arg = _escape_subtitles_filter_path(subtitles)
+        mov_flags: list[str] = []
+        if output.suffix.lower() in {".mp4", ".m4v", ".mov"}:
+            mov_flags = ["-movflags", "+faststart"]
         command = [
             self.options.ffmpeg_bin or "ffmpeg",
             "-y",
@@ -282,8 +345,12 @@ class TranscriptionWorker(QtCore.QThread):
             str(media),
             "-vf",
             f"subtitles='{subtitles_arg}':force_style='Fontsize=24'",
-            "-c:a",
-            "copy",
+            "-c:v", "libx264",
+            "-crf", "18",
+            "-preset", "medium",
+            "-pix_fmt", "yuv420p",
+            "-c:a", "copy",
+            *mov_flags,
             str(output),
         ]
         self._run_command(command, "Burn subtitles")
@@ -298,12 +365,21 @@ class TranscriptionWorker(QtCore.QThread):
         check: bool = True,
     ) -> tuple[int, str, str]:
         self.logMessage.emit(f"{description}: {' '.join(command)}")
+        kwargs: dict[str, object] = {}
+        if os.name == "nt":
+            # Create a new process group so we can send CTRL_BREAK to the whole tree
+            kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP  # type: ignore[attr-defined]
+        else:
+            # POSIX: start a new session safely (thread-friendly)
+            kwargs["start_new_session"] = True
+
         process = subprocess.Popen(
             command,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
             env=env,
+            **kwargs,
         )
         self._active_process = process
         stdout = ""
@@ -530,7 +606,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def _load_win11_stylesheet(self, accent: QtGui.QColor) -> Optional[str]:
         try:
             data = resources.files("srtforge.assets.styles").joinpath("win11.qss").read_text(encoding="utf-8")
-        except (FileNotFoundError, ModuleNotFoundError):  # pragma: no cover - packaging guard
+        except Exception:  # pragma: no cover - packaging guard
             return None
         lighter = QtGui.QColor(accent)
         lighter = lighter.lighter(115)

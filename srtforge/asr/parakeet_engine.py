@@ -36,12 +36,7 @@ except Exception as exc:  # pragma: no cover - delay failure until used
     nemo_asr = None  # type: ignore[assignment]
     _IMPORT_ERROR = exc
 
-# Make the vendored post-processing modules importable via their original module names.
-POST_DIR = Path(__file__).resolve().parents[1] / "post"
-if str(POST_DIR) not in sys.path:
-    sys.path.insert(0, str(POST_DIR))
-
-from srt_utils import postprocess_segments, write_srt  # type: ignore  # noqa: E402
+from ..post.srt_utils import postprocess_segments, write_srt  # noqa: E402
 from ..logging import RunLogger
 
 

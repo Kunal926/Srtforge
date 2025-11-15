@@ -19,3 +19,6 @@ srtforge-gui = "srtforge.gui_app:main"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["srtforge*"]
+
+[tool.setuptools.package-data]
+"srtforge.assets.styles" = ["win11.qss"]

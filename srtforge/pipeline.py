@@ -9,6 +9,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterable, Optional
 
+
 from rich.table import Table
 
 from .asr.parakeet_engine import parakeet_to_srt
@@ -17,6 +18,21 @@ from .ffmpeg import DEFAULT_TOOLS, AudioStream, FFmpegTooling
 from .logging import RunLogger, get_console, status
 from .settings import settings
 from .utils import probe_video_fps
+
+
+def _has_center_channel(layout: str | None, channels: int | None) -> bool:
+    """Return ``True`` if the probed layout strongly indicates a center channel."""
+
+    if not channels:
+        return False
+    text = (layout or "").upper()
+    # Modern ffprobe exposes ``ch_layout`` as symbolic channel names (``FL+FR+FC``...)
+    if "+" in text and "FC" in text:
+        return True
+    # Legacy ``channel_layout`` names provide less detail; fall back to conservative heuristics
+    if channels >= 3 and any(tag in text for tag in {"3.0", "3.1", "4.0", "4.1", "5.0", "5.1", "6.1", "7.1"}):
+        return True
+    return False
 
 
 @dataclass(slots=True)
@@ -40,6 +56,7 @@ class PipelineConfig:
     ffmpeg_prefer_center: bool = settings.ffmpeg.prefer_center
     force_float32: bool = settings.parakeet.force_float32
     prefer_gpu: bool = settings.parakeet.prefer_gpu
+    allow_untagged_english: bool = settings.separation.allow_untagged_english
 
 
 @dataclass(slots=True)
@@ -143,14 +160,20 @@ class Pipeline:
                         raise ValueError(message)
 
                     filter_chain = self.config.ffmpeg_filter_chain
+                    pan_expr = None
+                    layout = getattr(english_stream, "channel_layout", None)
+                    channels = english_stream.channels or 0
+                    has_center = _has_center_channel(layout, channels)
                     if (
-                        filter_chain
-                        and self.config.ffmpeg_prefer_center
-                        and english_stream.channels
-                        and english_stream.channels >= 3
-                        and "pan=" not in filter_chain
+                        self.config.ffmpeg_prefer_center
+                        and channels >= 2
+                        and (not filter_chain or "pan=" not in filter_chain)
                     ):
-                        filter_chain = f"pan=mono|c0=c2,{filter_chain}"
+                        # FFmpeg's ``pan`` filter addresses channels by symbolic names
+                        # such as ``FL``, ``FR``, and ``FC``.
+                        pan_expr = "pan=mono|c0=FC" if has_center else "pan=mono|c0=0.5*FL+0.5*FR"
+                    if pan_expr:
+                        filter_chain = f"{pan_expr},{filter_chain}" if filter_chain else pan_expr
                     with status("Applying FFmpeg preprocessing filters"), run_logger.step(
                         "FFmpeg preprocessing"
                     ):
@@ -197,13 +220,18 @@ class Pipeline:
             lang = (stream.language or "").lower()
             if lang in {"en", "eng", "english"}:
                 english_streams.append(stream)
-        if not english_streams:
-            return None
-        if self.config.separation_prefer_center:
-            for stream in english_streams:
-                if stream.channels == 1:
-                    return stream
-        return english_streams[0]
+        if english_streams:
+            if self.config.separation_prefer_center:
+                for stream in english_streams:
+                    if stream.channels == 1:
+                        return stream
+            return english_streams[0]
+        # Fallback path when opt-in setting is enabled
+        if getattr(self.config, "allow_untagged_english", False):
+            # Pick the first audio stream as a best-effort default
+            for stream in streams:
+                return stream
+        return None
 
     def _resolve_parakeet_checkpoint(self) -> Optional[Path]:
         """Locate a local Parakeet checkpoint if available."""

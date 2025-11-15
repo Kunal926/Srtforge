@@ -24,19 +24,29 @@ class AudioStream:
     language: Optional[str]
     channels: Optional[int]
     sample_rate: Optional[int]
+    channel_layout: Optional[str] = None
 
     @classmethod
     def from_probe(cls, data: dict) -> "AudioStream":
         tags = data.get("tags", {}) or {}
         language = tags.get("language") or tags.get("LANGUAGE")
-        sample_rate = int(data["sample_rate"]) if data.get("sample_rate") else None
+        try:
+            sample_rate = int(data["sample_rate"]) if data.get("sample_rate") else None
+        except (TypeError, ValueError):  # pragma: no cover - defensive against exotic ffprobe output
+            sample_rate = None
         channels = int(data.get("channels")) if data.get("channels") else None
+        layout = data.get("ch_layout") or data.get("channel_layout") or None
+        try:
+            index_value = int(data["index"])
+        except (TypeError, ValueError, KeyError):  # pragma: no cover - defensive parsing
+            index_value = 0
         return cls(
-            index=int(data["index"]),
+            index=index_value,
             codec_name=data.get("codec_name", "unknown"),
             language=language,
             channels=channels,
             sample_rate=sample_rate,
+            channel_layout=layout,
         )
 
 
@@ -147,7 +157,7 @@ class FFmpegTooling:
             "-select_streams",
             "a",
             "-show_entries",
-            "stream=index,codec_name,channels,sample_rate:stream_tags=language,LANGUAGE",
+            "stream=index,codec_name,channels,sample_rate,channel_layout,ch_layout:stream_tags=language,LANGUAGE",
             "-of",
             "json",
             str(media),
