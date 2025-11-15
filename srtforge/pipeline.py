@@ -20,6 +20,23 @@ from .settings import settings
 from .utils import probe_video_fps
 
 
+CENTER_CHANNEL_LAYOUTS = {
+    "3.0",
+    "3.1",
+    "4.0",
+    "5.0",
+    "5.1",
+    "5.1(SIDE)",
+    "5.1(BACK)",
+    "6.1",
+    "6.1(BACK)",
+    "7.1",
+    "7.1(WIDE)",
+    "7.1(WIDE-SIDE)",
+    "7.1(TOP)",
+}
+
+
 @dataclass(slots=True)
 class PipelineConfig:
     """Configuration for a single processing run."""
@@ -147,16 +164,14 @@ class Pipeline:
                     filter_chain = self.config.ffmpeg_filter_chain
                     pan_expr = None
                     layout = (getattr(english_stream, "channel_layout", None) or "").upper()
+                    channels = english_stream.channels or 0
+                    has_center = channels >= 3 and layout in CENTER_CHANNEL_LAYOUTS
                     if (
                         self.config.ffmpeg_prefer_center
-                        and english_stream.channels
-                        and english_stream.channels >= 2
+                        and channels >= 2
                         and (not filter_chain or "pan=" not in filter_chain)
                     ):
-                        if "FC" in layout:
-                            pan_expr = "pan=mono|c0=FC"
-                        else:
-                            pan_expr = "pan=mono|c0=0.5*FL+0.5*FR"
+                        pan_expr = "pan=mono|c0=FC" if has_center else "pan=mono|c0=0.5*FL+0.5*FR"
                     if pan_expr:
                         filter_chain = f"{pan_expr},{filter_chain}" if filter_chain else pan_expr
                     with status("Applying FFmpeg preprocessing filters"), run_logger.step(
