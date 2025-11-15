@@ -231,7 +231,7 @@ class TranscriptionWorker(QtCore.QThread):
         if cli_binary:
             command = [str(cli_binary), "run", str(media)]
         else:
-            command = [sys.executable, "-m", "srtforge.cli", "run", str(media)]
+            command = [sys.executable, "-m", "srtforge", "run", str(media)]
         if not self.options.prefer_gpu:
             command.append("--cpu")
         env = os.environ.copy()
