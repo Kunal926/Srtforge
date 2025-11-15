@@ -341,6 +341,8 @@ class TranscriptionWorker(QtCore.QThread):
             "-c:v", "libx264",
             "-crf", "18",
             "-preset", "medium",
+            "-pix_fmt", "yuv420p",
+            "-movflags", "+faststart",
             "-c:a", "copy",
             str(output),
         ]

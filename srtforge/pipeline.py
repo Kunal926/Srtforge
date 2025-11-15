@@ -9,6 +9,22 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterable, Optional
 
+
+CENTER_CHANNEL_LAYOUTS = {
+    "3.0",
+    "4.0",
+    "5.0",
+    "5.1",
+    "5.1(side)",
+    "5.1(back)",
+    "6.1",
+    "6.1(back)",
+    "7.1",
+    "7.1(wide)",
+    "7.1(wide-side)",
+    "7.1(top)",
+}
+
 from rich.table import Table
 
 from .asr.parakeet_engine import parakeet_to_srt
@@ -145,20 +161,19 @@ class Pipeline:
 
                     filter_chain = self.config.ffmpeg_filter_chain
                     pan_expr = None
+                    layout = (getattr(english_stream, "channel_layout", None) or "").lower()
                     if (
-                        filter_chain
-                        and self.config.ffmpeg_prefer_center
+                        self.config.ffmpeg_prefer_center
                         and english_stream.channels
-                        and english_stream.channels >= 3
-                        and "pan=" not in filter_chain
+                        and english_stream.channels >= 2
+                        and (not filter_chain or "pan=" not in filter_chain)
                     ):
-                        # Prefer named center (FC) if layout suggests it; else fall back to c2
-                        if getattr(english_stream, "channel_layout", None) and "FC" in english_stream.channel_layout.upper():
+                        if layout in CENTER_CHANNEL_LAYOUTS:
                             pan_expr = "pan=mono|c0=FC"
                         else:
-                            pan_expr = "pan=mono|c0=c2"
+                            pan_expr = "pan=mono|c0=0.5*FL+0.5*FR"
                     if pan_expr:
-                        filter_chain = f"{pan_expr},{filter_chain}"
+                        filter_chain = f"{pan_expr},{filter_chain}" if filter_chain else pan_expr
                     with status("Applying FFmpeg preprocessing filters"), run_logger.step(
                         "FFmpeg preprocessing"
                     ):

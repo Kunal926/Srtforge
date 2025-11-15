@@ -30,9 +30,12 @@ class AudioStream:
     def from_probe(cls, data: dict) -> "AudioStream":
         tags = data.get("tags", {}) or {}
         language = tags.get("language") or tags.get("LANGUAGE")
-        sample_rate = int(data["sample_rate"]) if data.get("sample_rate") else None
+        try:
+            sample_rate = int(data["sample_rate"]) if data.get("sample_rate") else None
+        except (TypeError, ValueError):  # pragma: no cover - defensive against exotic ffprobe output
+            sample_rate = None
         channels = int(data.get("channels")) if data.get("channels") else None
-        layout = data.get("channel_layout")
+        layout = data.get("channel_layout") or None
         return cls(
             index=int(data["index"]),
             codec_name=data.get("codec_name", "unknown"),
