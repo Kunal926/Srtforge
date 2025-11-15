@@ -144,6 +144,7 @@ class TranscriptionWorker(QtCore.QThread):
         self._cli_qprocess: Optional[QtCore.QProcess] = None
         self._last_srt_path: Optional[Path] = None
         self._current_run_id: Optional[str] = None
+        self._cli_pid: Optional[int] = None
 
     _RUN_ID_PATTERN = re.compile(r"Run ID[:\s]+([0-9A-Za-z-]+)")
 
@@ -161,32 +162,18 @@ class TranscriptionWorker(QtCore.QThread):
                     "terminate",
                     QtCore.Qt.QueuedConnection,
                 )
-                if not qprocess.waitForFinished(2000):
-                    QtCore.QMetaObject.invokeMethod(
-                        qprocess,
-                        "kill",
-                        QtCore.Qt.QueuedConnection,
+                QtCore.QTimer.singleShot(
+                    2000,
+                    lambda: self._queue_cli_kill(),
+                )
+                if _os.name == "nt":
+                    QtCore.QTimer.singleShot(
+                        3500,
+                        lambda: self._windows_taskkill_fallback(),
                     )
-                    finished = qprocess.waitForFinished(1000)
-                    if _os.name == "nt" and not finished:
-                        pid = int(qprocess.processId())
-                        if pid:
-                            subprocess.run(
-                                ["taskkill", "/PID", str(pid), "/T", "/F"],
-                                stdout=subprocess.DEVNULL,
-                                stderr=subprocess.DEVNULL,
-                                check=False,
-                            )
             except Exception:
                 if _os.name == "nt":
-                    pid = int(qprocess.processId())
-                    if pid:
-                        subprocess.run(
-                            ["taskkill", "/PID", str(pid), "/T", "/F"],
-                            stdout=subprocess.DEVNULL,
-                            stderr=subprocess.DEVNULL,
-                            check=False,
-                        )
+                    self._windows_taskkill_fallback()
                 else:
                     QtCore.QMetaObject.invokeMethod(
                         qprocess,
@@ -226,6 +213,35 @@ class TranscriptionWorker(QtCore.QThread):
                     )
                 else:
                     process.terminate()
+
+    def _queue_cli_kill(self) -> None:
+        """Post a kill request for the active QProcess without blocking the UI."""
+
+        qprocess = self._cli_qprocess
+        if not qprocess:
+            return
+        QtCore.QMetaObject.invokeMethod(
+            qprocess,
+            "kill",
+            QtCore.Qt.QueuedConnection,
+        )
+
+    def _windows_taskkill_fallback(self) -> None:
+        """Forcefully terminate the CLI tree on Windows if it survives termination."""
+
+        if os.name != "nt":
+            return
+        if not self._cli_qprocess:
+            return
+        pid = self._cli_pid or 0
+        if pid <= 0:
+            return
+        subprocess.run(
+            ["taskkill", "/PID", str(pid), "/T", "/F"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
 
     def run(self) -> None:  # noqa: D401 - Qt override
         total = len(self.files)
@@ -375,12 +391,15 @@ class TranscriptionWorker(QtCore.QThread):
             if not process.waitForStarted(5000):
                 error = process.errorString() or "unable to start transcription process"
                 raise RuntimeError(error)
+            pid = int(process.processId())
+            self._cli_pid = pid or None
             if process.state() != QtCore.QProcess.ProcessState.NotRunning:
                 loop.exec()
             _handle_stdout()
             _handle_stderr()
         finally:
             self._cli_qprocess = None
+            self._cli_pid = None
             process.deleteLater()
 
         if stdout_buffer:
