@@ -410,8 +410,10 @@ class TranscriptionWorker(QtCore.QThread):
         try:
             return_code = process.wait()
         finally:
-            t_out.join(0.2)
-            t_err.join(0.2)
+            # Ensure the pump threads finish draining any remaining output before
+            # we build the combined stdout/stderr strings.
+            t_out.join()
+            t_err.join()
             self._active_process = None
 
         stdout = "".join(stdout_lines)
