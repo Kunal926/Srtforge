@@ -576,7 +576,7 @@ class TranscriptionWorker(QtCore.QThread):
             f"-disposition:s:{subtitle_index}",
             "0",
             f"-metadata:s:s:{subtitle_index}",
-            "language=eng",
+            "title=srtforge (English)",
             str(output),
         ]
         self._run_command(command, "Embed subtitles")
