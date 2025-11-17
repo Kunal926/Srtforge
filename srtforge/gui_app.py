@@ -659,7 +659,7 @@ class TranscriptionWorker(QtCore.QThread):
             f"0:{language}",
             "--default-track-flag",
             f"0:{default_flag}",
-            "--forced-display-flag",
+            "--forced-track-flag",
             f"0:{forced_flag}",
             str(subtitles),
         ]
