@@ -959,7 +959,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle("srtforge Studio")
+        self.setWindowTitle("Srtforge Studio")
         self.setMinimumSize(960, 640)
         self.setObjectName("MainWindow")
         self.setAcceptDrops(True)
@@ -979,7 +979,7 @@ class MainWindow(QtWidgets.QMainWindow):
         page = QtWidgets.QWidget()
         layout = QtWidgets.QVBoxLayout(page)
         layout.setSpacing(16)
-        header = QtWidgets.QLabel("Windows 11-style subtitle studio for srtforge")
+        header = QtWidgets.QLabel("Srtforge Studio")
         header.setObjectName("HeaderLabel")
         header.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(header)
@@ -987,6 +987,10 @@ class MainWindow(QtWidgets.QMainWindow):
         queue_group = QtWidgets.QGroupBox("Transcription queue")
         queue_layout = QtWidgets.QHBoxLayout(queue_group)
         self.queue_list = QtWidgets.QListWidget()
+        # UX: keep the queue compact (approx. ~50% of previous space use on typical displays)
+        # This prevents it from dominating the page when the window is tall.
+        # Adjust locally if you prefer a different cap.
+        self.queue_list.setMaximumHeight(180)
         self.queue_list.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.ExtendedSelection)
         queue_layout.addWidget(self.queue_list)
         # Let the list take the space while the buttons keep a compact width
@@ -1018,7 +1022,18 @@ class MainWindow(QtWidgets.QMainWindow):
             combo.setMinimumContentsLength(18)
         options_layout.addWidget(device_label, 0, 0)
         options_layout.addWidget(self.device_combo, 0, 1)
+        # --- Collapsible "Embed subtitles" block -------------------------------
         self.embed_checkbox = QtWidgets.QCheckBox("Embed subtitles (soft track)")
+        options_layout.addWidget(self.embed_checkbox, 1, 0, 1, 2)
+
+        # Container that expands/collapses with the checkbox
+        self.embed_container = QtWidgets.QFrame()
+        self.embed_container.setFrameShape(QtWidgets.QFrame.NoFrame)
+        embed_grid = QtWidgets.QGridLayout(self.embed_container)
+        embed_grid.setContentsMargins(0, 0, 0, 0)
+        embed_grid.setHorizontalSpacing(12)
+        embed_grid.setVerticalSpacing(8)
+
         method_label = QtWidgets.QLabel("Soft-embed method")
         self.embed_method_combo = QtWidgets.QComboBox()
         self.embed_method_combo.addItem("Auto (prefer MKVToolNix)", "auto")
@@ -1026,23 +1041,32 @@ class MainWindow(QtWidgets.QMainWindow):
         self.embed_method_combo.addItem("FFmpeg (legacy)", "ffmpeg")
         self.embed_method_combo.setSizeAdjustPolicy(QtWidgets.QComboBox.AdjustToMinimumContentsLengthWithIcon)
         self.embed_method_combo.setMinimumContentsLength(22)
-        options_layout.addWidget(method_label, 2, 0)
-        options_layout.addWidget(self.embed_method_combo, 2, 1)
+        embed_grid.addWidget(method_label, 0, 0)
+        embed_grid.addWidget(self.embed_method_combo, 0, 1)
+
         self.title_edit = QtWidgets.QLineEdit("Srtforge (English)")
-        self.lang_edit = QtWidgets.QLineEdit("eng")
-        options_layout.addWidget(QtWidgets.QLabel("Track title"), 2, 2)
-        options_layout.addWidget(self.title_edit, 2, 3)
-        options_layout.addWidget(QtWidgets.QLabel("Track language"), 3, 2)
-        options_layout.addWidget(self.lang_edit, 3, 3)
+        embed_grid.addWidget(QtWidgets.QLabel("Track title"), 0, 2)
+        embed_grid.addWidget(self.title_edit, 0, 3)
+
+        # Track language fixed to eng (non-editable, as Parakeet is English-only here)
+        language_hint = QtWidgets.QLabel("Track language: eng (fixed)")
+        language_hint.setStyleSheet("color: #6b7280;")  # subtle hint color
+        embed_grid.addWidget(language_hint, 1, 0, 1, 2)
+
         self.default_checkbox = QtWidgets.QCheckBox("Set as default track")
         self.forced_checkbox = QtWidgets.QCheckBox("Mark as forced")
-        options_layout.addWidget(self.default_checkbox, 4, 2)
-        options_layout.addWidget(self.forced_checkbox, 4, 3)
+        embed_grid.addWidget(self.default_checkbox, 1, 2)
+        embed_grid.addWidget(self.forced_checkbox, 1, 3)
+
+        # Burn lives inside the collapsible section per request
         self.burn_checkbox = QtWidgets.QCheckBox("Burn subtitles (hard sub)")
+        embed_grid.addWidget(self.burn_checkbox, 2, 0, 1, 2)
+
+        # Place collapsible container into the main options grid (full width)
+        options_layout.addWidget(self.embed_container, 2, 0, 1, 4)
+
         self.cleanup_checkbox = QtWidgets.QCheckBox("Free GPU memory when stopping")
-        options_layout.addWidget(self.embed_checkbox, 1, 0, 1, 2)
-        options_layout.addWidget(self.burn_checkbox, 3, 0, 1, 2)
-        options_layout.addWidget(self.cleanup_checkbox, 4, 0, 1, 2)
+        options_layout.addWidget(self.cleanup_checkbox, 3, 0, 1, 2)
         # Let value columns grow/shrink; keep label columns compact
         options_layout.setColumnStretch(0, 0)
         options_layout.setColumnStretch(1, 1)
@@ -1258,20 +1282,19 @@ class MainWindow(QtWidgets.QMainWindow):
         self.start_button.setEnabled(has_items and not self._worker)
 
     def _update_embed_controls(self) -> None:
-        enabled = (
-            self.embed_checkbox.isEnabled()
-            and self.embed_checkbox.isChecked()
-            and self._worker is None
-        )
-        widgets = (
+        # Show/Hide the collapsible container with all embed-related controls.
+        is_checked = self.embed_checkbox.isChecked()
+        self.embed_container.setVisible(is_checked)
+        # While running, lock down the inner controls even if visible.
+        inner_enabled = is_checked and (self._worker is None) and self.embed_checkbox.isEnabled()
+        for widget in (
             self.embed_method_combo,
             self.title_edit,
-            self.lang_edit,
             self.default_checkbox,
             self.forced_checkbox,
-        )
-        for widget in widgets:
-            widget.setEnabled(enabled)
+            self.burn_checkbox,
+        ):
+            widget.setEnabled(inner_enabled)
 
     def _start_processing(self) -> None:
         if self._worker:
@@ -1291,7 +1314,9 @@ class MainWindow(QtWidgets.QMainWindow):
             soft_embed_method=embed_method,
             mkvmerge_bin=str(self.mkv_paths.mkvmerge) if self.mkv_paths else None,
             srt_title=self.title_edit.text().strip() or "Srtforge (English)",
-            srt_language=self.lang_edit.text().strip() or "eng",
+            # Language is fixed to English to match the Parakeet pipeline:
+            # no input here, always pass "eng".
+            srt_language="eng",
             srt_default=self.default_checkbox.isChecked(),
             srt_forced=self.forced_checkbox.isChecked(),
         )
