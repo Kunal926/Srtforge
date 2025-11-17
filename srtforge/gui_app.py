@@ -32,6 +32,13 @@ class FFmpegBinaries:
 
 
 @dataclass(slots=True)
+class MKVToolNixBinaries:
+    """Resolved mkvmerge executable."""
+
+    mkvmerge: Path
+
+
+@dataclass(slots=True)
 class WorkerOptions:
     """Options that control how the transcription worker runs."""
 
@@ -136,7 +143,6 @@ class TranscriptionWorker(QtCore.QThread):
     """Background worker that processes queued media sequentially."""
 
     logMessage = QtCore.Signal(str)
-    progress = QtCore.Signal(int, int)
     fileStarted = QtCore.Signal(str)
     fileCompleted = QtCore.Signal(str, str)
     fileFailed = QtCore.Signal(str, str)
@@ -331,7 +337,6 @@ class TranscriptionWorker(QtCore.QThread):
 
     def run(self) -> None:  # noqa: D401 - Qt override
         total = len(self.files)
-        self.progress.emit(0, total)
         for index, media_path in enumerate(self.files, start=1):
             if self._stop_event.is_set():
                 break
@@ -358,7 +363,7 @@ class TranscriptionWorker(QtCore.QThread):
                         embed_method = "auto"
                     use_mkvmerge = (
                         embed_method == "mkvmerge"
-                        or (embed_method == "auto" and suffix == ".mkv" and has_mkvmerge)
+                        or (embed_method == "auto" and suffix in {".mkv", ".webm"} and has_mkvmerge)
                     )
                     if self._stop_event.is_set():
                         raise StopRequested
@@ -395,7 +400,6 @@ class TranscriptionWorker(QtCore.QThread):
                 break
             except Exception as exc:  # pragma: no cover - defensive safeguard
                 self.fileFailed.emit(str(media_path), str(exc))
-            self.progress.emit(index, total)
         stopped = self._stop_event.is_set()
         self.queueFinished.emit(stopped)
 
@@ -624,7 +628,7 @@ class TranscriptionWorker(QtCore.QThread):
         return output
 
     def _embed_subtitles_mkvmerge(self, media: Path, subtitles: Path) -> Path:
-        if media.suffix.lower() != ".mkv":
+        if media.suffix.lower() not in {".mkv", ".webm"}:
             return self._embed_subtitles_ffmpeg(media, subtitles)
         output = media.with_name(f"{media.stem}_subbed{media.suffix}")
         mkvmerge = self.options.mkvmerge_bin or "mkvmerge"
@@ -821,23 +825,27 @@ def locate_ffmpeg_binaries() -> Optional[FFmpegBinaries]:
     return None
 
 
-def locate_mkvmerge() -> Optional[Path]:
-    """Locate ``mkvmerge`` via bundled, env, Program Files, or PATH."""
+def locate_mkvmerge_binary() -> Optional[MKVToolNixBinaries]:
+    """Find mkvmerge via environment, common install paths, or PATH."""
 
-    candidates: list[Path] = []
+    exe = "mkvmerge.exe" if os.name == "nt" else "mkvmerge"
+
     env_dir = os.environ.get("SRTFORGE_MKV_DIR")
     if env_dir:
-        candidates.append(Path(env_dir))
+        candidate = Path(env_dir).expanduser() / exe
+        if candidate.exists():
+            return MKVToolNixBinaries(candidate)
+
     bundle_dir = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
-    candidates += [
+    candidates: list[Path] = [
         bundle_dir / "mkvtoolnix",
         Path(sys.executable).resolve().parent / "mkvtoolnix",
         Path.cwd() / "mkvtoolnix",
         Path(__file__).resolve().parent / ".." / "mkvtoolnix",
-        Path(os.environ.get("ProgramFiles", r"C:\\Program Files")) / "MKVToolNix",
     ]
+    if os.name == "nt":
+        candidates.append(Path(r"C:\Program Files\MKVToolNix"))
 
-    exe = "mkvmerge.exe" if os.name == "nt" else "mkvmerge"
     seen: set[Path] = set()
     for base in candidates:
         normalized = base.resolve()
@@ -846,9 +854,9 @@ def locate_mkvmerge() -> Optional[Path]:
         seen.add(normalized)
         candidate = normalized / exe
         if candidate.exists():
-            return candidate
+            return MKVToolNixBinaries(candidate)
     which = shutil_which("mkvmerge")
-    return Path(which) if which else None
+    return MKVToolNixBinaries(Path(which)) if which else None
 
 
 def locate_cli_executable() -> Optional[Path]:
@@ -978,7 +986,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._worker: Optional[TranscriptionWorker] = None
         self._log_tailer: Optional[LogTailer] = None
         self.ffmpeg_paths = locate_ffmpeg_binaries()
-        self.mkvmerge_path = locate_mkvmerge()
+        self.mkv_paths = locate_mkvmerge_binary()
         self._build_ui()
         self._log_tailer = LogTailer(self._append_log, self)
         self._apply_styles()
@@ -1055,14 +1063,6 @@ class MainWindow(QtWidgets.QMainWindow):
         layout.addWidget(options_group)
         add_shadow(options_group)
         self._update_embed_controls()
-
-        progress_row = QtWidgets.QHBoxLayout()
-        self.progress_bar = QtWidgets.QProgressBar()
-        self.progress_bar.setRange(0, 1)
-        self.progress_label = QtWidgets.QLabel("Idle")
-        progress_row.addWidget(self.progress_bar)
-        progress_row.addWidget(self.progress_label)
-        layout.addLayout(progress_row)
 
         self.log_view = QtWidgets.QPlainTextEdit()
         self.log_view.setReadOnly(True)
@@ -1181,11 +1181,11 @@ class MainWindow(QtWidgets.QMainWindow):
         else:
             lines.append("FFmpeg not found. Place binaries next to the executable or set SRTFORGE_FFMPEG_DIR.")
             self.burn_checkbox.setEnabled(False)
-        if self.mkvmerge_path:
-            lines.append(f"MKVToolNix (mkvmerge) detected at {self.mkvmerge_path.parent}")
+        if self.mkv_paths:
+            lines.append(f"MKVToolNix (mkvmerge) detected at {self.mkv_paths.mkvmerge.parent}")
         else:
             lines.append("MKVToolNix (mkvmerge) not found. It will be installed by install.ps1 or set SRTFORGE_MKV_DIR.")
-        has_embed_backend = (self.ffmpeg_paths is not None) or (self.mkvmerge_path is not None)
+        has_embed_backend = (self.ffmpeg_paths is not None) or (self.mkv_paths is not None)
         self.embed_checkbox.setEnabled(has_embed_backend and (self._worker is None))
         if not has_embed_backend:
             lines.append("Soft embedding disabled until FFmpeg or MKVToolNix is available.")
@@ -1260,7 +1260,7 @@ class MainWindow(QtWidgets.QMainWindow):
             ffmpeg_bin=str(self.ffmpeg_paths.ffmpeg) if self.ffmpeg_paths else None,
             ffprobe_bin=str(self.ffmpeg_paths.ffprobe) if self.ffmpeg_paths else None,
             soft_embed_method=embed_method,
-            mkvmerge_bin=str(self.mkvmerge_path) if self.mkvmerge_path else None,
+            mkvmerge_bin=str(self.mkv_paths.mkvmerge) if self.mkv_paths else None,
             srt_title=self.title_edit.text().strip() or "srtforge (English)",
             srt_language=self.lang_edit.text().strip() or "eng",
             srt_default=self.default_checkbox.isChecked(),
@@ -1268,7 +1268,6 @@ class MainWindow(QtWidgets.QMainWindow):
         )
         self._worker = TranscriptionWorker(files, options)
         self._worker.logMessage.connect(self._append_log)
-        self._worker.progress.connect(self._update_progress)
         self._worker.fileStarted.connect(self._on_file_started)
         self._worker.fileCompleted.connect(self._on_file_completed)
         self._worker.fileFailed.connect(self._on_file_failed)
@@ -1289,7 +1288,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.stop_button.setEnabled(running)
         self.queue_list.setEnabled(not running)
         self.device_combo.setEnabled(not running)
-        has_embed_backend = (self.ffmpeg_paths is not None) or (self.mkvmerge_path is not None)
+        has_embed_backend = (self.ffmpeg_paths is not None) or (self.mkv_paths is not None)
         self.embed_checkbox.setEnabled(has_embed_backend and not running)
         self.burn_checkbox.setEnabled((self.ffmpeg_paths is not None) and not running)
         self._update_embed_controls()
@@ -1298,29 +1297,17 @@ class MainWindow(QtWidgets.QMainWindow):
         self.log_view.appendPlainText(message)
         self.log_view.verticalScrollBar().setValue(self.log_view.verticalScrollBar().maximum())
 
-    def _update_progress(self, current: int, total: int) -> None:
-        if total <= 0:
-            self.progress_bar.setRange(0, 0)
-        else:
-            self.progress_bar.setRange(0, total)
-            self.progress_bar.setValue(current)
-        self.progress_label.setText(f"{current}/{total} files" if total > 0 else "Working…")
-
     def _on_file_started(self, path: str) -> None:
-        self.progress_bar.setRange(0, 0)  # Qt docs: 0/0 switches to indeterminate/busy state
         if self._log_tailer:
             self._log_tailer.start()
-        self.progress_label.setText("Working…")
         self._append_log(f"Processing {path}")
 
     def _on_file_completed(self, media: str, summary: str) -> None:
-        self.progress_bar.setRange(0, max(1, self.queue_list.count()))
         if self._log_tailer:
             self._log_tailer.stop()
         self._append_log(f"✅ {media}: {summary}")
 
     def _on_file_failed(self, media: str, reason: str) -> None:
-        self.progress_bar.setRange(0, max(1, self.queue_list.count()))
         if self._log_tailer:
             self._log_tailer.stop()
         self._append_log(f"⚠️ {media}: {reason}")
@@ -1333,9 +1320,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self._append_log("Queue cancelled" if stopped else "All files processed")
         if self._log_tailer:
             self._log_tailer.stop()
-        self.progress_bar.setRange(0, 1)
-        self.progress_bar.setValue(0)
-        self.progress_label.setText("Idle")
         self._worker = None
         self._set_running_state(False)
         self._update_start_state()
