@@ -356,7 +356,10 @@ class TranscriptionWorker(QtCore.QThread):
                     if embed_method not in {"auto", "ffmpeg", "mkvmerge"}:
                         embed_method = "auto"
                     suffix = media_path.suffix.lower()
-                    has_ffmpeg = bool(self.options.ffmpeg_bin or which("ffmpeg"))
+                    has_ffmpeg = bool(
+                        (self.options.ffmpeg_bin or which("ffmpeg"))
+                        and (self.options.ffprobe_bin or which("ffprobe"))
+                    )
                     has_mkvmerge = bool(self.options.mkvmerge_bin or which("mkvmerge"))
                     if embed_method == "ffmpeg":
                         can_embed_backend = has_ffmpeg
