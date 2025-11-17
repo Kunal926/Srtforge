@@ -12,6 +12,7 @@ import sys
 import threading
 from dataclasses import dataclass
 from pathlib import Path
+from shutil import which
 from typing import Callable, Iterable, List, Optional, TextIO
 
 from PySide6 import QtCore, QtGui, QtWidgets
@@ -355,8 +356,8 @@ class TranscriptionWorker(QtCore.QThread):
                     if embed_method not in {"auto", "ffmpeg", "mkvmerge"}:
                         embed_method = "auto"
                     suffix = media_path.suffix.lower()
-                    has_ffmpeg = bool(self.options.ffmpeg_bin)
-                    has_mkvmerge = bool(self.options.mkvmerge_bin)
+                    has_ffmpeg = bool(self.options.ffmpeg_bin or which("ffmpeg"))
+                    has_mkvmerge = bool(self.options.mkvmerge_bin or which("mkvmerge"))
                     if embed_method == "ffmpeg":
                         can_embed_backend = has_ffmpeg
                     elif embed_method == "mkvmerge":
