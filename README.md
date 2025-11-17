@@ -158,8 +158,8 @@ desktop experience:
 * Optional checkboxes enable **Embed subtitles** (soft subtitle track muxed into
   the video via FFmpeg without re-encoding) and **Burn subtitles** (hard-coded
   overlay produced by FFmpeg’s `subtitles` filter).
-* The progress bar, log console, and toast-style messages keep you informed
-  about each file’s status. **Stop** halts the current job immediately by
+* The log console and toast-style messages keep you informed about each file’s
+  status. **Stop** halts the current job immediately by
   terminating the pipeline/FFmpeg subprocesses, and an optional toggle clears
   CUDA caches via `torch.cuda.empty_cache()` once the worker shuts down.
 
