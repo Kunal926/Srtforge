@@ -597,7 +597,7 @@ class TranscriptionWorker(QtCore.QThread):
         method = (self.options.embed_method or "auto").lower()
         if method not in {"auto", "ffmpeg", "mkvmerge"}:
             method = "auto"
-        can_use_mkvmerge = bool(self.options.mkvmerge_bin)
+        can_use_mkvmerge = bool(self.options.mkvmerge_bin or which("mkvmerge"))
         if (
             ext == ".mkv"
             and method in {"auto", "mkvmerge"}
