@@ -149,7 +149,7 @@ The repository now ships with a PySide6-powered Windows 11-style front-end
 (`srtforge-gui`) that wraps the same transcription pipeline in an approachable
 desktop experience:
 
-* Drag-and-drop one or more videos onto the rounded drop zone to populate the
+* Drag-and-drop one or more videos **anywhere in the window** to populate the
   queue. You can also use **Add files…**, **Remove selected**, and **Clear queue**
   to curate the list manually.
 * Pick CPU or GPU execution from the **Device** dropdown—this mirrors the CLI

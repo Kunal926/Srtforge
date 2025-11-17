@@ -57,50 +57,6 @@ class WorkerOptions:
     srt_forced: bool
 
 
-class DropArea(QtWidgets.QFrame):
-    """A rounded drop zone that accepts media files."""
-
-    filesDropped = QtCore.Signal(list)
-
-    def __init__(self, parent: Optional[QtWidgets.QWidget] = None) -> None:
-        super().__init__(parent)
-        self.setAcceptDrops(True)
-        self.setObjectName("DropArea")
-        self.setMinimumHeight(140)
-        layout = QtWidgets.QVBoxLayout(self)
-        layout.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
-        icon = QtWidgets.QLabel("📂")
-        icon.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
-        icon.setStyleSheet("font-size: 32px;")
-        layout.addWidget(icon)
-        label = QtWidgets.QLabel("Drag and drop videos here")
-        label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
-        label.setWordWrap(True)
-        layout.addWidget(label)
-
-    def dragEnterEvent(self, event: QtGui.QDragEnterEvent) -> None:  # noqa: D401 - Qt override
-        if event.mimeData().hasUrls():
-            event.acceptProposedAction()
-        else:
-            event.ignore()
-
-    def dragMoveEvent(self, event: QtGui.QDragMoveEvent) -> None:  # noqa: D401 - Qt override
-        if event.mimeData().hasUrls():
-            event.acceptProposedAction()
-        else:
-            event.ignore()
-
-    def dropEvent(self, event: QtGui.QDropEvent) -> None:  # noqa: D401 - Qt override
-        paths: List[str] = []
-        for url in event.mimeData().urls():
-            local = Path(url.toLocalFile())
-            if local.is_file():
-                paths.append(str(local))
-        if paths:
-            self.filesDropped.emit(paths)
-        event.acceptProposedAction()
-
-
 def add_shadow(widget: QtWidgets.QWidget) -> None:
     """Add a soft drop shadow to widgets to emulate Windows 11 cards."""
 
@@ -1028,11 +984,6 @@ class MainWindow(QtWidgets.QMainWindow):
         header.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(header)
 
-        self.drop_area = DropArea()
-        self.drop_area.filesDropped.connect(self._handle_dropped_files)
-        layout.addWidget(self.drop_area)
-        add_shadow(self.drop_area)
-
         queue_group = QtWidgets.QGroupBox("Transcription queue")
         queue_layout = QtWidgets.QHBoxLayout(queue_group)
         self.queue_list = QtWidgets.QListWidget()
@@ -1228,16 +1179,15 @@ class MainWindow(QtWidgets.QMainWindow):
             self.setStyleSheet(
                 stylesheet
                 + """
-                QLabel,QLineEdit,QComboBox,QPushButton,QCheckBox {
-                    padding-top: 4px; padding-bottom: 4px;
-                }
-                QGroupBox { margin-top: 12px; }
-                QGroupBox::title {
-                    subcontrol-origin: margin; left: 12px;
-                    padding: 4px 8px 4px 8px;
-                }
-                #DropArea { border: none; background: #ffffff; border-radius: 12px; }
-                """
+                    QLabel,QLineEdit,QComboBox,QPushButton,QCheckBox {
+                        padding-top: 4px; padding-bottom: 4px;
+                    }
+                    QGroupBox { margin-top: 12px; }
+                    QGroupBox::title {
+                        subcontrol-origin: margin; left: 12px;
+                        padding: 4px 8px 4px 8px;
+                    }
+                    """
             )
 
     def _load_win11_stylesheet(self, accent: QtGui.QColor) -> Optional[str]:
