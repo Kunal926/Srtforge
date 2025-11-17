@@ -1011,7 +1011,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._log_tailer: Optional[LogTailer] = None
         self.ffmpeg_paths = locate_ffmpeg_binaries()
         self.mkv_paths = locate_mkvmerge_binary()
-        self._build_ui()
+        self._build_ui()  # builds a page widget; we wrap it in a scroll area below
         self._log_tailer = LogTailer(self._append_log, self)
         self._apply_styles()
         self._update_tool_status()
@@ -1019,8 +1019,9 @@ class MainWindow(QtWidgets.QMainWindow):
 
     # ---- UI construction ---------------------------------------------------------
     def _build_ui(self) -> None:
-        central = QtWidgets.QWidget()
-        layout = QtWidgets.QVBoxLayout(central)
+        # Build the page that will live inside a scroll area
+        page = QtWidgets.QWidget()
+        layout = QtWidgets.QVBoxLayout(page)
         layout.setSpacing(16)
         header = QtWidgets.QLabel("Windows 11-style subtitle studio for srtforge")
         header.setObjectName("HeaderLabel")
@@ -1037,6 +1038,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.queue_list = QtWidgets.QListWidget()
         self.queue_list.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.ExtendedSelection)
         queue_layout.addWidget(self.queue_list)
+        # Let the list take the space while the buttons keep a compact width
+        queue_layout.setStretch(0, 1)
         queue_buttons = QtWidgets.QVBoxLayout()
         add_button = QtWidgets.QPushButton("Add files…")
         add_button.clicked.connect(self._open_file_dialog)
@@ -1058,6 +1061,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.device_combo = QtWidgets.QComboBox()
         self.device_combo.addItem("Use GPU", True)
         self.device_combo.addItem("CPU only", False)
+        # Keep combo boxes readable at narrow widths
+        for combo in (self.device_combo,):
+            combo.setSizeAdjustPolicy(QtWidgets.QComboBox.AdjustToMinimumContentsLengthWithIcon)
+            combo.setMinimumContentsLength(18)
         options_layout.addWidget(device_label, 0, 0)
         options_layout.addWidget(self.device_combo, 0, 1)
         self.embed_checkbox = QtWidgets.QCheckBox("Embed subtitles (soft track)")
@@ -1066,6 +1073,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.embed_method_combo.addItem("Auto (prefer MKVToolNix)", "auto")
         self.embed_method_combo.addItem("MKVToolNix (mkvmerge)", "mkvmerge")
         self.embed_method_combo.addItem("FFmpeg (legacy)", "ffmpeg")
+        self.embed_method_combo.setSizeAdjustPolicy(QtWidgets.QComboBox.AdjustToMinimumContentsLengthWithIcon)
+        self.embed_method_combo.setMinimumContentsLength(22)
         options_layout.addWidget(method_label, 2, 0)
         options_layout.addWidget(self.embed_method_combo, 2, 1)
         self.title_edit = QtWidgets.QLineEdit("Srtforge (English)")
@@ -1083,6 +1092,11 @@ class MainWindow(QtWidgets.QMainWindow):
         options_layout.addWidget(self.embed_checkbox, 1, 0, 1, 2)
         options_layout.addWidget(self.burn_checkbox, 3, 0, 1, 2)
         options_layout.addWidget(self.cleanup_checkbox, 4, 0, 1, 2)
+        # Let value columns grow/shrink; keep label columns compact
+        options_layout.setColumnStretch(0, 0)
+        options_layout.setColumnStretch(1, 1)
+        options_layout.setColumnStretch(2, 0)
+        options_layout.setColumnStretch(3, 1)
         self.embed_checkbox.toggled.connect(self._update_embed_controls)
         layout.addWidget(options_group)
         add_shadow(options_group)
@@ -1090,9 +1104,11 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.log_view = QtWidgets.QPlainTextEdit()
         self.log_view.setReadOnly(True)
-        self.log_view.setMinimumHeight(180)
+        # Friendlier default minimum (page scrolls if smaller)
+        self.log_view.setMinimumHeight(140)
         self.log_view.setMaximumBlockCount(10000)
-        layout.addWidget(self.log_view)
+        self._init_log_zoom()
+        layout.addWidget(self.log_view, 1)  # give it stretch so it uses leftover space
 
         button_row = QtWidgets.QHBoxLayout()
         button_row.addStretch()
@@ -1111,7 +1127,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self.tool_status.setWordWrap(True)
         layout.addWidget(self.tool_status)
 
-        self.setCentralWidget(central)
+        # Wrap the whole page into a scroll area to avoid overlaps at small sizes
+        scroll = QtWidgets.QScrollArea()
+        scroll.setFrameShape(QtWidgets.QFrame.NoFrame)
+        scroll.setWidgetResizable(True)
+        scroll.setWidget(page)
+        self.setCentralWidget(scroll)
 
     # Make the whole window a drop target with a gentle grey overlay
     def dragEnterEvent(self, event: QtGui.QDragEnterEvent) -> None:  # noqa: D401 - Qt override
@@ -1143,10 +1164,11 @@ class MainWindow(QtWidgets.QMainWindow):
             self._overlay.show()
             self._overlay.raise_()
             return
-        self._overlay = QtWidgets.QFrame(self.centralWidget())
+        parent = self.centralWidget().viewport() if isinstance(self.centralWidget(), QtWidgets.QScrollArea) else self.centralWidget()
+        self._overlay = QtWidgets.QFrame(parent)
         self._overlay.setObjectName("GlobalDropOverlay")
         self._overlay.setStyleSheet("#GlobalDropOverlay { background: rgba(0,0,0,0.28); }")
-        self._overlay.setGeometry(self.centralWidget().rect())
+        self._overlay.setGeometry(parent.rect())
         label = QtWidgets.QLabel("Drop files to add", self._overlay)
         label.setStyleSheet("color: white; font-size: 18px;")
         label.adjustSize()
@@ -1158,6 +1180,39 @@ class MainWindow(QtWidgets.QMainWindow):
         if getattr(self, "_overlay", None):
             self._overlay.hide()
 
+    def resizeEvent(self, event: QtGui.QResizeEvent) -> None:
+        super().resizeEvent(event)
+        # Keep the overlay sized to the scroll viewport
+        if getattr(self, "_overlay", None) and self._overlay.isVisible():
+            parent = self.centralWidget().viewport() if isinstance(self.centralWidget(), QtWidgets.QScrollArea) else self.centralWidget()
+            self._overlay.setParent(parent)
+            self._overlay.setGeometry(parent.rect())
+
+    # --- log font zoom helpers (Ctrl+, Ctrl-, Ctrl+0) ----------------------------
+    def _init_log_zoom(self) -> None:
+        self._log_zoom_delta = 0
+        self._apply_log_font()
+        QtGui.QShortcut(QtGui.QKeySequence.ZoomIn, self, activated=self._zoom_in)
+        QtGui.QShortcut(QtGui.QKeySequence.ZoomOut, self, activated=self._zoom_out)
+        QtGui.QShortcut(QtGui.QKeySequence("Ctrl+0"), self, activated=self._zoom_reset)
+
+    def _apply_log_font(self) -> None:
+        font = QtGui.QFontDatabase.systemFont(QtGui.QFontDatabase.FixedFont)
+        size = max(8, (font.pointSize() or 10) + self._log_zoom_delta)
+        font.setPointSize(size)
+        self.log_view.setFont(font)
+
+    def _zoom_in(self) -> None:
+        self._log_zoom_delta += 1
+        self._apply_log_font()
+
+    def _zoom_out(self) -> None:
+        self._log_zoom_delta = max(-6, self._log_zoom_delta - 1)
+        self._apply_log_font()
+
+    def _zoom_reset(self) -> None:
+        self._log_zoom_delta = 0
+        self._apply_log_font()
     def _apply_styles(self) -> None:
         accent = get_windows_accent_qcolor() or QtGui.QColor("#2563eb")
         palette = self.palette()
@@ -1362,6 +1417,13 @@ def main() -> None:
     """Entry point used by ``srtforge-gui``."""
 
     QtCore.QCoreApplication.setAttribute(QtCore.Qt.ApplicationAttribute.AA_EnableHighDpiScaling)
+    # Optional: nicer HiDPI rounding on recent Qt builds
+    try:
+        QtCore.QCoreApplication.setHighDpiScaleFactorRoundingPolicy(
+            QtCore.Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
+        )
+    except Exception:
+        pass
     app = QtWidgets.QApplication(sys.argv)
     app.setStyle("Fusion")
     window = MainWindow()
