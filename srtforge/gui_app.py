@@ -614,6 +614,12 @@ class TranscriptionWorker(QtCore.QThread):
         subtitle_index = self._count_subtitle_streams(media)
         title = self.options.srt_title or "srtforge (English)"
         language = self.options.srt_language or "eng"
+        disposition_flags: list[str] = []
+        if self.options.srt_default:
+            disposition_flags.append("default")
+        if self.options.srt_forced:
+            disposition_flags.append("forced")
+        disposition_value = "+".join(disposition_flags) if disposition_flags else "0"
         command = [
             self.options.ffmpeg_bin or "ffmpeg",
             "-y",
@@ -634,7 +640,7 @@ class TranscriptionWorker(QtCore.QThread):
             f"-c:s:{subtitle_index}",
             codec,
             f"-disposition:s:{subtitle_index}",
-            "0",
+            disposition_value,
             f"-metadata:s:s:{subtitle_index}",
             f"title={title}",
             f"-metadata:s:s:{subtitle_index}",
