@@ -522,7 +522,62 @@ function Ensure-FfmpegBinaries {
     Write-Host "FFmpeg binaries downloaded to $ffmpegBinDir"
 }
 
+function Install-MKVToolNix {
+  param(
+    [string]$InstallRoot = (Join-Path $PSScriptRoot 'packaging\windows\mkvtoolnix')
+  )
+
+  # Already on PATH?
+  $mkvmerge = Get-Command mkvmerge -ErrorAction SilentlyContinue
+  if ($mkvmerge) {
+    $dir = Split-Path -Parent $mkvmerge.Path
+    [Environment]::SetEnvironmentVariable('SRTFORGE_MKV_DIR', $dir, 'User')
+    Write-Host "MKVToolNix found at $dir"
+    return
+  }
+
+  # Default Program Files location after winget/installer
+  $pf = Join-Path ${env:ProgramFiles} 'MKVToolNix\mkvmerge.exe'
+  if (Test-Path $pf) {
+    [Environment]::SetEnvironmentVariable('SRTFORGE_MKV_DIR', (Split-Path -Parent $pf), 'User')
+    Write-Host "MKVToolNix found at $((Split-Path -Parent $pf))"
+    return
+  }
+
+  # Try winget first (most reliable unattended path)
+  if (Get-Command winget -ErrorAction SilentlyContinue) {
+    winget install --id MoritzBunkus.MKVToolNix -e --silent `
+      --accept-package-agreements --accept-source-agreements
+    if (Test-Path $pf) {
+      [Environment]::SetEnvironmentVariable('SRTFORGE_MKV_DIR', (Split-Path -Parent $pf), 'User')
+      Write-Host "MKVToolNix installed via winget."
+      return
+    }
+  }
+
+  # Portable fallback: download the latest x64 ZIP directly and unpack
+  $downloads = Invoke-WebRequest -UseBasicParsing 'https://mkvtoolnix.download/downloads.html'
+  $m = [regex]::Match($downloads.Content, 'current version v(?<ver>\d+\.\d+)')
+  if (-not $m.Success) { throw "Unable to determine latest MKVToolNix version from downloads page." }
+  $ver = $m.Groups['ver'].Value
+  $zipUrl = "https://mkvtoolnix.download/windows/releases/$ver/mkvtoolnix-64-bit-$ver.zip"
+  $tmpDir = Join-Path $env:TEMP "srtforge-mkvtoolnix-$ver"
+  New-Item -ItemType Directory -Force -Path $tmpDir | Out-Null
+  $zipPath = Join-Path $tmpDir "mkvtoolnix-$ver.zip"
+  Invoke-WebRequest $zipUrl -OutFile $zipPath -UseBasicParsing
+  $dstRoot = Join-Path $InstallRoot 'bin'
+  New-Item -ItemType Directory -Force -Path $dstRoot | Out-Null
+  Expand-Archive -Path $zipPath -DestinationPath $dstRoot -Force
+  $exe = Get-ChildItem $dstRoot -Recurse -Filter mkvmerge.exe -File | Select-Object -First 1
+  if ($exe -and ($exe.Directory.FullName -ne $dstRoot)) {
+    Move-Item $exe.Directory.FullName\* $dstRoot -Force
+  }
+  [Environment]::SetEnvironmentVariable('SRTFORGE_MKV_DIR', $dstRoot, 'User')
+  Write-Host "MKVToolNix extracted to $dstRoot"
+}
+
 Ensure-FfmpegBinaries
+Install-MKVToolNix
 
 $torchInfoScript = @'
 import json

@@ -32,14 +32,6 @@ class FFmpegBinaries:
 
 
 @dataclass(slots=True)
-class MKVToolNixBinaries:
-    """Resolved MKVToolNix executables."""
-
-    mkvmerge: Path
-    mkvpropedit: Optional[Path] = None
-
-
-@dataclass(slots=True)
 class WorkerOptions:
     """Options that control how the transcription worker runs."""
 
@@ -49,9 +41,8 @@ class WorkerOptions:
     cleanup_gpu: bool
     ffmpeg_bin: Optional[str]
     ffprobe_bin: Optional[str]
-    embed_method: str
+    soft_embed_method: str  # "auto" | "mkvmerge" | "ffmpeg"
     mkvmerge_bin: Optional[str]
-    mkvpropedit_bin: Optional[str]
     srt_title: str
     srt_language: str
     srt_default: bool
@@ -351,8 +342,8 @@ class TranscriptionWorker(QtCore.QThread):
                     raise StopRequested
                 embed_output = None
                 burn_output = None
-                if self.options.embed_subtitles:
-                    embed_method = (self.options.embed_method or "auto").lower()
+                if self.options.embed_subtitles and (self.options.ffmpeg_bin or self.options.mkvmerge_bin):
+                    embed_method = (self.options.soft_embed_method or "auto").lower()
                     if embed_method not in {"auto", "ffmpeg", "mkvmerge"}:
                         embed_method = "auto"
                     suffix = media_path.suffix.lower()
@@ -361,31 +352,29 @@ class TranscriptionWorker(QtCore.QThread):
                         and (self.options.ffprobe_bin or which("ffprobe"))
                     )
                     has_mkvmerge = bool(self.options.mkvmerge_bin or which("mkvmerge"))
-                    if embed_method == "ffmpeg":
-                        can_embed_backend = has_ffmpeg
-                    elif embed_method == "mkvmerge":
-                        if suffix == ".mkv" and has_mkvmerge:
-                            can_embed_backend = True
+                    if embed_method == "ffmpeg" and not has_ffmpeg:
+                        embed_method = "auto"
+                    if embed_method == "mkvmerge" and not has_mkvmerge:
+                        embed_method = "auto"
+                    use_mkvmerge = (
+                        embed_method == "mkvmerge"
+                        or (embed_method == "auto" and suffix == ".mkv" and has_mkvmerge)
+                    )
+                    if self._stop_event.is_set():
+                        raise StopRequested
+                    try:
+                        if use_mkvmerge:
+                            embed_output = self._embed_subtitles_mkvmerge(media_path, srt_path)
+                        elif has_ffmpeg:
+                            embed_output = self._embed_subtitles_ffmpeg(media_path, srt_path)
                         else:
-                            can_embed_backend = has_ffmpeg
-                    else:  # auto
-                        if suffix == ".mkv":
-                            can_embed_backend = has_mkvmerge or has_ffmpeg
-                        else:
-                            can_embed_backend = has_ffmpeg
-                    if can_embed_backend:
-                        if self._stop_event.is_set():
-                            raise StopRequested
-                        try:
-                            embed_output = self._embed_subtitles(media_path, srt_path)
-                        except StopRequested:
-                            raise
-                        except Exception as exc:  # pragma: no cover - defensive logging
-                            raise RuntimeError(f"Embed failed: {exc}") from exc
-                    else:
-                        self.logMessage.emit(
-                            "Soft embedding skipped: no compatible backend available"
-                        )
+                            self.logMessage.emit(
+                                "Soft embedding skipped: no compatible backend available"
+                            )
+                    except StopRequested:
+                        raise
+                    except Exception as exc:  # pragma: no cover - defensive logging
+                        raise RuntimeError(f"Embed failed: {exc}") from exc
                 if self.options.burn_subtitles and self.options.ffmpeg_bin:
                     if self._stop_event.is_set():
                         raise StopRequested
@@ -592,22 +581,6 @@ class TranscriptionWorker(QtCore.QThread):
         message = (stderr or stdout or f"Pipeline exited with code {return_code}").strip()
         raise RuntimeError(message)
 
-    def _embed_subtitles(self, media: Path, subtitles: Path) -> Path:
-        ext = media.suffix.lower()
-        method = (self.options.embed_method or "auto").lower()
-        if method not in {"auto", "ffmpeg", "mkvmerge"}:
-            method = "auto"
-        can_use_mkvmerge = bool(self.options.mkvmerge_bin or which("mkvmerge"))
-        if (
-            ext == ".mkv"
-            and method in {"auto", "mkvmerge"}
-            and can_use_mkvmerge
-        ):
-            return self._embed_subtitles_mkvmerge(media, subtitles)
-        if method == "mkvmerge" and not can_use_mkvmerge:
-            self.logMessage.emit("MKVToolNix not available, falling back to FFmpeg")
-        return self._embed_subtitles_ffmpeg(media, subtitles)
-
     def _embed_subtitles_ffmpeg(self, media: Path, subtitles: Path) -> Path:
         output = media.with_name(f"{media.stem}_subbed{media.suffix}")
         codec = "mov_text" if media.suffix.lower() in {".mp4", ".m4v", ".mov"} else "subrip"
@@ -651,6 +624,8 @@ class TranscriptionWorker(QtCore.QThread):
         return output
 
     def _embed_subtitles_mkvmerge(self, media: Path, subtitles: Path) -> Path:
+        if media.suffix.lower() != ".mkv":
+            return self._embed_subtitles_ffmpeg(media, subtitles)
         output = media.with_name(f"{media.stem}_subbed{media.suffix}")
         mkvmerge = self.options.mkvmerge_bin or "mkvmerge"
         title = self.options.srt_title or "srtforge (English)"
@@ -662,10 +637,10 @@ class TranscriptionWorker(QtCore.QThread):
             "-o",
             str(output),
             str(media),
-            "--track-name",
-            f"0:{title}",
             "--language",
             f"0:{language}",
+            "--track-name",
+            f"0:{title}",
             "--default-track-flag",
             f"0:{default_flag}",
             "--forced-track-flag",
@@ -846,44 +821,34 @@ def locate_ffmpeg_binaries() -> Optional[FFmpegBinaries]:
     return None
 
 
-def locate_mkvtoolnix_binaries() -> Optional[MKVToolNixBinaries]:
-    """Find mkvmerge (and optionally mkvpropedit) using common locations."""
+def locate_mkvmerge() -> Optional[Path]:
+    """Locate ``mkvmerge`` via bundled, env, Program Files, or PATH."""
 
     candidates: list[Path] = []
-    env_dir = os.environ.get("SRTFORGE_MKV_DIR") or os.environ.get("SRTFORGE_MKVTOOLNIX_DIR")
+    env_dir = os.environ.get("SRTFORGE_MKV_DIR")
     if env_dir:
         candidates.append(Path(env_dir))
-    exe_dir = Path(sys.executable).resolve().parent
-    bundle_dir = Path(getattr(sys, "_MEIPASS", exe_dir))
+    bundle_dir = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
     candidates += [
         bundle_dir / "mkvtoolnix",
-        exe_dir / "mkvtoolnix",
+        Path(sys.executable).resolve().parent / "mkvtoolnix",
         Path.cwd() / "mkvtoolnix",
+        Path(__file__).resolve().parent / ".." / "mkvtoolnix",
+        Path(os.environ.get("ProgramFiles", r"C:\\Program Files")) / "MKVToolNix",
     ]
 
+    exe = "mkvmerge.exe" if os.name == "nt" else "mkvmerge"
     seen: set[Path] = set()
-    filtered: list[Path] = []
-    for candidate in candidates:
-        normalized = candidate.resolve()
+    for base in candidates:
+        normalized = base.resolve()
         if normalized in seen:
             continue
         seen.add(normalized)
-        filtered.append(normalized)
-
-    exe_suffix = ".exe" if os.name == "nt" else ""
-    for base in filtered:
-        merge = base / f"mkvmerge{exe_suffix}"
-        prop = base / f"mkvpropedit{exe_suffix}"
-        if merge.exists():
-            return MKVToolNixBinaries(merge, prop if prop.exists() else None)
-
-    from shutil import which
-
-    merge_p = which("mkvmerge")
-    if merge_p:
-        prop_p = which("mkvpropedit")
-        return MKVToolNixBinaries(Path(merge_p), Path(prop_p) if prop_p else None)
-    return None
+        candidate = normalized / exe
+        if candidate.exists():
+            return candidate
+    which = shutil_which("mkvmerge")
+    return Path(which) if which else None
 
 
 def locate_cli_executable() -> Optional[Path]:
@@ -1009,14 +974,15 @@ class MainWindow(QtWidgets.QMainWindow):
         self.setWindowTitle("srtforge Studio")
         self.setMinimumSize(960, 640)
         self.setObjectName("MainWindow")
+        self.setAcceptDrops(True)
         self._worker: Optional[TranscriptionWorker] = None
         self._log_tailer: Optional[LogTailer] = None
         self.ffmpeg_paths = locate_ffmpeg_binaries()
-        self.mkv_paths = locate_mkvtoolnix_binaries()
+        self.mkvmerge_path = locate_mkvmerge()
         self._build_ui()
         self._log_tailer = LogTailer(self._append_log, self)
         self._apply_styles()
-        self._update_ffmpeg_status()
+        self._update_tool_status()
         apply_win11_look(self)
 
     # ---- UI construction ---------------------------------------------------------
@@ -1065,11 +1031,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self.embed_checkbox = QtWidgets.QCheckBox("Embed subtitles (soft track)")
         method_label = QtWidgets.QLabel("Soft-embed method")
         self.embed_method_combo = QtWidgets.QComboBox()
-        self.embed_method_combo.addItem("Auto (mkvmerge for MKV, ffmpeg otherwise)", "auto")
-        self.embed_method_combo.addItem("FFmpeg", "ffmpeg")
+        self.embed_method_combo.addItem("Auto (prefer MKVToolNix)", "auto")
         self.embed_method_combo.addItem("MKVToolNix (mkvmerge)", "mkvmerge")
-        options_layout.addWidget(method_label, 1, 2)
-        options_layout.addWidget(self.embed_method_combo, 1, 3)
+        self.embed_method_combo.addItem("FFmpeg (legacy)", "ffmpeg")
+        options_layout.addWidget(method_label, 2, 0)
+        options_layout.addWidget(self.embed_method_combo, 2, 1)
         self.title_edit = QtWidgets.QLineEdit("srtforge (English)")
         self.lang_edit = QtWidgets.QLineEdit("eng")
         options_layout.addWidget(QtWidgets.QLabel("Track title"), 2, 2)
@@ -1083,8 +1049,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.burn_checkbox = QtWidgets.QCheckBox("Burn subtitles (hard sub)")
         self.cleanup_checkbox = QtWidgets.QCheckBox("Free GPU memory when stopping")
         options_layout.addWidget(self.embed_checkbox, 1, 0, 1, 2)
-        options_layout.addWidget(self.burn_checkbox, 2, 0, 1, 2)
-        options_layout.addWidget(self.cleanup_checkbox, 3, 0, 1, 2)
+        options_layout.addWidget(self.burn_checkbox, 3, 0, 1, 2)
+        options_layout.addWidget(self.cleanup_checkbox, 4, 0, 1, 2)
         self.embed_checkbox.toggled.connect(self._update_embed_controls)
         layout.addWidget(options_group)
         add_shadow(options_group)
@@ -1117,11 +1083,56 @@ class MainWindow(QtWidgets.QMainWindow):
             button_row.addWidget(button)
         layout.addLayout(button_row)
 
-        self.ffmpeg_status = QtWidgets.QLabel()
-        self.ffmpeg_status.setWordWrap(True)
-        layout.addWidget(self.ffmpeg_status)
+        self.tool_status = QtWidgets.QLabel()
+        self.tool_status.setWordWrap(True)
+        layout.addWidget(self.tool_status)
 
         self.setCentralWidget(central)
+
+    # Make the whole window a drop target with a gentle grey overlay
+    def dragEnterEvent(self, event: QtGui.QDragEnterEvent) -> None:  # noqa: D401 - Qt override
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+            self._show_drop_overlay()
+        else:
+            event.ignore()
+
+    def dragMoveEvent(self, event: QtGui.QDragMoveEvent) -> None:  # noqa: D401 - Qt override
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dragLeaveEvent(self, event: QtGui.QDragLeaveEvent) -> None:  # noqa: D401 - Qt override
+        self._hide_drop_overlay()
+        event.accept()
+
+    def dropEvent(self, event: QtGui.QDropEvent) -> None:  # noqa: D401 - Qt override
+        paths = [u.toLocalFile() for u in event.mimeData().urls() if u.isLocalFile()]
+        if paths:
+            self._add_files_to_queue(paths)
+        self._hide_drop_overlay()
+        event.acceptProposedAction()
+
+    def _show_drop_overlay(self) -> None:
+        if getattr(self, "_overlay", None):
+            self._overlay.show()
+            self._overlay.raise_()
+            return
+        self._overlay = QtWidgets.QFrame(self.centralWidget())
+        self._overlay.setObjectName("GlobalDropOverlay")
+        self._overlay.setStyleSheet("#GlobalDropOverlay { background: rgba(0,0,0,0.28); }")
+        self._overlay.setGeometry(self.centralWidget().rect())
+        label = QtWidgets.QLabel("Drop files to add", self._overlay)
+        label.setStyleSheet("color: white; font-size: 18px;")
+        label.adjustSize()
+        label.move((self._overlay.width() - label.width()) // 2, (self._overlay.height() - label.height()) // 2)
+        self._overlay.show()
+        self._overlay.raise_()
+
+    def _hide_drop_overlay(self) -> None:
+        if getattr(self, "_overlay", None):
+            self._overlay.hide()
 
     def _apply_styles(self) -> None:
         accent = get_windows_accent_qcolor() or QtGui.QColor("#2563eb")
@@ -1135,7 +1146,20 @@ class MainWindow(QtWidgets.QMainWindow):
 
         stylesheet = self._load_win11_stylesheet(accent)
         if stylesheet:
-            self.setStyleSheet(stylesheet)
+            self.setStyleSheet(
+                stylesheet
+                + """
+                QLabel,QLineEdit,QComboBox,QPushButton,QCheckBox {
+                    padding-top: 4px; padding-bottom: 4px;
+                }
+                QGroupBox { margin-top: 12px; }
+                QGroupBox::title {
+                    subcontrol-origin: margin; left: 12px;
+                    padding: 4px 8px 4px 8px;
+                }
+                #DropArea { border: none; background: #ffffff; border-radius: 12px; }
+                """
+            )
 
     def _load_win11_stylesheet(self, accent: QtGui.QColor) -> Optional[str]:
         try:
@@ -1150,28 +1174,22 @@ class MainWindow(QtWidgets.QMainWindow):
         )
 
     # ---- runtime helpers ---------------------------------------------------------
-    def _update_ffmpeg_status(self) -> None:
-        messages = []
+    def _update_tool_status(self) -> None:
+        lines: list[str] = []
         if self.ffmpeg_paths:
-            messages.append(f"FFmpeg detected at {self.ffmpeg_paths.ffmpeg.parent}")
+            lines.append(f"FFmpeg detected at {self.ffmpeg_paths.ffmpeg.parent}")
         else:
-            messages.append(
-                "FFmpeg binaries not found. Place ffmpeg/ffprobe next to the executable or set "
-                "SRTFORGE_FFMPEG_DIR."
-            )
+            lines.append("FFmpeg not found. Place binaries next to the executable or set SRTFORGE_FFMPEG_DIR.")
             self.burn_checkbox.setEnabled(False)
-        if self.mkv_paths:
-            messages.append(f"MKVToolNix: {self.mkv_paths.mkvmerge.parent}")
+        if self.mkvmerge_path:
+            lines.append(f"MKVToolNix (mkvmerge) detected at {self.mkvmerge_path.parent}")
         else:
-            messages.append(
-                "MKVToolNix (mkvmerge) not found. Place binaries next to the executable or set "
-                "SRTFORGE_MKV_DIR."
-            )
-        has_embed_backend = (self.ffmpeg_paths is not None) or (self.mkv_paths is not None)
+            lines.append("MKVToolNix (mkvmerge) not found. It will be installed by install.ps1 or set SRTFORGE_MKV_DIR.")
+        has_embed_backend = (self.ffmpeg_paths is not None) or (self.mkvmerge_path is not None)
         self.embed_checkbox.setEnabled(has_embed_backend and (self._worker is None))
         if not has_embed_backend:
-            messages.append("Soft embedding disabled until FFmpeg or MKVToolNix is available.")
-        self.ffmpeg_status.setText("\n".join(messages))
+            lines.append("Soft embedding disabled until FFmpeg or MKVToolNix is available.")
+        self.tool_status.setText("\n".join(lines))
         self._update_embed_controls()
 
     def _handle_dropped_files(self, files: list) -> None:
@@ -1241,11 +1259,8 @@ class MainWindow(QtWidgets.QMainWindow):
             cleanup_gpu=self.cleanup_checkbox.isChecked(),
             ffmpeg_bin=str(self.ffmpeg_paths.ffmpeg) if self.ffmpeg_paths else None,
             ffprobe_bin=str(self.ffmpeg_paths.ffprobe) if self.ffmpeg_paths else None,
-            embed_method=embed_method,
-            mkvmerge_bin=str(self.mkv_paths.mkvmerge) if self.mkv_paths else None,
-            mkvpropedit_bin=(
-                str(self.mkv_paths.mkvpropedit) if (self.mkv_paths and self.mkv_paths.mkvpropedit) else None
-            ),
+            soft_embed_method=embed_method,
+            mkvmerge_bin=str(self.mkvmerge_path) if self.mkvmerge_path else None,
             srt_title=self.title_edit.text().strip() or "srtforge (English)",
             srt_language=self.lang_edit.text().strip() or "eng",
             srt_default=self.default_checkbox.isChecked(),
@@ -1274,7 +1289,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.stop_button.setEnabled(running)
         self.queue_list.setEnabled(not running)
         self.device_combo.setEnabled(not running)
-        has_embed_backend = (self.ffmpeg_paths is not None) or (self.mkv_paths is not None)
+        has_embed_backend = (self.ffmpeg_paths is not None) or (self.mkvmerge_path is not None)
         self.embed_checkbox.setEnabled(has_embed_backend and not running)
         self.burn_checkbox.setEnabled((self.ffmpeg_paths is not None) and not running)
         self._update_embed_controls()
