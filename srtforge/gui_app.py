@@ -350,15 +350,38 @@ class TranscriptionWorker(QtCore.QThread):
                     raise StopRequested
                 embed_output = None
                 burn_output = None
-                if self.options.embed_subtitles and self.options.ffmpeg_bin:
-                    if self._stop_event.is_set():
-                        raise StopRequested
-                    try:
-                        embed_output = self._embed_subtitles(media_path, srt_path)
-                    except StopRequested:
-                        raise
-                    except Exception as exc:  # pragma: no cover - defensive logging
-                        raise RuntimeError(f"Embed failed: {exc}") from exc
+                if self.options.embed_subtitles:
+                    embed_method = (self.options.embed_method or "auto").lower()
+                    if embed_method not in {"auto", "ffmpeg", "mkvmerge"}:
+                        embed_method = "auto"
+                    suffix = media_path.suffix.lower()
+                    has_ffmpeg = bool(self.options.ffmpeg_bin)
+                    has_mkvmerge = bool(self.options.mkvmerge_bin)
+                    if embed_method == "ffmpeg":
+                        can_embed_backend = has_ffmpeg
+                    elif embed_method == "mkvmerge":
+                        if suffix == ".mkv" and has_mkvmerge:
+                            can_embed_backend = True
+                        else:
+                            can_embed_backend = has_ffmpeg
+                    else:  # auto
+                        if suffix == ".mkv":
+                            can_embed_backend = has_mkvmerge or has_ffmpeg
+                        else:
+                            can_embed_backend = has_ffmpeg
+                    if can_embed_backend:
+                        if self._stop_event.is_set():
+                            raise StopRequested
+                        try:
+                            embed_output = self._embed_subtitles(media_path, srt_path)
+                        except StopRequested:
+                            raise
+                        except Exception as exc:  # pragma: no cover - defensive logging
+                            raise RuntimeError(f"Embed failed: {exc}") from exc
+                    else:
+                        self.logMessage.emit(
+                            "Soft embedding skipped: no compatible backend available"
+                        )
                 if self.options.burn_subtitles and self.options.ffmpeg_bin:
                     if self._stop_event.is_set():
                         raise StopRequested
