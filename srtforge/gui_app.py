@@ -57,6 +57,21 @@ class WorkerOptions:
     srt_forced: bool
 
 
+@dataclass(slots=True)
+class UIOptions:
+    """Lightweight UI state stored on the main window."""
+
+    prefer_gpu: bool = True
+    embed_subtitles: bool = False
+    soft_embed_method: str = "auto"  # "auto" | "mkvmerge" | "ffmpeg"
+    srt_title: str = "Srtforge (English)"
+    srt_language: str = "eng"
+    srt_default: bool = False
+    srt_forced: bool = False
+    burn_subtitles: bool = False
+    cleanup_gpu: bool = False
+
+
 def add_shadow(widget: QtWidgets.QWidget) -> None:
     """Add a soft drop shadow to widgets to emulate Windows 11 cards."""
 
@@ -876,6 +891,125 @@ def cleanup_gpu_memory() -> None:
         torch.cuda.empty_cache()
 
 
+class SettingsDialog(QtWidgets.QDialog):
+    """Modal dialog that collects processing options."""
+
+    def __init__(
+        self,
+        parent: Optional[QtWidgets.QWidget],
+        opts: UIOptions,
+        *,
+        has_ffmpeg: bool,
+        has_mkvmerge: bool,
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Options")
+        self.setModal(True)
+
+        self._has_embed_backend = bool(has_ffmpeg or has_mkvmerge)
+
+        layout = QtWidgets.QVBoxLayout(self)
+        grid = QtWidgets.QGridLayout()
+        row = 0
+
+        grid.addWidget(QtWidgets.QLabel("Device"), row, 0)
+        self.device_combo = QtWidgets.QComboBox()
+        self.device_combo.addItem("Use GPU", True)
+        self.device_combo.addItem("CPU only", False)
+        self.device_combo.setCurrentIndex(0 if opts.prefer_gpu else 1)
+        self.device_combo.setSizeAdjustPolicy(QtWidgets.QComboBox.AdjustToMinimumContentsLengthWithIcon)
+        self.device_combo.setMinimumContentsLength(16)
+        grid.addWidget(self.device_combo, row, 1)
+        row += 1
+
+        self.embed_checkbox = QtWidgets.QCheckBox("Embed subtitles (soft track)")
+        self.embed_checkbox.setChecked(opts.embed_subtitles and self._has_embed_backend)
+        grid.addWidget(self.embed_checkbox, row, 0, 1, 2)
+        row += 1
+
+        grid.addWidget(QtWidgets.QLabel("Soft-embed method"), row, 0)
+        self.embed_method_combo = QtWidgets.QComboBox()
+        self.embed_method_combo.addItems([
+            "Auto (prefer MKVToolNix)",
+            "MKVToolNix (mkvmerge)",
+            "FFmpeg (legacy)",
+        ])
+        self.embed_method_combo.setItemData(0, "auto")
+        self.embed_method_combo.setItemData(1, "mkvmerge")
+        self.embed_method_combo.setItemData(2, "ffmpeg")
+        current = {"auto": 0, "mkvmerge": 1, "ffmpeg": 2}.get(opts.soft_embed_method, 0)
+        self.embed_method_combo.setCurrentIndex(current)
+        self.embed_method_combo.setMinimumContentsLength(20)
+        self.embed_method_combo.setSizeAdjustPolicy(QtWidgets.QComboBox.AdjustToMinimumContentsLengthWithIcon)
+        grid.addWidget(self.embed_method_combo, row, 1)
+        row += 1
+
+        self.title_edit = QtWidgets.QLineEdit(opts.srt_title)
+        self.lang_edit = QtWidgets.QLineEdit(opts.srt_language)
+        grid.addWidget(QtWidgets.QLabel("Track title"), row, 0)
+        grid.addWidget(self.title_edit, row, 1)
+        row += 1
+        grid.addWidget(QtWidgets.QLabel("Track language"), row, 0)
+        grid.addWidget(self.lang_edit, row, 1)
+        row += 1
+
+        self.default_checkbox = QtWidgets.QCheckBox("Set as default track")
+        self.default_checkbox.setChecked(opts.srt_default)
+        self.forced_checkbox = QtWidgets.QCheckBox("Mark as forced")
+        self.forced_checkbox.setChecked(opts.srt_forced)
+        grid.addWidget(self.default_checkbox, row, 0)
+        grid.addWidget(self.forced_checkbox, row, 1)
+        row += 1
+
+        self.burn_checkbox = QtWidgets.QCheckBox("Burn subtitles (hard sub)")
+        self.burn_checkbox.setChecked(opts.burn_subtitles)
+        grid.addWidget(self.burn_checkbox, row, 0, 1, 2)
+        row += 1
+
+        self.cleanup_checkbox = QtWidgets.QCheckBox("Free GPU memory when stopping")
+        self.cleanup_checkbox.setChecked(opts.cleanup_gpu)
+        grid.addWidget(self.cleanup_checkbox, row, 0, 1, 2)
+        row += 1
+
+        grid.setColumnStretch(0, 0)
+        grid.setColumnStretch(1, 1)
+        layout.addLayout(grid)
+
+        def _apply_embed_enabled() -> None:
+            enabled = self._has_embed_backend and self.embed_checkbox.isChecked()
+            for widget in (
+                self.embed_method_combo,
+                self.title_edit,
+                self.lang_edit,
+                self.default_checkbox,
+                self.forced_checkbox,
+            ):
+                widget.setEnabled(enabled)
+
+        self.embed_checkbox.toggled.connect(_apply_embed_enabled)
+        _apply_embed_enabled()
+
+        buttons = QtWidgets.QDialogButtonBox(
+            QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def to_options(self, base: Optional[UIOptions] = None) -> UIOptions:
+        opts = UIOptions() if base is None else base
+        opts.prefer_gpu = bool(self.device_combo.currentData())
+        opts.embed_subtitles = self.embed_checkbox.isChecked() and self._has_embed_backend
+        opts.soft_embed_method = str(self.embed_method_combo.currentData() or "auto")
+        opts.srt_title = self.title_edit.text().strip() or "Srtforge (English)"
+        opts.srt_language = self.lang_edit.text().strip() or "eng"
+        opts.srt_default = self.default_checkbox.isChecked()
+        opts.srt_forced = self.forced_checkbox.isChecked()
+        opts.burn_subtitles = self.burn_checkbox.isChecked()
+        opts.cleanup_gpu = self.cleanup_checkbox.isChecked()
+        return opts
+
+
 class LogTailer(QtCore.QObject):
     """Poll structured run logs and forward step markers to the GUI."""
 
@@ -959,14 +1093,17 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle("Srtforge Studio")
-        self.setMinimumSize(960, 640)
+        self.setWindowTitle("srtforge Studio")
+        self.setMinimumSize(840, 520)
+        self.resize(900, 560)
         self.setObjectName("MainWindow")
         self.setAcceptDrops(True)
         self._worker: Optional[TranscriptionWorker] = None
         self._log_tailer: Optional[LogTailer] = None
+        self._last_worker_options: Optional[WorkerOptions] = None
         self.ffmpeg_paths = locate_ffmpeg_binaries()
         self.mkv_paths = locate_mkvmerge_binary()
+        self._ui_options = UIOptions()
         self._build_ui()  # builds a page widget; we wrap it in a scroll area below
         self._log_tailer = LogTailer(self._append_log, self)
         self._apply_styles()
@@ -975,33 +1112,24 @@ class MainWindow(QtWidgets.QMainWindow):
 
     # ---- UI construction ---------------------------------------------------------
     def _build_ui(self) -> None:
-        # Build the page that will live inside a scroll area
         page = QtWidgets.QWidget()
         layout = QtWidgets.QVBoxLayout(page)
         layout.setSpacing(16)
-        header = QtWidgets.QLabel("Srtforge Studio")
+        header = QtWidgets.QLabel("srtforge Studio")
         header.setObjectName("HeaderLabel")
         header.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(header)
 
-        self.queue_group = QtWidgets.QGroupBox("Transcription queue")
-        queue_layout = QtWidgets.QHBoxLayout(self.queue_group)
+        queue_group = QtWidgets.QGroupBox("Transcription queue")
+        queue_layout = QtWidgets.QHBoxLayout(queue_group)
         queue_layout.setContentsMargins(12, 12, 12, 12)
-
-        queue_frame = QtWidgets.QFrame()
-        queue_frame.setObjectName("QueueContainer")
-        queue_frame_layout = QtWidgets.QVBoxLayout(queue_frame)
-        queue_frame_layout.setContentsMargins(8, 8, 8, 8)
-        queue_frame_layout.setSpacing(0)
-
         self.queue_list = QtWidgets.QListWidget()
         self.queue_list.setObjectName("QueueList")
         self.queue_list.setFrameShape(QtWidgets.QFrame.NoFrame)
         self.queue_list.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.ExtendedSelection)
-        queue_frame_layout.addWidget(self.queue_list)
-
-        queue_layout.addWidget(queue_frame)
-        # Let the list take the space while the buttons keep a compact width
+        self.queue_list.setVerticalScrollMode(QtWidgets.QAbstractItemView.ScrollPerPixel)
+        self.queue_list.setUniformItemSizes(True)
+        queue_layout.addWidget(self.queue_list)
         queue_layout.setStretch(0, 1)
         queue_buttons = QtWidgets.QVBoxLayout()
         add_button = QtWidgets.QPushButton("Add files…")
@@ -1013,101 +1141,25 @@ class MainWindow(QtWidgets.QMainWindow):
         for button in (add_button, remove_button, clear_button):
             button.setCursor(QtGui.QCursor(QtCore.Qt.CursorShape.PointingHandCursor))
             queue_buttons.addWidget(button)
-        self._queue_buttons = (add_button, remove_button, clear_button)
         queue_buttons.addStretch()
         queue_layout.addLayout(queue_buttons)
-        QtCore.QTimer.singleShot(0, self._sync_queue_group_height)
-        layout.addWidget(self.queue_group)
-        add_shadow(self.queue_group)
-
-        options_group = QtWidgets.QGroupBox("Processing options")
-        options_layout = QtWidgets.QGridLayout(options_group)
-        device_label = QtWidgets.QLabel("Device")
-        self.device_combo = QtWidgets.QComboBox()
-        self.device_combo.addItem("Use GPU", True)
-        self.device_combo.addItem("CPU only", False)
-        # Keep combo boxes readable at narrow widths
-        for combo in (self.device_combo,):
-            combo.setSizeAdjustPolicy(QtWidgets.QComboBox.AdjustToMinimumContentsLengthWithIcon)
-            combo.setMinimumContentsLength(18)
-        options_layout.addWidget(device_label, 0, 0)
-        options_layout.addWidget(self.device_combo, 0, 1)
-        options_layout.setVerticalSpacing(8)
-
-        # --- Embed subtitles block --------------------------------------------
-        self.embed_checkbox = QtWidgets.QCheckBox("Embed subtitles (soft track)")
-        options_layout.addWidget(self.embed_checkbox, 1, 0, 1, 2)
-
-        self.embed_method_label = QtWidgets.QLabel("Soft-embed method")
-        self.embed_method_combo = QtWidgets.QComboBox()
-        self.embed_method_combo.addItem("Auto (prefer MKVToolNix)", "auto")
-        self.embed_method_combo.addItem("MKVToolNix (mkvmerge)", "mkvmerge")
-        self.embed_method_combo.addItem("FFmpeg (legacy)", "ffmpeg")
-        self.embed_method_combo.setSizeAdjustPolicy(QtWidgets.QComboBox.AdjustToMinimumContentsLengthWithIcon)
-        self.embed_method_combo.setMinimumContentsLength(22)
-        options_layout.addWidget(self.embed_method_label, 2, 0)
-        options_layout.addWidget(self.embed_method_combo, 2, 1)
-
-        self.title_label = QtWidgets.QLabel("Track title")
-        self.title_edit = QtWidgets.QLineEdit("Srtforge (English)")
-        options_layout.addWidget(self.title_label, 1, 2)
-        options_layout.addWidget(self.title_edit, 1, 3)
-
-        self.lang_label = QtWidgets.QLabel("Track language")
-        self.lang_edit = QtWidgets.QLineEdit("eng")
-        options_layout.addWidget(self.lang_label, 2, 2)
-        options_layout.addWidget(self.lang_edit, 2, 3)
-
-        self.default_checkbox = QtWidgets.QCheckBox("Set as default track")
-        self.forced_checkbox = QtWidgets.QCheckBox("Mark as forced")
-        options_layout.addWidget(self.default_checkbox, 3, 2)
-        options_layout.addWidget(self.forced_checkbox, 3, 3)
-
-        # Burn lives inside the embed section per request
-        self.burn_checkbox = QtWidgets.QCheckBox("Burn subtitles (hard sub)")
-        options_layout.addWidget(self.burn_checkbox, 3, 0, 1, 2)
-
-        self.cleanup_checkbox = QtWidgets.QCheckBox("Free GPU memory when stopping")
-        options_layout.addWidget(self.cleanup_checkbox, 4, 0, 1, 2)
-        # Let value columns grow/shrink; keep label columns compact
-        options_layout.setColumnStretch(0, 0)
-        options_layout.setColumnStretch(1, 1)
-        options_layout.setColumnStretch(2, 0)
-        options_layout.setColumnStretch(3, 1)
-
-        self._embed_toggle_widgets: tuple[QtWidgets.QWidget, ...] = (
-            self.embed_method_label,
-            self.embed_method_combo,
-            self.title_label,
-            self.title_edit,
-            self.lang_label,
-            self.lang_edit,
-            self.default_checkbox,
-            self.forced_checkbox,
-            self.burn_checkbox,
-        )
-        self._embed_enable_widgets: tuple[QtWidgets.QWidget, ...] = (
-            self.embed_method_combo,
-            self.title_edit,
-            self.lang_edit,
-            self.default_checkbox,
-            self.forced_checkbox,
-        )
-        self.embed_checkbox.toggled.connect(self._update_embed_controls)
-        layout.addWidget(options_group)
-        add_shadow(options_group)
-        self._update_embed_controls()
+        layout.addWidget(queue_group)
+        add_shadow(queue_group)
 
         self.log_view = QtWidgets.QPlainTextEdit()
         self.log_view.setReadOnly(True)
-        # Friendlier default minimum (page scrolls if smaller)
-        self.log_view.setMinimumHeight(140)
+        self.log_view.setMinimumHeight(110)
+        self.log_view.setMaximumHeight(260)
         self.log_view.setMaximumBlockCount(10000)
         self._init_log_zoom()
-        layout.addWidget(self.log_view, 1)  # give it stretch so it uses leftover space
+        layout.addWidget(self.log_view)
 
         button_row = QtWidgets.QHBoxLayout()
         button_row.addStretch()
+        self.options_button = QtWidgets.QPushButton("Options…")
+        self.options_button.setCursor(QtGui.QCursor(QtCore.Qt.CursorShape.PointingHandCursor))
+        self.options_button.clicked.connect(self._open_settings_dialog)
+        button_row.addWidget(self.options_button)
         self.start_button = QtWidgets.QPushButton("Start")
         self.start_button.clicked.connect(self._start_processing)
         self.stop_button = QtWidgets.QPushButton("Stop")
@@ -1123,7 +1175,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self.tool_status.setWordWrap(True)
         layout.addWidget(self.tool_status)
 
-        # Wrap the whole page into a scroll area to avoid overlaps at small sizes
         scroll = QtWidgets.QScrollArea()
         scroll.setFrameShape(QtWidgets.QFrame.NoFrame)
         scroll.setWidgetResizable(True)
@@ -1233,14 +1284,12 @@ class MainWindow(QtWidgets.QMainWindow):
                         padding: 4px 8px 4px 8px;
                     }
                     #DropArea { border: none; background: #ffffff; border-radius: 12px; }
-                    /* Queue card with a visible bottom border */
-                    #QueueContainer {
+                    #QueueList {
                         background: #ffffff;
                         border: 1px solid #e5e7eb;
                         border-radius: 10px;
                     }
-                    #QueueContainer QListWidget { border: none; background: transparent; }
-                    #QueueContainer QListWidget::item { padding: 6px 8px; }
+                    #QueueList::item { padding: 6px 8px; }
                 """
             )
 
@@ -1267,12 +1316,9 @@ class MainWindow(QtWidgets.QMainWindow):
             lines.append(f"MKVToolNix (mkvmerge) detected at {self.mkv_paths.mkvmerge.parent}")
         else:
             lines.append("MKVToolNix (mkvmerge) not found. It will be installed by install.ps1 or set SRTFORGE_MKV_DIR.")
-        has_embed_backend = (self.ffmpeg_paths is not None) or (self.mkv_paths is not None)
-        self.embed_checkbox.setEnabled(has_embed_backend and (self._worker is None))
-        if not has_embed_backend:
+        if not ((self.ffmpeg_paths is not None) or (self.mkv_paths is not None)):
             lines.append("Soft embedding disabled until FFmpeg or MKVToolNix is available.")
         self.tool_status.setText("\n".join(lines))
-        self._update_embed_controls()
 
     def _handle_dropped_files(self, files: list) -> None:
         self._add_files_to_queue(files)
@@ -1310,37 +1356,15 @@ class MainWindow(QtWidgets.QMainWindow):
         has_items = self.queue_list.count() > 0
         self.start_button.setEnabled(has_items and not self._worker)
 
-    def _sync_queue_group_height(self) -> None:
-        """Limit the queue group's height based on the button stack."""
-
-        try:
-            btns = getattr(self, "_queue_buttons", None)
-            if not btns:
-                return
-            btn_heights = sum(btn.sizeHint().height() for btn in btns)
-            target = int(btn_heights + 48)
-            self.queue_list.setMaximumHeight(target)
-            self.queue_list.setMinimumHeight(min(200, target))
-            self.queue_group.setSizePolicy(
-                QtWidgets.QSizePolicy.Preferred,
-                QtWidgets.QSizePolicy.Maximum,
-            )
-            self.queue_group.setMaximumHeight(target + 32)
-        except Exception:
-            self.queue_list.setMaximumHeight(220)
-            self.queue_group.setMaximumHeight(252)
-
-    def _update_embed_controls(self) -> None:
-        is_checked = self.embed_checkbox.isChecked()
-        for widget in getattr(self, "_embed_toggle_widgets", ()):  # pragma: no cover - UI guard
-            widget.setVisible(is_checked)
-        # While running, lock down the inner controls even if visible.
-        inner_enabled = is_checked and (self._worker is None) and self.embed_checkbox.isEnabled()
-        for widget in getattr(self, "_embed_enable_widgets", ()):  # pragma: no cover - UI guard
-            widget.setEnabled(inner_enabled)
-        burn_enabled = inner_enabled and (self.ffmpeg_paths is not None)
-        if hasattr(self, "burn_checkbox"):
-            self.burn_checkbox.setEnabled(burn_enabled)
+    def _open_settings_dialog(self) -> None:
+        dlg = SettingsDialog(
+            self,
+            self._ui_options,
+            has_ffmpeg=bool(self.ffmpeg_paths),
+            has_mkvmerge=bool(self.mkv_paths),
+        )
+        if dlg.exec() == QtWidgets.QDialog.Accepted:
+            self._ui_options = dlg.to_options(self._ui_options)
 
     def _start_processing(self) -> None:
         if self._worker:
@@ -1348,24 +1372,26 @@ class MainWindow(QtWidgets.QMainWindow):
         files = [self.queue_list.item(i).data(QtCore.Qt.ItemDataRole.UserRole) for i in range(self.queue_list.count())]
         if not files:
             return
-        prefer_gpu = bool(self.device_combo.currentData())
-        embed_method = str(self.embed_method_combo.currentData())
-        track_title = self.title_edit.text().strip() or "Srtforge (English)"
-        track_language = self.lang_edit.text().strip() or "eng"
+        opts = self._ui_options
+        prefer_gpu = bool(opts.prefer_gpu)
+        embed_method = str(opts.soft_embed_method or "auto")
+        track_title = opts.srt_title.strip() or "Srtforge (English)"
+        track_language = opts.srt_language.strip() or "eng"
         options = WorkerOptions(
             prefer_gpu=prefer_gpu,
-            embed_subtitles=self.embed_checkbox.isChecked(),
-            burn_subtitles=self.burn_checkbox.isChecked(),
-            cleanup_gpu=self.cleanup_checkbox.isChecked(),
+            embed_subtitles=bool(opts.embed_subtitles),
+            burn_subtitles=bool(opts.burn_subtitles),
+            cleanup_gpu=bool(opts.cleanup_gpu),
             ffmpeg_bin=str(self.ffmpeg_paths.ffmpeg) if self.ffmpeg_paths else None,
             ffprobe_bin=str(self.ffmpeg_paths.ffprobe) if self.ffmpeg_paths else None,
             soft_embed_method=embed_method,
             mkvmerge_bin=str(self.mkv_paths.mkvmerge) if self.mkv_paths else None,
             srt_title=track_title,
             srt_language=track_language,
-            srt_default=self.default_checkbox.isChecked(),
-            srt_forced=self.forced_checkbox.isChecked(),
+            srt_default=bool(opts.srt_default),
+            srt_forced=bool(opts.srt_forced),
         )
+        self._last_worker_options = options
         self._worker = TranscriptionWorker(files, options)
         self._worker.logMessage.connect(self._append_log)
         self._worker.fileStarted.connect(self._on_file_started)
@@ -1387,10 +1413,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.start_button.setEnabled(not running)
         self.stop_button.setEnabled(running)
         self.queue_list.setEnabled(not running)
-        self.device_combo.setEnabled(not running)
-        has_embed_backend = (self.ffmpeg_paths is not None) or (self.mkv_paths is not None)
-        self.embed_checkbox.setEnabled(has_embed_backend and not running)
-        self._update_embed_controls()
+        self.options_button.setEnabled(not running)
 
     def _append_log(self, message: str) -> None:
         self.log_view.appendPlainText(message)
@@ -1422,7 +1445,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self._worker = None
         self._set_running_state(False)
         self._update_start_state()
-        if self.cleanup_checkbox.isChecked() and bool(self.device_combo.currentData()):
+        if (
+            self._last_worker_options
+            and self._last_worker_options.cleanup_gpu
+            and self._last_worker_options.prefer_gpu
+        ):
             cleanup_gpu_memory()
             self._append_log("GPU cache cleared")
 
