@@ -1094,7 +1094,8 @@ class MainWindow(QtWidgets.QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("srtforge Studio")
-        self.setMinimumSize(840, 520)
+        # Smaller footprint so no scrolling is needed on a modest window
+        self.setMinimumSize(820, 520)
         self.resize(900, 560)
         self.setObjectName("MainWindow")
         self.setAcceptDrops(True)
@@ -1127,8 +1128,14 @@ class MainWindow(QtWidgets.QMainWindow):
         self.queue_list.setObjectName("QueueList")
         self.queue_list.setFrameShape(QtWidgets.QFrame.NoFrame)
         self.queue_list.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.ExtendedSelection)
+        # Smooth per-pixel scrolling + compact rows so the list doesn't "jump"
         self.queue_list.setVerticalScrollMode(QtWidgets.QAbstractItemView.ScrollPerPixel)
         self.queue_list.setUniformItemSizes(True)
+        self.queue_list.setSpacing(2)
+        # Cap queue height so options/settings remain visible on small windows
+        self.queue_list.setMinimumHeight(96)
+        queue_group.setSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Maximum)
+        queue_group.setMaximumHeight(180)
         queue_layout.addWidget(self.queue_list)
         queue_layout.setStretch(0, 1)
         queue_buttons = QtWidgets.QVBoxLayout()
@@ -1148,6 +1155,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.log_view = QtWidgets.QPlainTextEdit()
         self.log_view.setReadOnly(True)
+        # Slightly smaller console frees space for controls
         self.log_view.setMinimumHeight(110)
         self.log_view.setMaximumHeight(260)
         self.log_view.setMaximumBlockCount(10000)
