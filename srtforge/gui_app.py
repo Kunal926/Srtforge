@@ -984,13 +984,9 @@ class MainWindow(QtWidgets.QMainWindow):
         header.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(header)
 
-        queue_group = QtWidgets.QGroupBox("Transcription queue")
-        queue_layout = QtWidgets.QHBoxLayout(queue_group)
+        self.queue_group = QtWidgets.QGroupBox("Transcription queue")
+        queue_layout = QtWidgets.QHBoxLayout(self.queue_group)
         self.queue_list = QtWidgets.QListWidget()
-        # UX: keep the queue compact (approx. ~50% of previous space use on typical displays)
-        # This prevents it from dominating the page when the window is tall.
-        # Adjust locally if you prefer a different cap.
-        self.queue_list.setMaximumHeight(180)
         self.queue_list.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.ExtendedSelection)
         queue_layout.addWidget(self.queue_list)
         # Let the list take the space while the buttons keep a compact width
@@ -1005,10 +1001,12 @@ class MainWindow(QtWidgets.QMainWindow):
         for button in (add_button, remove_button, clear_button):
             button.setCursor(QtGui.QCursor(QtCore.Qt.CursorShape.PointingHandCursor))
             queue_buttons.addWidget(button)
+        self._queue_buttons = (add_button, remove_button, clear_button)
         queue_buttons.addStretch()
         queue_layout.addLayout(queue_buttons)
-        layout.addWidget(queue_group)
-        add_shadow(queue_group)
+        QtCore.QTimer.singleShot(0, self._sync_queue_group_height)
+        layout.addWidget(self.queue_group)
+        add_shadow(self.queue_group)
 
         options_group = QtWidgets.QGroupBox("Processing options")
         options_layout = QtWidgets.QGridLayout(options_group)
@@ -1047,11 +1045,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self.title_edit = QtWidgets.QLineEdit("Srtforge (English)")
         embed_grid.addWidget(QtWidgets.QLabel("Track title"), 0, 2)
         embed_grid.addWidget(self.title_edit, 0, 3)
-
-        # Track language fixed to eng (non-editable, as Parakeet is English-only here)
-        language_hint = QtWidgets.QLabel("Track language: eng (fixed)")
-        language_hint.setStyleSheet("color: #6b7280;")  # subtle hint color
-        embed_grid.addWidget(language_hint, 1, 0, 1, 2)
 
         self.default_checkbox = QtWidgets.QCheckBox("Set as default track")
         self.forced_checkbox = QtWidgets.QCheckBox("Mark as forced")
@@ -1280,6 +1273,26 @@ class MainWindow(QtWidgets.QMainWindow):
     def _update_start_state(self) -> None:
         has_items = self.queue_list.count() > 0
         self.start_button.setEnabled(has_items and not self._worker)
+
+    def _sync_queue_group_height(self) -> None:
+        """Limit the queue group's height based on the button stack."""
+
+        try:
+            btns = getattr(self, "_queue_buttons", None)
+            if not btns:
+                return
+            btn_heights = sum(btn.sizeHint().height() for btn in btns)
+            target = int(btn_heights + 48)
+            self.queue_list.setMaximumHeight(target)
+            self.queue_list.setMinimumHeight(min(200, target))
+            self.queue_group.setSizePolicy(
+                QtWidgets.QSizePolicy.Preferred,
+                QtWidgets.QSizePolicy.Maximum,
+            )
+            self.queue_group.setMaximumHeight(target + 32)
+        except Exception:
+            self.queue_list.setMaximumHeight(220)
+            self.queue_group.setMaximumHeight(252)
 
     def _update_embed_controls(self) -> None:
         # Show/Hide the collapsible container with all embed-related controls.
