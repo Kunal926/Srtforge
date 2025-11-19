@@ -9,6 +9,7 @@ import re
 import signal
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from dataclasses import dataclass
@@ -22,7 +23,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 from .config import DEFAULT_OUTPUT_SUFFIX
 from .logging import LATEST_LOG, LOGS_DIR
-from .settings import settings
+from .settings import settings, CONFIG_ENV_VAR
 from .win11_backdrop import apply_win11_look, get_windows_accent_qcolor
 
 
@@ -433,7 +434,7 @@ class TranscriptionWorker(QtCore.QThread):
         env.setdefault("PYTHONIOENCODING", "UTF-8")
         env.setdefault("PYTHONUTF8", "1")
         if self.options.config_path:
-            env["SRTFORGE_CONFIG"] = str(self.options.config_path)
+            env[CONFIG_ENV_VAR] = str(self.options.config_path)
         ffmpeg_dir = _ffmpeg_directory_from_options(self.options)
         if ffmpeg_dir:
             env_path = env.get("PATH", "")
@@ -994,6 +995,185 @@ class LogTailer(QtCore.QObject):
                 self._callback(body)
 
 
+class OptionsDialog(QtWidgets.QDialog):
+    """Popup dialog with Basic and Advanced tabs for configuration."""
+
+    def __init__(self, *, parent=None, initial_basic: dict, initial_settings) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Options")
+        self.resize(760, 520)
+        layout = QtWidgets.QVBoxLayout(self)
+        self.tabs = QtWidgets.QTabWidget(self)
+        layout.addWidget(self.tabs)
+
+        # ----- Basic tab (mirrors main window) ---------------------------------
+        basic = QtWidgets.QWidget()
+        grid = QtWidgets.QGridLayout(basic)
+        row = 0
+        self.device_combo = QtWidgets.QComboBox()
+        self.device_combo.addItem("Use GPU", True)
+        self.device_combo.addItem("CPU only", False)
+        self.device_combo.setCurrentIndex(0 if initial_basic.get("prefer_gpu", True) else 1)
+        grid.addWidget(QtWidgets.QLabel("Device"), row, 0)
+        grid.addWidget(self.device_combo, row, 1)
+        row += 1
+
+        self.embed_cb = QtWidgets.QCheckBox("Embed subtitles (soft track)")
+        self.embed_cb.setChecked(bool(initial_basic.get("embed_subtitles", False)))
+        grid.addWidget(self.embed_cb, row, 0, 1, 2)
+        row += 1
+
+        self.embed_method = QtWidgets.QComboBox()
+        self.embed_method.addItem("Auto (prefer MKVToolNix)", "auto")
+        self.embed_method.addItem("MKVToolNix (mkvmerge)", "mkvmerge")
+        self.embed_method.addItem("FFmpeg (legacy)", "ffmpeg")
+        idx = max(0, self.embed_method.findData(initial_basic.get("soft_embed_method", "auto")))
+        self.embed_method.setCurrentIndex(idx)
+        grid.addWidget(QtWidgets.QLabel("Soft-embed method"), row, 0)
+        grid.addWidget(self.embed_method, row, 1)
+        row += 1
+
+        self.title_edit = QtWidgets.QLineEdit(initial_basic.get("srt_title", "Srtforge (English)"))
+        self.lang_edit = QtWidgets.QLineEdit(initial_basic.get("srt_language", "eng"))
+        grid.addWidget(QtWidgets.QLabel("Track title"), row, 0)
+        grid.addWidget(self.title_edit, row, 1)
+        row += 1
+        grid.addWidget(QtWidgets.QLabel("Track language"), row, 0)
+        grid.addWidget(self.lang_edit, row, 1)
+        row += 1
+
+        self.default_cb = QtWidgets.QCheckBox("Set as default track")
+        self.default_cb.setChecked(bool(initial_basic.get("srt_default", False)))
+        self.forced_cb = QtWidgets.QCheckBox("Mark as forced")
+        self.forced_cb.setChecked(bool(initial_basic.get("srt_forced", False)))
+        grid.addWidget(self.default_cb, row, 0)
+        grid.addWidget(self.forced_cb, row, 1)
+        row += 1
+
+        self.burn_cb = QtWidgets.QCheckBox("Burn subtitles (hard sub)")
+        self.burn_cb.setChecked(bool(initial_basic.get("burn_subtitles", False)))
+        grid.addWidget(self.burn_cb, row, 0, 1, 2)
+        row += 1
+
+        self.cleanup_cb = QtWidgets.QCheckBox("Free GPU memory when stopping")
+        self.cleanup_cb.setChecked(bool(initial_basic.get("cleanup_gpu", False)))
+        grid.addWidget(self.cleanup_cb, row, 0, 1, 2)
+
+        grid.setColumnStretch(0, 0)
+        grid.setColumnStretch(1, 1)
+        self.tabs.addTab(basic, "Basic")
+
+        # ----- Advanced tab (writes YAML for CLI via SRTFORGE_CONFIG) ----------
+        adv = QtWidgets.QWidget()
+        form = QtWidgets.QFormLayout(adv)
+
+        # Paths
+        self.output_dir = QtWidgets.QLineEdit(str(initial_settings.paths.output_dir or ""))
+        self.temp_dir = QtWidgets.QLineEdit(str(initial_settings.paths.temp_dir or ""))
+        out_row = QtWidgets.QHBoxLayout()
+        out_widget = QtWidgets.QWidget()
+        out_widget.setLayout(out_row)
+        out_row.addWidget(self.output_dir, 1)
+        btn_out = QtWidgets.QToolButton(text="Browse…")
+        out_row.addWidget(btn_out)
+        form.addRow("Output directory", out_widget)
+        tmp_row = QtWidgets.QHBoxLayout()
+        tmp_widget = QtWidgets.QWidget()
+        tmp_widget.setLayout(tmp_row)
+        tmp_row.addWidget(self.temp_dir, 1)
+        btn_tmp = QtWidgets.QToolButton(text="Browse…")
+        tmp_row.addWidget(btn_tmp)
+        form.addRow("Temp directory", tmp_widget)
+        btn_out.clicked.connect(lambda: self._pick_dir(self.output_dir))
+        btn_tmp.clicked.connect(lambda: self._pick_dir(self.temp_dir))
+
+        # Separation
+        self.backend = QtWidgets.QComboBox()
+        self.backend.addItem("FV4 vocal separation (recommended)", "fv4")
+        self.backend.addItem("Skip separation", "none")
+        backend_value = (initial_settings.separation.backend or "fv4").lower()
+        self.backend.setCurrentIndex(max(0, self.backend.findData(backend_value)))
+        form.addRow("Separation backend", self.backend)
+
+        self.sep_hz = QtWidgets.QSpinBox()
+        self.sep_hz.setRange(8000, 96000)
+        self.sep_hz.setSingleStep(1000)
+        self.sep_hz.setValue(int(initial_settings.separation.sep_hz))
+        form.addRow("Separation sample rate (Hz)", self.sep_hz)
+
+        self.sep_prefer_center = QtWidgets.QCheckBox()
+        self.sep_prefer_center.setChecked(bool(initial_settings.separation.prefer_center))
+        form.addRow("Prefer center channel (separation)", self.sep_prefer_center)
+
+        self.allow_untagged = QtWidgets.QCheckBox()
+        self.allow_untagged.setChecked(bool(initial_settings.separation.allow_untagged_english))
+        form.addRow("Allow untagged English fallback", self.allow_untagged)
+
+        # FFmpeg
+        self.ff_prefer_center = QtWidgets.QCheckBox()
+        self.ff_prefer_center.setChecked(bool(initial_settings.ffmpeg.prefer_center))
+        form.addRow("Prefer center channel (FFmpeg pan)", self.ff_prefer_center)
+
+        self.filter_chain = QtWidgets.QPlainTextEdit(initial_settings.ffmpeg.filter_chain or "")
+        self.filter_chain.setMinimumHeight(80)
+        form.addRow("FFmpeg filter chain", self.filter_chain)
+
+        # Parakeet
+        self.force_f32 = QtWidgets.QCheckBox()
+        self.force_f32.setChecked(bool(initial_settings.parakeet.force_float32))
+        form.addRow("Force float32 (Parakeet)", self.force_f32)
+
+        self.tabs.addTab(adv, "Advanced")
+
+        # Buttons
+        buttons = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
+        layout.addWidget(buttons)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+
+    def _pick_dir(self, edit: QtWidgets.QLineEdit) -> None:
+        path = QtWidgets.QFileDialog.getExistingDirectory(self, "Select folder", edit.text().strip() or "")
+        if path:
+            edit.setText(path)
+
+    def basic_values(self) -> dict:
+        return {
+            "prefer_gpu": bool(self.device_combo.currentData()),
+            "embed_subtitles": self.embed_cb.isChecked(),
+            "burn_subtitles": self.burn_cb.isChecked(),
+            "cleanup_gpu": self.cleanup_cb.isChecked(),
+            "soft_embed_method": str(self.embed_method.currentData()),
+            "srt_title": self.title_edit.text().strip() or "Srtforge (English)",
+            "srt_language": self.lang_edit.text().strip() or "eng",
+            "srt_default": self.default_cb.isChecked(),
+            "srt_forced": self.forced_cb.isChecked(),
+        }
+
+    def settings_payload(self, *, prefer_gpu: Optional[bool] = None) -> dict:
+        gpu_pref = bool(prefer_gpu) if prefer_gpu is not None else True
+        return {
+            "paths": {
+                "temp_dir": self.temp_dir.text().strip() or None,
+                "output_dir": self.output_dir.text().strip() or None,
+            },
+            "ffmpeg": {
+                "prefer_center": self.ff_prefer_center.isChecked(),
+                "filter_chain": self.filter_chain.toPlainText().strip(),
+            },
+            "separation": {
+                "backend": str(self.backend.currentData() or "fv4"),
+                "sep_hz": int(self.sep_hz.value()),
+                "prefer_center": self.sep_prefer_center.isChecked(),
+                "prefer_gpu": gpu_pref,
+                "allow_untagged_english": self.allow_untagged.isChecked(),
+            },
+            "parakeet": {
+                "force_float32": self.force_f32.isChecked(),
+                "prefer_gpu": gpu_pref,
+            },
+        }
+
+
 class MainWindow(QtWidgets.QMainWindow):
     """Main application window."""
 
@@ -1008,6 +1188,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._worker: Optional[TranscriptionWorker] = None
         self._log_tailer: Optional[LogTailer] = None
         self._last_worker_options: Optional[WorkerOptions] = None
+        self._runtime_config_path: Optional[str] = None
         self.ffmpeg_paths = locate_ffmpeg_binaries()
         self.mkv_paths = locate_mkvmerge_binary()
         self._eta_timer = QtCore.QTimer(self)
@@ -1062,13 +1243,8 @@ class MainWindow(QtWidgets.QMainWindow):
         layout.addWidget(queue_group)
         add_shadow(queue_group)
 
-        options_group = QtWidgets.QGroupBox("Options")
-        options_vlayout = QtWidgets.QVBoxLayout(options_group)
-        self.options_tabs = QtWidgets.QTabWidget()
-        options_vlayout.addWidget(self.options_tabs)
-
-        basic = QtWidgets.QWidget()
-        options_layout = QtWidgets.QGridLayout(basic)
+        options_group = QtWidgets.QGroupBox("Processing options")
+        options_layout = QtWidgets.QGridLayout(options_group)
         options_layout.addWidget(QtWidgets.QLabel("Device"), 0, 0)
         self.device_combo = QtWidgets.QComboBox()
         self.device_combo.addItem("Use GPU", True)
@@ -1116,44 +1292,6 @@ class MainWindow(QtWidgets.QMainWindow):
         options_layout.setColumnStretch(1, 1)
         self.embed_toggle.toggled.connect(self._toggle_embed_panel)
         self._toggle_embed_panel(False)
-        self.options_tabs.addTab(basic, "Basic")
-
-        adv = QtWidgets.QWidget()
-        adv_form = QtWidgets.QFormLayout(adv)
-        self.temp_dir_edit = QtWidgets.QLineEdit(str(settings.paths.temp_dir or ""))
-        self.output_dir_edit = QtWidgets.QLineEdit(str(settings.paths.output_dir or ""))
-        adv_form.addRow("Temp directory", _with_browse(self, self.temp_dir_edit, directory=True))
-        adv_form.addRow("Output directory", _with_browse(self, self.output_dir_edit, directory=True))
-        self.ffmpeg_prefer_center = QtWidgets.QCheckBox("Prefer center channel when downmixing")
-        self.ffmpeg_prefer_center.setChecked(bool(settings.ffmpeg.prefer_center))
-        self.filter_chain_edit = QtWidgets.QLineEdit(settings.ffmpeg.filter_chain)
-        adv_form.addRow(self.ffmpeg_prefer_center)
-        adv_form.addRow("Preprocess filter chain", self.filter_chain_edit)
-        self.sep_backend_combo = QtWidgets.QComboBox()
-        self.sep_backend_combo.addItems(["fv4", "none"])
-        self.sep_backend_combo.setCurrentText((settings.separation.backend or "fv4").lower())
-        self.sep_hz_spin = QtWidgets.QSpinBox()
-        self.sep_hz_spin.setRange(8000, 192000)
-        self.sep_hz_spin.setValue(int(settings.separation.sep_hz))
-        self.sep_prefer_center = QtWidgets.QCheckBox("Prefer centered mono streams")
-        self.sep_prefer_center.setChecked(bool(settings.separation.prefer_center))
-        self.sep_prefer_gpu = QtWidgets.QCheckBox("Prefer GPU for separation")
-        self.sep_prefer_gpu.setChecked(bool(settings.separation.prefer_gpu))
-        adv_form.addRow("Separation backend", self.sep_backend_combo)
-        adv_form.addRow("Separation sample rate (Hz)", self.sep_hz_spin)
-        adv_form.addRow(self.sep_prefer_center)
-        adv_form.addRow(self.sep_prefer_gpu)
-        self.fv4_cfg_edit = QtWidgets.QLineEdit(str(settings.separation.fv4.cfg))
-        self.fv4_ckpt_edit = QtWidgets.QLineEdit(str(settings.separation.fv4.ckpt))
-        adv_form.addRow("FV4 config (cfg)", _with_browse(self, self.fv4_cfg_edit, directory=False))
-        adv_form.addRow("FV4 checkpoint (ckpt)", _with_browse(self, self.fv4_ckpt_edit, directory=False))
-        self.par_force_f32 = QtWidgets.QCheckBox("Force float32")
-        self.par_force_f32.setChecked(bool(settings.parakeet.force_float32))
-        self.par_prefer_gpu = QtWidgets.QCheckBox("Prefer GPU for ASR")
-        self.par_prefer_gpu.setChecked(bool(settings.parakeet.prefer_gpu))
-        adv_form.addRow(self.par_force_f32)
-        adv_form.addRow(self.par_prefer_gpu)
-        self.options_tabs.addTab(adv, "Advanced")
 
         layout.addWidget(options_group)
         add_shadow(options_group)
@@ -1171,10 +1309,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.eta_label = QtWidgets.QLabel("ETA —")
         self.eta_label.setObjectName("EtaLabel")
         button_row.addWidget(self.eta_label)
-        self.show_options_btn = QtWidgets.QPushButton("Options")
-        self.show_options_btn.setCursor(QtGui.QCursor(QtCore.Qt.CursorShape.PointingHandCursor))
-        self.show_options_btn.clicked.connect(self._focus_options)
-        button_row.addWidget(self.show_options_btn)
+        self.options_button = QtWidgets.QPushButton("Options…")
+        self.options_button.setCursor(QtGui.QCursor(QtCore.Qt.CursorShape.PointingHandCursor))
+        self.options_button.clicked.connect(self._open_options_dialog)
+        button_row.addWidget(self.options_button)
         button_row.addStretch()
         self.start_button = QtWidgets.QPushButton("Start")
         self.start_button.clicked.connect(self._start_processing)
@@ -1330,10 +1468,7 @@ class MainWindow(QtWidgets.QMainWindow):
     # ---- runtime helpers ---------------------------------------------------------
     def _update_tool_status(self) -> None:
         lines: list[str] = []
-        if self.ffmpeg_paths:
-            lines.append(f"FFmpeg detected at {self.ffmpeg_paths.ffmpeg.parent}")
-        else:
-            lines.append("FFmpeg not found. Place binaries next to the executable or set SRTFORGE_FFMPEG_DIR.")
+        if not self.ffmpeg_paths:
             self.burn_checkbox.setEnabled(False)
         if self.mkv_paths:
             lines.append(f"MKVToolNix (mkvmerge) detected at {self.mkv_paths.mkvmerge.parent}")
@@ -1405,7 +1540,6 @@ class MainWindow(QtWidgets.QMainWindow):
         if not files:
             return
         self._clear_eta()
-        cfg_path = self._write_temp_config_yaml()
         prefer_gpu = bool(self.device_combo.currentData())
         embed_method = str(self.embed_method_combo.currentData() or "auto")
         track_title = self.title_edit.text().strip() or "Srtforge (English)"
@@ -1422,7 +1556,7 @@ class MainWindow(QtWidgets.QMainWindow):
             srt_language=self.lang_edit.text().strip() or "eng",
             srt_default=bool(self.default_checkbox.isChecked()),
             srt_forced=bool(self.forced_checkbox.isChecked()),
-            config_path=str(cfg_path),
+            config_path=self._runtime_config_path,
         )
         self._last_worker_options = options
         self._worker = TranscriptionWorker(files, options)
@@ -1449,47 +1583,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self.queue_list.setEnabled(not running)
         self.device_combo.setEnabled(not running)
         self.cleanup_checkbox.setEnabled(not running)
+        self.options_button.setEnabled(not running)
         has_embed_backend = (self.ffmpeg_paths is not None) or (self.mkv_paths is not None)
         self.embed_toggle.setEnabled(has_embed_backend and not running)
         self.burn_checkbox.setEnabled(bool(self.ffmpeg_paths) and not running)
         self._toggle_embed_panel(self.embed_toggle.isChecked() and self.embed_toggle.isEnabled())
-
-    def _focus_options(self) -> None:
-        self.options_tabs.setCurrentIndex(0)
-        central = self.centralWidget()
-        if isinstance(central, QtWidgets.QScrollArea):
-            central.ensureWidgetVisible(self.options_tabs, 0, 0)
-
-    def _write_temp_config_yaml(self) -> Path:
-        LOGS_DIR.mkdir(parents=True, exist_ok=True)
-        cfg_path = LOGS_DIR / "gui_config.yaml"
-        data = {
-            "paths": {
-                "temp_dir": self.temp_dir_edit.text().strip() or None,
-                "output_dir": self.output_dir_edit.text().strip() or None,
-            },
-            "ffmpeg": {
-                "prefer_center": bool(self.ffmpeg_prefer_center.isChecked()),
-                "filter_chain": self.filter_chain_edit.text().strip(),
-            },
-            "separation": {
-                "backend": self.sep_backend_combo.currentText().strip(),
-                "sep_hz": int(self.sep_hz_spin.value()),
-                "prefer_center": bool(self.sep_prefer_center.isChecked()),
-                "prefer_gpu": bool(self.sep_prefer_gpu.isChecked()),
-                "fv4": {
-                    "cfg": self.fv4_cfg_edit.text().strip(),
-                    "ckpt": self.fv4_ckpt_edit.text().strip(),
-                },
-            },
-            "parakeet": {
-                "force_float32": bool(self.par_force_f32.isChecked()),
-                "prefer_gpu": bool(self.par_prefer_gpu.isChecked()),
-            },
-        }
-        with cfg_path.open("w", encoding="utf-8") as handle:
-            yaml.safe_dump(data, handle, sort_keys=False)
-        return cfg_path
 
     def _append_log(self, message: str) -> None:
         self.log_view.appendPlainText(message)
@@ -1545,7 +1643,54 @@ class MainWindow(QtWidgets.QMainWindow):
         if self._worker:
             self._worker.request_stop()
             self._worker.wait(2000)
+        if self._runtime_config_path:
+            try:
+                os.unlink(self._runtime_config_path)
+            except OSError:
+                pass
         super().closeEvent(event)
+
+    def _open_options_dialog(self) -> None:
+        initial_basic = {
+            "prefer_gpu": bool(self.device_combo.currentData()),
+            "embed_subtitles": bool(self.embed_toggle.isChecked()),
+            "burn_subtitles": bool(self.burn_checkbox.isChecked()),
+            "cleanup_gpu": bool(self.cleanup_checkbox.isChecked()),
+            "soft_embed_method": str(self.embed_method_combo.currentData() or "auto"),
+            "srt_title": self.title_edit.text().strip() or "Srtforge (English)",
+            "srt_language": self.lang_edit.text().strip() or "eng",
+            "srt_default": bool(self.default_checkbox.isChecked()),
+            "srt_forced": bool(self.forced_checkbox.isChecked()),
+        }
+        dialog = OptionsDialog(parent=self, initial_basic=initial_basic, initial_settings=settings)
+        if dialog.exec() != QtWidgets.QDialog.Accepted:
+            return
+        basic = dialog.basic_values()
+        self.device_combo.setCurrentIndex(0 if basic["prefer_gpu"] else 1)
+        self.embed_toggle.setChecked(bool(basic["embed_subtitles"]))
+        self.burn_checkbox.setChecked(bool(basic["burn_subtitles"]))
+        self.cleanup_checkbox.setChecked(bool(basic["cleanup_gpu"]))
+        method_idx = max(0, self.embed_method_combo.findData(basic["soft_embed_method"]))
+        self.embed_method_combo.setCurrentIndex(method_idx)
+        self.title_edit.setText(basic["srt_title"])
+        self.lang_edit.setText(basic["srt_language"])
+        self.default_checkbox.setChecked(bool(basic["srt_default"]))
+        self.forced_checkbox.setChecked(bool(basic["srt_forced"]))
+        payload = dialog.settings_payload(prefer_gpu=basic["prefer_gpu"])
+        if self._runtime_config_path:
+            try:
+                os.unlink(self._runtime_config_path)
+            except OSError:
+                pass
+        self._runtime_config_path = self._write_runtime_yaml(payload)
+        self._append_log(f"Using custom options for this session ({self._runtime_config_path})")
+
+    def _write_runtime_yaml(self, payload: dict) -> str:
+        fd, path = tempfile.mkstemp(prefix="srtforge_gui_", suffix=".yaml")
+        os.close(fd)
+        with open(path, "w", encoding="utf-8") as handle:
+            yaml.safe_dump(payload, handle, sort_keys=False, allow_unicode=True)
+        return path
 
     def _set_eta(self, seconds: float) -> None:
         self._eta_deadline = time.monotonic() + float(seconds)
@@ -1589,28 +1734,6 @@ def main() -> None:
     window = MainWindow()
     window.show()
     sys.exit(app.exec())
-
-
-def _with_browse(parent: QtWidgets.QWidget, edit: QtWidgets.QLineEdit, *, directory: bool) -> QtWidgets.QWidget:
-    box = QtWidgets.QWidget(parent)
-    layout = QtWidgets.QHBoxLayout(box)
-    layout.setContentsMargins(0, 0, 0, 0)
-    layout.addWidget(edit)
-    button = QtWidgets.QToolButton(box)
-    button.setText("Browse")
-
-    def _pick() -> None:
-        if directory:
-            path = QtWidgets.QFileDialog.getExistingDirectory(parent, "Select folder")
-        else:
-            path, _ = QtWidgets.QFileDialog.getOpenFileName(parent, "Select file")
-        if path:
-            edit.setText(path)
-
-    button.clicked.connect(_pick)
-    layout.addWidget(button)
-    return box
-
 
 def _probe_media_duration_ffprobe_cmd(ffprobe_bin: Optional[Path], media: Path) -> float:
     exe = str(ffprobe_bin or "ffprobe")
