@@ -182,6 +182,7 @@ class Pipeline:
                             preprocessed,
                             filter_chain=filter_chain,
                         )
+                    self.config.ffmpeg_filter_chain = filter_chain
 
                     with status("Running Parakeet ASR and subtitle post-processing"), run_logger.step(
                         "ASR pipeline"
