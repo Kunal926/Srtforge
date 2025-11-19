@@ -208,7 +208,7 @@ class Pipeline:
 
     # ---- internal methods --------------------------------------------------------
     def _show_summary(self, media: Path, srt: Path) -> None:
-        table = Table(title="srtforge summary", show_header=True, header_style="bold magenta")
+        table = Table(title="Srtforge summary", show_header=True, header_style="bold magenta")
         table.add_column("Media", style="cyan")
         table.add_column("SRT", style="green")
         table.add_row(str(media), str(srt))

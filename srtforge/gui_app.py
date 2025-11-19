@@ -945,12 +945,8 @@ class SettingsDialog(QtWidgets.QDialog):
         row += 1
 
         self.title_edit = QtWidgets.QLineEdit(opts.srt_title)
-        self.lang_edit = QtWidgets.QLineEdit(opts.srt_language)
         grid.addWidget(QtWidgets.QLabel("Track title"), row, 0)
         grid.addWidget(self.title_edit, row, 1)
-        row += 1
-        grid.addWidget(QtWidgets.QLabel("Track language"), row, 0)
-        grid.addWidget(self.lang_edit, row, 1)
         row += 1
 
         self.default_checkbox = QtWidgets.QCheckBox("Set as default track")
@@ -980,7 +976,6 @@ class SettingsDialog(QtWidgets.QDialog):
             for widget in (
                 self.embed_method_combo,
                 self.title_edit,
-                self.lang_edit,
                 self.default_checkbox,
                 self.forced_checkbox,
             ):
@@ -1002,7 +997,7 @@ class SettingsDialog(QtWidgets.QDialog):
         opts.embed_subtitles = self.embed_checkbox.isChecked() and self._has_embed_backend
         opts.soft_embed_method = str(self.embed_method_combo.currentData() or "auto")
         opts.srt_title = self.title_edit.text().strip() or "Srtforge (English)"
-        opts.srt_language = self.lang_edit.text().strip() or "eng"
+        opts.srt_language = "eng"
         opts.srt_default = self.default_checkbox.isChecked()
         opts.srt_forced = self.forced_checkbox.isChecked()
         opts.burn_subtitles = self.burn_checkbox.isChecked()
@@ -1093,10 +1088,10 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle("srtforge Studio")
-        # Smaller footprint so no scrolling is needed on a modest window
-        self.setMinimumSize(820, 520)
-        self.resize(900, 560)
+        # Capitalize brand and open at the size in the screenshot
+        self.setWindowTitle("Srtforge Studio")
+        self.resize(1200, 720)
+        self.setMinimumSize(960, 640)
         self.setObjectName("MainWindow")
         self.setAcceptDrops(True)
         self._worker: Optional[TranscriptionWorker] = None
@@ -1105,6 +1100,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.ffmpeg_paths = locate_ffmpeg_binaries()
         self.mkv_paths = locate_mkvmerge_binary()
         self._ui_options = UIOptions()
+        self._eta_timer: Optional[QtCore.QTimer] = None
+        self._file_times: list[float] = []
+        self._file_start: Optional[float] = None
+        self._total_files: int = 0
         self._build_ui()  # builds a page widget; we wrap it in a scroll area below
         self._log_tailer = LogTailer(self._append_log, self)
         self._apply_styles()
@@ -1116,7 +1115,7 @@ class MainWindow(QtWidgets.QMainWindow):
         page = QtWidgets.QWidget()
         layout = QtWidgets.QVBoxLayout(page)
         layout.setSpacing(16)
-        header = QtWidgets.QLabel("srtforge Studio")
+        header = QtWidgets.QLabel("Windows 11‑style subtitle studio for Srtforge")
         header.setObjectName("HeaderLabel")
         header.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(header)
@@ -1132,10 +1131,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.queue_list.setVerticalScrollMode(QtWidgets.QAbstractItemView.ScrollPerPixel)
         self.queue_list.setUniformItemSizes(True)
         self.queue_list.setSpacing(2)
-        # Cap queue height so options/settings remain visible on small windows
-        self.queue_list.setMinimumHeight(96)
-        queue_group.setSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Maximum)
-        queue_group.setMaximumHeight(180)
+        self.queue_list.setAlternatingRowColors(True)
+        # Slightly taller list with alternating rows for a clearer queue overview
+        self.queue_list.setMinimumHeight(160)
         queue_layout.addWidget(self.queue_list)
         queue_layout.setStretch(0, 1)
         queue_buttons = QtWidgets.QVBoxLayout()
@@ -1163,6 +1161,10 @@ class MainWindow(QtWidgets.QMainWindow):
         layout.addWidget(self.log_view)
 
         button_row = QtWidgets.QHBoxLayout()
+        button_row.addStretch()
+        self.eta_label = QtWidgets.QLabel("ETA —")
+        self.eta_label.setObjectName("EtaLabel")
+        button_row.addWidget(self.eta_label)
         button_row.addStretch()
         self.options_button = QtWidgets.QPushButton("Options…")
         self.options_button.setCursor(QtGui.QCursor(QtCore.Qt.CursorShape.PointingHandCursor))
@@ -1286,7 +1288,12 @@ class MainWindow(QtWidgets.QMainWindow):
                     QLabel,QLineEdit,QComboBox,QPushButton,QCheckBox {
                         padding-top: 4px; padding-bottom: 4px;
                     }
-                    QGroupBox { margin-top: 12px; }
+                    /* Softer card look for option sections */
+                    QGroupBox {
+                        margin-top: 12px;
+                        border: 1px solid #e5e7eb;
+                        border-radius: 12px;
+                    }
                     QGroupBox::title {
                         subcontrol-origin: margin; left: 12px;
                         padding: 4px 8px 4px 8px;
@@ -1295,9 +1302,11 @@ class MainWindow(QtWidgets.QMainWindow):
                     #QueueList {
                         background: #ffffff;
                         border: 1px solid #e5e7eb;
-                        border-radius: 10px;
+                        border-radius: 8px;
+                        padding: 6px;
                     }
                     #QueueList::item { padding: 6px 8px; }
+                    #EtaLabel { color: #6b7280; padding: 6px 10px; }
                 """
             )
 
@@ -1380,11 +1389,19 @@ class MainWindow(QtWidgets.QMainWindow):
         files = [self.queue_list.item(i).data(QtCore.Qt.ItemDataRole.UserRole) for i in range(self.queue_list.count())]
         if not files:
             return
+        self._total_files = len(files)
+        self._file_times = []
+        self._file_start = None
+        if self._eta_timer is None:
+            self._eta_timer = QtCore.QTimer(self)
+            self._eta_timer.setInterval(500)
+            self._eta_timer.timeout.connect(self._tick_eta)
+        self._eta_timer.start()
+        self.eta_label.setText("ETA —")
         opts = self._ui_options
         prefer_gpu = bool(opts.prefer_gpu)
         embed_method = str(opts.soft_embed_method or "auto")
         track_title = opts.srt_title.strip() or "Srtforge (English)"
-        track_language = opts.srt_language.strip() or "eng"
         options = WorkerOptions(
             prefer_gpu=prefer_gpu,
             embed_subtitles=bool(opts.embed_subtitles),
@@ -1395,7 +1412,7 @@ class MainWindow(QtWidgets.QMainWindow):
             soft_embed_method=embed_method,
             mkvmerge_bin=str(self.mkv_paths.mkvmerge) if self.mkv_paths else None,
             srt_title=track_title,
-            srt_language=track_language,
+            srt_language="eng",
             srt_default=bool(opts.srt_default),
             srt_forced=bool(opts.srt_forced),
         )
@@ -1431,16 +1448,23 @@ class MainWindow(QtWidgets.QMainWindow):
         if self._log_tailer:
             self._log_tailer.start()
         self._append_log(f"Processing {path}")
+        self._file_start = time.perf_counter()
 
     def _on_file_completed(self, media: str, summary: str) -> None:
         if self._log_tailer:
             self._log_tailer.stop()
         self._append_log(f"✅ {media}: {summary}")
+        if self._file_start is not None:
+            self._file_times.append(max(0.0, time.perf_counter() - self._file_start))
+        self._file_start = None
 
     def _on_file_failed(self, media: str, reason: str) -> None:
         if self._log_tailer:
             self._log_tailer.stop()
         self._append_log(f"⚠️ {media}: {reason}")
+        if self._file_start is not None:
+            self._file_times.append(max(0.0, time.perf_counter() - self._file_start))
+        self._file_start = None
 
     def _handle_run_log_ready(self, run_id: str) -> None:
         if self._log_tailer:
@@ -1460,6 +1484,36 @@ class MainWindow(QtWidgets.QMainWindow):
         ):
             cleanup_gpu_memory()
             self._append_log("GPU cache cleared")
+        if self._eta_timer:
+            self._eta_timer.stop()
+        self.eta_label.setText("ETA —")
+        self._total_files = 0
+        self._file_times = []
+        self._file_start = None
+
+    def _format_hms(self, seconds: float) -> str:
+        seconds = max(0, int(round(seconds)))
+        minutes, secs = divmod(seconds, 60)
+        hours, minutes = divmod(minutes, 60)
+        if hours:
+            return f"{hours:d}h {minutes:02d}m {secs:02d}s"
+        return f"{minutes:d}m {secs:02d}s"
+
+    def _tick_eta(self) -> None:
+        if not self._total_files:
+            self.eta_label.setText("ETA —")
+            return
+        completed = len(self._file_times)
+        in_progress = 1 if self._file_start is not None else 0
+        processed = completed + in_progress
+        if processed == 0:
+            self.eta_label.setText("ETA —")
+            return
+        elapsed_current = time.perf_counter() - self._file_start if self._file_start else 0.0
+        avg = (sum(self._file_times) + elapsed_current) / max(1, processed)
+        remaining_files = max(0, self._total_files - processed)
+        eta_seconds = avg * remaining_files + max(0.0, avg - elapsed_current)
+        self.eta_label.setText(f"ETA {self._format_hms(eta_seconds)}  (avg {self._format_hms(avg)}/file)")
 
     def closeEvent(self, event: QtGui.QCloseEvent) -> None:  # noqa: D401 - Qt override
         if self._worker:
