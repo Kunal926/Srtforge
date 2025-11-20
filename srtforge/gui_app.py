@@ -1018,37 +1018,52 @@ class OptionsDialog(QtWidgets.QDialog):
         grid.addWidget(self.device_combo, row, 1)
         row += 1
 
-        self.embed_cb = QtWidgets.QCheckBox("Embed subtitles (soft track)")
-        self.embed_cb.setChecked(bool(initial_basic.get("embed_subtitles", False)))
-        grid.addWidget(self.embed_cb, row, 0, 1, 2)
+        # Collapsible "Embed subtitles" section
+        self.embed_toggle = QtWidgets.QToolButton()
+        self.embed_toggle.setText("Embed subtitles (soft track)")
+        self.embed_toggle.setCheckable(True)
+        self.embed_toggle.setChecked(bool(initial_basic.get("embed_subtitles", False)))
+        self.embed_toggle.setArrowType(
+            QtCore.Qt.DownArrow if self.embed_toggle.isChecked() else QtCore.Qt.RightArrow
+        )
+        self.embed_toggle.setToolButtonStyle(QtCore.Qt.ToolButtonTextBesideIcon)
+        grid.addWidget(self.embed_toggle, row, 0, 1, 2)
         row += 1
 
+        self.embed_panel = QtWidgets.QWidget()
+        ep_grid = QtWidgets.QGridLayout(self.embed_panel)
+        # method
         self.embed_method = QtWidgets.QComboBox()
         self.embed_method.addItem("Auto (prefer MKVToolNix)", "auto")
         self.embed_method.addItem("MKVToolNix (mkvmerge)", "mkvmerge")
         self.embed_method.addItem("FFmpeg (legacy)", "ffmpeg")
         idx = max(0, self.embed_method.findData(initial_basic.get("soft_embed_method", "auto")))
         self.embed_method.setCurrentIndex(idx)
-        grid.addWidget(QtWidgets.QLabel("Soft-embed method"), row, 0)
-        grid.addWidget(self.embed_method, row, 1)
-        row += 1
-
+        ep_grid.addWidget(QtWidgets.QLabel("Soft-embed method"), 0, 0)
+        ep_grid.addWidget(self.embed_method, 0, 1)
+        # title/language
         self.title_edit = QtWidgets.QLineEdit(initial_basic.get("srt_title", "Srtforge (English)"))
         self.lang_edit = QtWidgets.QLineEdit(initial_basic.get("srt_language", "eng"))
-        grid.addWidget(QtWidgets.QLabel("Track title"), row, 0)
-        grid.addWidget(self.title_edit, row, 1)
-        row += 1
-        grid.addWidget(QtWidgets.QLabel("Track language"), row, 0)
-        grid.addWidget(self.lang_edit, row, 1)
-        row += 1
-
+        ep_grid.addWidget(QtWidgets.QLabel("Track title"), 1, 0)
+        ep_grid.addWidget(self.title_edit, 1, 1)
+        ep_grid.addWidget(QtWidgets.QLabel("Track language"), 2, 0)
+        ep_grid.addWidget(self.lang_edit, 2, 1)
+        # flags
         self.default_cb = QtWidgets.QCheckBox("Set as default track")
         self.default_cb.setChecked(bool(initial_basic.get("srt_default", False)))
         self.forced_cb = QtWidgets.QCheckBox("Mark as forced")
         self.forced_cb.setChecked(bool(initial_basic.get("srt_forced", False)))
-        grid.addWidget(self.default_cb, row, 0)
-        grid.addWidget(self.forced_cb, row, 1)
+        ep_grid.addWidget(self.default_cb, 3, 0)
+        ep_grid.addWidget(self.forced_cb, 3, 1)
+        grid.addWidget(self.embed_panel, row, 0, 1, 2)
         row += 1
+        self.embed_panel.setVisible(self.embed_toggle.isChecked())
+        self.embed_toggle.toggled.connect(
+            lambda c: (
+                self.embed_panel.setVisible(c),
+                self.embed_toggle.setArrowType(QtCore.Qt.DownArrow if c else QtCore.Qt.RightArrow),
+            )
+        )
 
         self.burn_cb = QtWidgets.QCheckBox("Burn subtitles (hard sub)")
         self.burn_cb.setChecked(bool(initial_basic.get("burn_subtitles", False)))
@@ -1139,7 +1154,7 @@ class OptionsDialog(QtWidgets.QDialog):
     def basic_values(self) -> dict:
         return {
             "prefer_gpu": bool(self.device_combo.currentData()),
-            "embed_subtitles": self.embed_cb.isChecked(),
+            "embed_subtitles": self.embed_toggle.isChecked(),
             "burn_subtitles": self.burn_cb.isChecked(),
             "cleanup_gpu": self.cleanup_cb.isChecked(),
             "soft_embed_method": str(self.embed_method.currentData()),
@@ -1189,6 +1204,18 @@ class MainWindow(QtWidgets.QMainWindow):
         self._log_tailer: Optional[LogTailer] = None
         self._last_worker_options: Optional[WorkerOptions] = None
         self._runtime_config_path: Optional[str] = None
+        # Single source of truth for user options (kept only in the Options dialog)
+        self._basic_options = {
+            "prefer_gpu": True,
+            "embed_subtitles": False,
+            "burn_subtitles": False,
+            "cleanup_gpu": False,
+            "soft_embed_method": "auto",
+            "srt_title": "Srtforge (English)",
+            "srt_language": "eng",
+            "srt_default": False,
+            "srt_forced": False,
+        }
         self.ffmpeg_paths = locate_ffmpeg_binaries()
         self.mkv_paths = locate_mkvmerge_binary()
         self._eta_timer = QtCore.QTimer(self)
@@ -1243,58 +1270,8 @@ class MainWindow(QtWidgets.QMainWindow):
         layout.addWidget(queue_group)
         add_shadow(queue_group)
 
-        options_group = QtWidgets.QGroupBox("Processing options")
-        options_layout = QtWidgets.QGridLayout(options_group)
-        options_layout.addWidget(QtWidgets.QLabel("Device"), 0, 0)
-        self.device_combo = QtWidgets.QComboBox()
-        self.device_combo.addItem("Use GPU", True)
-        self.device_combo.addItem("CPU only", False)
-        self.device_combo.setSizeAdjustPolicy(QtWidgets.QComboBox.AdjustToMinimumContentsLengthWithIcon)
-        self.device_combo.setMinimumContentsLength(16)
-        options_layout.addWidget(self.device_combo, 0, 1)
-
-        self.embed_toggle = QtWidgets.QToolButton()
-        self.embed_toggle.setText("Embed subtitles")
-        self.embed_toggle.setCheckable(True)
-        self.embed_toggle.setChecked(False)
-        self.embed_toggle.setArrowType(QtCore.Qt.RightArrow)
-        self.embed_toggle.setToolButtonStyle(QtCore.Qt.ToolButtonTextBesideIcon)
-        options_layout.addWidget(self.embed_toggle, 1, 0, 1, 2)
-
-        self.embed_panel = QtWidgets.QWidget()
-        panel_grid = QtWidgets.QGridLayout(self.embed_panel)
-        method_label = QtWidgets.QLabel("Soft-embed method")
-        self.embed_method_combo = QtWidgets.QComboBox()
-        self.embed_method_combo.addItem("Auto (prefer MKVToolNix)", "auto")
-        self.embed_method_combo.addItem("MKVToolNix (mkvmerge)", "mkvmerge")
-        self.embed_method_combo.addItem("FFmpeg (legacy)", "ffmpeg")
-        self.embed_method_combo.setSizeAdjustPolicy(QtWidgets.QComboBox.AdjustToMinimumContentsLengthWithIcon)
-        self.embed_method_combo.setMinimumContentsLength(20)
-        self.title_edit = QtWidgets.QLineEdit("Srtforge (English)")
-        self.lang_edit = QtWidgets.QLineEdit("eng")
-        self.default_checkbox = QtWidgets.QCheckBox("Set as default track")
-        self.forced_checkbox = QtWidgets.QCheckBox("Mark as forced")
-        self.burn_checkbox = QtWidgets.QCheckBox("Burn subtitles (hard sub)")
-        panel_grid.addWidget(method_label, 0, 0)
-        panel_grid.addWidget(self.embed_method_combo, 0, 1)
-        panel_grid.addWidget(QtWidgets.QLabel("Track title"), 1, 0)
-        panel_grid.addWidget(self.title_edit, 1, 1)
-        panel_grid.addWidget(QtWidgets.QLabel("Track language"), 2, 0)
-        panel_grid.addWidget(self.lang_edit, 2, 1)
-        panel_grid.addWidget(self.default_checkbox, 3, 0)
-        panel_grid.addWidget(self.forced_checkbox, 3, 1)
-        panel_grid.addWidget(self.burn_checkbox, 4, 0, 1, 2)
-        options_layout.addWidget(self.embed_panel, 2, 0, 1, 2)
-
-        self.cleanup_checkbox = QtWidgets.QCheckBox("Free GPU memory when stopping")
-        options_layout.addWidget(self.cleanup_checkbox, 3, 0, 1, 2)
-        options_layout.setColumnStretch(0, 0)
-        options_layout.setColumnStretch(1, 1)
-        self.embed_toggle.toggled.connect(self._toggle_embed_panel)
-        self._toggle_embed_panel(False)
-
-        layout.addWidget(options_group)
-        add_shadow(options_group)
+        # NOTE: The main window no longer shows processing controls.
+        # All options live exclusively under the “Options…” dialog.
 
         self.log_view = QtWidgets.QPlainTextEdit()
         self.log_view.setReadOnly(True)
@@ -1468,17 +1445,14 @@ class MainWindow(QtWidgets.QMainWindow):
     # ---- runtime helpers ---------------------------------------------------------
     def _update_tool_status(self) -> None:
         lines: list[str] = []
-        if not self.ffmpeg_paths:
-            self.burn_checkbox.setEnabled(False)
+        if self.ffmpeg_paths:
+            lines.append(f"FFmpeg detected at {self.ffmpeg_paths.ffmpeg.parent}")
+        else:
+            lines.append("FFmpeg not found. Burning and FFmpeg-based embedding will be unavailable.")
         if self.mkv_paths:
             lines.append(f"MKVToolNix (mkvmerge) detected at {self.mkv_paths.mkvmerge.parent}")
         else:
-            lines.append("MKVToolNix (mkvmerge) not found. It will be installed by install.ps1 or set SRTFORGE_MKV_DIR.")
-        has_embed_backend = (self.ffmpeg_paths is not None) or (self.mkv_paths is not None)
-        self.embed_toggle.setEnabled(has_embed_backend and (self._worker is None))
-        if not has_embed_backend:
-            lines.append("Soft embedding disabled until FFmpeg or MKVToolNix is available.")
-        self._toggle_embed_panel(self.embed_toggle.isChecked() and self.embed_toggle.isEnabled())
+            lines.append("MKVToolNix (mkvmerge) not found. Set SRTFORGE_MKV_DIR or install MKVToolNix for soft embedding.")
         self.tool_status.setText("\n".join(lines))
 
     def _handle_dropped_files(self, files: list) -> None:
@@ -1517,21 +1491,7 @@ class MainWindow(QtWidgets.QMainWindow):
         has_items = self.queue_list.count() > 0
         self.start_button.setEnabled(has_items and not self._worker)
 
-    def _toggle_embed_panel(self, checked: bool) -> None:
-        visible = bool(checked)
-        self.embed_panel.setVisible(visible)
-        self.embed_toggle.setArrowType(QtCore.Qt.DownArrow if visible else QtCore.Qt.RightArrow)
-        enabled = bool(visible and self.embed_toggle.isEnabled() and not self._worker)
-        widgets = (
-            self.embed_method_combo,
-            self.title_edit,
-            self.lang_edit,
-            self.default_checkbox,
-            self.forced_checkbox,
-            self.burn_checkbox,
-        )
-        for widget in widgets:
-            widget.setEnabled(enabled)
+    # (embed panel handling removed — lives in OptionsDialog now)
 
     def _start_processing(self) -> None:
         if self._worker:
@@ -1540,22 +1500,21 @@ class MainWindow(QtWidgets.QMainWindow):
         if not files:
             return
         self._clear_eta()
-        prefer_gpu = bool(self.device_combo.currentData())
-        embed_method = str(self.embed_method_combo.currentData() or "auto")
-        track_title = self.title_edit.text().strip() or "Srtforge (English)"
+        basic = dict(self._basic_options)
+        prefer_gpu = bool(basic.get("prefer_gpu", True))
         options = WorkerOptions(
             prefer_gpu=prefer_gpu,
-            embed_subtitles=bool(self.embed_toggle.isChecked() and self.embed_toggle.isEnabled()),
-            burn_subtitles=bool(self.burn_checkbox.isChecked()),
-            cleanup_gpu=bool(self.cleanup_checkbox.isChecked()),
+            embed_subtitles=bool(basic.get("embed_subtitles", False)),
+            burn_subtitles=bool(basic.get("burn_subtitles", False)),
+            cleanup_gpu=bool(basic.get("cleanup_gpu", False)),
             ffmpeg_bin=str(self.ffmpeg_paths.ffmpeg) if self.ffmpeg_paths else None,
             ffprobe_bin=str(self.ffmpeg_paths.ffprobe) if self.ffmpeg_paths else None,
-            soft_embed_method=embed_method,
+            soft_embed_method=str(basic.get("soft_embed_method", "auto")),
             mkvmerge_bin=str(self.mkv_paths.mkvmerge) if self.mkv_paths else None,
-            srt_title=track_title,
-            srt_language=self.lang_edit.text().strip() or "eng",
-            srt_default=bool(self.default_checkbox.isChecked()),
-            srt_forced=bool(self.forced_checkbox.isChecked()),
+            srt_title=basic.get("srt_title", "Srtforge (English)"),
+            srt_language=basic.get("srt_language", "eng"),
+            srt_default=bool(basic.get("srt_default", False)),
+            srt_forced=bool(basic.get("srt_forced", False)),
             config_path=self._runtime_config_path,
         )
         self._last_worker_options = options
@@ -1581,13 +1540,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.start_button.setEnabled(not running)
         self.stop_button.setEnabled(running)
         self.queue_list.setEnabled(not running)
-        self.device_combo.setEnabled(not running)
-        self.cleanup_checkbox.setEnabled(not running)
         self.options_button.setEnabled(not running)
-        has_embed_backend = (self.ffmpeg_paths is not None) or (self.mkv_paths is not None)
-        self.embed_toggle.setEnabled(has_embed_backend and not running)
-        self.burn_checkbox.setEnabled(bool(self.ffmpeg_paths) and not running)
-        self._toggle_embed_panel(self.embed_toggle.isChecked() and self.embed_toggle.isEnabled())
 
     def _append_log(self, message: str) -> None:
         self.log_view.appendPlainText(message)
@@ -1597,7 +1550,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if self._log_tailer:
             self._log_tailer.start()
         self._append_log(f"Processing {path}")
-        self._eta_mode_gpu = bool(self.device_combo.currentData())
+        self._eta_mode_gpu = bool(self._basic_options.get("prefer_gpu", True))
         self._eta_media = path
         ffprobe = self.ffmpeg_paths.ffprobe if self.ffmpeg_paths else None
         duration_s = _probe_media_duration_ffprobe(Path(path), ffprobe)
@@ -1651,31 +1604,12 @@ class MainWindow(QtWidgets.QMainWindow):
         super().closeEvent(event)
 
     def _open_options_dialog(self) -> None:
-        initial_basic = {
-            "prefer_gpu": bool(self.device_combo.currentData()),
-            "embed_subtitles": bool(self.embed_toggle.isChecked()),
-            "burn_subtitles": bool(self.burn_checkbox.isChecked()),
-            "cleanup_gpu": bool(self.cleanup_checkbox.isChecked()),
-            "soft_embed_method": str(self.embed_method_combo.currentData() or "auto"),
-            "srt_title": self.title_edit.text().strip() or "Srtforge (English)",
-            "srt_language": self.lang_edit.text().strip() or "eng",
-            "srt_default": bool(self.default_checkbox.isChecked()),
-            "srt_forced": bool(self.forced_checkbox.isChecked()),
-        }
+        initial_basic = dict(self._basic_options)
         dialog = OptionsDialog(parent=self, initial_basic=initial_basic, initial_settings=settings)
         if dialog.exec() != QtWidgets.QDialog.Accepted:
             return
         basic = dialog.basic_values()
-        self.device_combo.setCurrentIndex(0 if basic["prefer_gpu"] else 1)
-        self.embed_toggle.setChecked(bool(basic["embed_subtitles"]))
-        self.burn_checkbox.setChecked(bool(basic["burn_subtitles"]))
-        self.cleanup_checkbox.setChecked(bool(basic["cleanup_gpu"]))
-        method_idx = max(0, self.embed_method_combo.findData(basic["soft_embed_method"]))
-        self.embed_method_combo.setCurrentIndex(method_idx)
-        self.title_edit.setText(basic["srt_title"])
-        self.lang_edit.setText(basic["srt_language"])
-        self.default_checkbox.setChecked(bool(basic["srt_default"]))
-        self.forced_checkbox.setChecked(bool(basic["srt_forced"]))
+        self._basic_options = basic
         payload = dialog.settings_payload(prefer_gpu=basic["prefer_gpu"])
         if self._runtime_config_path:
             try:
