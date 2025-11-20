@@ -307,9 +307,12 @@ def parakeet_to_srt(
         raise RuntimeError("Parakeet ASR did not return any hypotheses")
 
     hypothesis = results[0]
-    with (step("ASR: post-processing & cleanup") if step else nullcontext()):
+    # 1) Turn NeMo timestamps into our segment/word structure
+    with (step("ASR: build segments from hypothesis") if step else nullcontext()):
         segments = _build_segments_from_hypothesis(hypothesis)
 
+    # 2) Netflix-style segmentation, CPS balancing, gap fixing, etc.
+    with (step("ASR: segmentation & timing normalization") if step else nullcontext()):
         processed = postprocess_segments(
             segments,
             max_chars_per_line=max_chars_per_line,
@@ -327,7 +330,11 @@ def parakeet_to_srt(
             max_block_duration_s=max_block_duration_s,
             max_merge_gap_ms=max_merge_gap_ms,
         )
+
+    # 3) Write SRT + diagnostic sidecars
+    with (step("ASR: write SRT + diagnostics") if step else nullcontext()):
         write_srt(processed, str(srt_out))
+
     return processed
 
 

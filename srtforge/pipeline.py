@@ -101,14 +101,18 @@ class Pipeline:
             tmp_kwargs["dir"] = str(self.config.temp_dir)
             base_tmp_dir = self.config.temp_dir
 
-        cleanup_run_directories(base_tmp_dir)
-
         try:
             with RunLogger.start() as run_logger:
                 run_id = run_logger.run_id
                 tmp_kwargs["prefix"] = f"srtforge_{run_id}_"
                 run_logger.log(f"Media: {media_path}")
                 run_logger.log(f"Output: {output_path}")
+                run_logger.log(f"Temp base directory: {base_tmp_dir}")
+
+                # This used to be invisible; now we can see if it eats 1-2 minutes.
+                with run_logger.step("Cleanup stale temporary run directories"):
+                    cleanup_run_directories(base_tmp_dir)
+
                 self.console.log(f"[cyan]Run ID[/cyan] {run_id}")
 
                 with tempfile.TemporaryDirectory(**tmp_kwargs) as tmp_dir:
