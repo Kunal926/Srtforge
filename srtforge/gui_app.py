@@ -1023,9 +1023,6 @@ class OptionsDialog(QtWidgets.QDialog):
         self.embed_toggle.setText("Embed subtitles (soft track)")
         self.embed_toggle.setCheckable(True)
         self.embed_toggle.setChecked(bool(initial_basic.get("embed_subtitles", False)))
-        self.embed_toggle.setArrowType(
-            QtCore.Qt.DownArrow if self.embed_toggle.isChecked() else QtCore.Qt.RightArrow
-        )
         self.embed_toggle.setToolButtonStyle(QtCore.Qt.ToolButtonTextBesideIcon)
         grid.addWidget(self.embed_toggle, row, 0, 1, 2)
         row += 1
@@ -1056,14 +1053,16 @@ class OptionsDialog(QtWidgets.QDialog):
         ep_grid.addWidget(self.default_cb, 3, 0)
         ep_grid.addWidget(self.forced_cb, 3, 1)
         grid.addWidget(self.embed_panel, row, 0, 1, 2)
+        # remember the “normal” max height so we can restore it later
+        self._embed_panel_max = self.embed_panel.maximumHeight()
         row += 1
-        self.embed_panel.setVisible(self.embed_toggle.isChecked())
-        self.embed_toggle.toggled.connect(
-            lambda c: (
-                self.embed_panel.setVisible(c),
-                self.embed_toggle.setArrowType(QtCore.Qt.DownArrow if c else QtCore.Qt.RightArrow),
-            )
-        )
+
+        # Make sure the collapsible section really collapses and doesn’t leave
+        # a big empty row in the grid when hidden.
+        initial_embed = bool(initial_basic.get("embed_subtitles", False))
+        self.embed_toggle.setChecked(initial_embed)
+        self._update_embed_panel(initial_embed)
+        self.embed_toggle.toggled.connect(self._update_embed_panel)
 
         self.burn_cb = QtWidgets.QCheckBox("Burn subtitles (hard sub)")
         self.burn_cb.setChecked(bool(initial_basic.get("burn_subtitles", False)))
@@ -1073,7 +1072,10 @@ class OptionsDialog(QtWidgets.QDialog):
         self.cleanup_cb = QtWidgets.QCheckBox("Free GPU memory when stopping")
         self.cleanup_cb.setChecked(bool(initial_basic.get("cleanup_gpu", False)))
         grid.addWidget(self.cleanup_cb, row, 0, 1, 2)
+        row += 1
 
+        # Push any extra vertical space below the controls
+        grid.setRowStretch(row, 1)
         grid.setColumnStretch(0, 0)
         grid.setColumnStretch(1, 1)
         self.tabs.addTab(basic, "Basic")
@@ -1145,6 +1147,16 @@ class OptionsDialog(QtWidgets.QDialog):
         layout.addWidget(buttons)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
+
+    def _update_embed_panel(self, checked: bool) -> None:
+        # 0 height when collapsed, natural height when expanded
+        max_h = getattr(self, "_embed_panel_max", self.embed_panel.maximumHeight())
+        self.embed_panel.setVisible(checked)
+        self.embed_panel.setMaximumHeight(max_h if checked else 0)
+        self.embed_panel.updateGeometry()
+        self.embed_toggle.setArrowType(
+            QtCore.Qt.DownArrow if checked else QtCore.Qt.RightArrow
+        )
 
     def _pick_dir(self, edit: QtWidgets.QLineEdit) -> None:
         path = QtWidgets.QFileDialog.getExistingDirectory(self, "Select folder", edit.text().strip() or "")
