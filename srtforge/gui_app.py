@@ -1286,7 +1286,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.eta_label = QtWidgets.QLabel("ETA —")
         self.eta_label.setObjectName("EtaLabel")
         button_row.addWidget(self.eta_label)
-        self.options_button = QtWidgets.QPushButton("Options…")
+        self.options_button = QtWidgets.QPushButton("Options")
         self.options_button.setCursor(QtGui.QCursor(QtCore.Qt.CursorShape.PointingHandCursor))
         self.options_button.clicked.connect(self._open_options_dialog)
         button_row.addWidget(self.options_button)
