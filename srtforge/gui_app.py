@@ -1230,6 +1230,7 @@ class MainWindow(QtWidgets.QMainWindow):
         }
         self.ffmpeg_paths = locate_ffmpeg_binaries()
         self.mkv_paths = locate_mkvmerge_binary()
+        self._qsettings = QtCore.QSettings("srtforge", "SrtforgeStudio")
         self._eta_timer = QtCore.QTimer(self)
         self._eta_timer.setInterval(1000)
         self._eta_timer.timeout.connect(self._tick_eta)
@@ -1239,6 +1240,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._eta_memory = _EtaMemory()
         self._build_ui()  # builds a page widget; we wrap it in a scroll area below
         self._log_tailer = LogTailer(self._append_log, self)
+        self._load_persistent_options()
         self._apply_styles()
         self._update_tool_status()
         apply_win11_look(self)
@@ -1454,6 +1456,38 @@ class MainWindow(QtWidgets.QMainWindow):
             .replace("{ACCENT_COLOR_LIGHT}", lighter.name())
         )
 
+    # ---- persistent options ------------------------------------------------------
+    def _load_persistent_options(self) -> None:
+        """Restore user-facing options from the last run."""
+        s = self._qsettings
+
+        self._basic_options["prefer_gpu"] = s.value("device_prefer_gpu", True, type=bool)
+        self._basic_options["embed_subtitles"] = s.value("embed_subtitles", False, type=bool)
+        self._basic_options["burn_subtitles"] = s.value("burn_subtitles", False, type=bool)
+        self._basic_options["cleanup_gpu"] = s.value("cleanup_gpu", False, type=bool)
+        self._basic_options["soft_embed_method"] = s.value("soft_embed_method", "auto", type=str)
+        self._basic_options["srt_title"] = s.value("srt_title", "Srtforge (English)", type=str)
+        self._basic_options["srt_language"] = s.value("srt_language", "eng", type=str)
+        self._basic_options["srt_default"] = s.value("srt_default", False, type=bool)
+        self._basic_options["srt_forced"] = s.value("srt_forced", False, type=bool)
+
+    def _save_persistent_options(self) -> None:
+        """Persist current GUI options for the next run."""
+        s = self._qsettings
+
+        s.setValue("device_prefer_gpu", bool(self._basic_options.get("prefer_gpu", True)))
+        s.setValue("embed_subtitles", bool(self._basic_options.get("embed_subtitles", False)))
+        s.setValue("burn_subtitles", bool(self._basic_options.get("burn_subtitles", False)))
+        s.setValue("cleanup_gpu", bool(self._basic_options.get("cleanup_gpu", False)))
+
+        s.setValue("soft_embed_method", str(self._basic_options.get("soft_embed_method", "auto")))
+        s.setValue("srt_title", str(self._basic_options.get("srt_title", "Srtforge (English)")))
+        s.setValue("srt_language", str(self._basic_options.get("srt_language", "eng")))
+        s.setValue("srt_default", bool(self._basic_options.get("srt_default", False)))
+        s.setValue("srt_forced", bool(self._basic_options.get("srt_forced", False)))
+
+        s.sync()
+
     # ---- runtime helpers ---------------------------------------------------------
     def _update_tool_status(self) -> None:
         lines: list[str] = []
@@ -1608,6 +1642,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if self._worker:
             self._worker.request_stop()
             self._worker.wait(2000)
+        self._save_persistent_options()
         if self._runtime_config_path:
             try:
                 os.unlink(self._runtime_config_path)
