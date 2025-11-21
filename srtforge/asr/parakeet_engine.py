@@ -213,6 +213,7 @@ def parakeet_to_srt(
 
     step = run_logger.step if run_logger else None
 
+    # 1) Model restore + device move
     with (step("ASR: model load") if step else nullcontext()):
         asr, _, use_cuda = load_parakeet(
             nemo_local=nemo_local,
@@ -224,46 +225,50 @@ def parakeet_to_srt(
         device = "GPU" if use_cuda else "CPU"
         run_logger.log(f"ASR device: {device}")
 
-    audio_duration_seconds = _probe_audio_duration_seconds(audio_path)
-    long_audio_settings_applied = bool(getattr(asr, "_parakeet_long_audio_applied", False))
-    if (
-        audio_duration_seconds is not None
-        and audio_duration_seconds > LONG_AUDIO_THRESHOLD_S
-        and not long_audio_settings_applied
-    ):
-        _log_event(
-            run_logger,
-            f"Audio duration {audio_duration_seconds:.2f}s exceeded long audio threshold "
-            f"{LONG_AUDIO_THRESHOLD_S}s. Applying local attention settings.",
-        )
-        print(
-            f"Audio duration ({audio_duration_seconds:.2f}s) > {LONG_AUDIO_THRESHOLD_S}s. "
-            "Applying long audio settings.",
-            file=sys.stderr,
-        )
-        if hasattr(asr, "change_attention_model"):
-            try:
-                asr.change_attention_model("rel_pos_local_attn", [768, 768])
-            except Exception as exc:  # pragma: no cover - defensive logging
+    # 2) Long-audio probe + attention reconfiguration
+    with (step("ASR: long-audio probe & settings") if step else nullcontext()):
+        audio_duration_seconds = _probe_audio_duration_seconds(audio_path)
+        long_audio_settings_applied = bool(getattr(asr, "_parakeet_long_audio_applied", False))
+        if (
+            audio_duration_seconds is not None
+            and audio_duration_seconds > LONG_AUDIO_THRESHOLD_S
+            and not long_audio_settings_applied
+        ):
+            _log_event(
+                run_logger,
+                f"Audio duration {audio_duration_seconds:.2f}s exceeded long audio threshold "
+                f"{LONG_AUDIO_THRESHOLD_S}s. Applying local attention settings.",
+            )
+            print(
+                f"Audio duration ({audio_duration_seconds:.2f}s) > {LONG_AUDIO_THRESHOLD_S}s. "
+                "Applying long audio settings.",
+                file=sys.stderr,
+            )
+            if hasattr(asr, "change_attention_model"):
+                try:
+                    asr.change_attention_model("rel_pos_local_attn", [768, 768])
+                except Exception as exc:  # defensive logging
+                    warning = (
+                        f"Warning: Failed to apply long audio settings: {exc}. "
+                        "Proceeding without them."
+                    )
+                    print(warning, file=sys.stderr)
+                    _log_event(run_logger, warning)
+                else:
+                    long_audio_settings_applied = True
+                    setattr(asr, "_parakeet_long_audio_applied", True)
+                    success_message = "Long audio settings applied: Local Attention."
+                    print(success_message, file=sys.stderr)
+                    _log_event(run_logger, success_message)
+            else:
                 warning = (
-                    f"Warning: Failed to apply long audio settings: {exc}. Proceeding without them."
+                    "Warning: Parakeet model does not support change_attention_model; "
+                    "skipping long audio settings."
                 )
                 print(warning, file=sys.stderr)
                 _log_event(run_logger, warning)
-            else:
-                long_audio_settings_applied = True
-                setattr(asr, "_parakeet_long_audio_applied", True)
-                success_message = "Long audio settings applied: Local Attention."
-                print(success_message, file=sys.stderr)
-                _log_event(run_logger, success_message)
-        else:  # pragma: no cover - depends on upstream implementation
-            warning = (
-                "Warning: Parakeet model does not support change_attention_model; "
-                "skipping long audio settings."
-            )
-            print(warning, file=sys.stderr)
-            _log_event(run_logger, warning)
 
+    # 3) Inference (NeMo transcribe)
     def _attempt_transcribe() -> List[object]:
         """Call ``asr.transcribe`` while handling API differences between NeMo versions."""
 
@@ -275,8 +280,8 @@ def parakeet_to_srt(
         ]
 
         unexpected_kw_error_fragments = (
-            "unexpected keyword",  # CPython message fragment
-            "got an unexpected keyword",  # PyPy style fragment
+            "unexpected keyword",  # CPython
+            "got an unexpected keyword",  # PyPy style
         )
 
         for kwargs in candidates:
@@ -288,11 +293,10 @@ def parakeet_to_srt(
                     continue
                 raise
 
-        # All attempts failed due to unexpected keyword arguments.  Re-raise the
-        # final error using the latest signature information for easier debugging.
+        # All attempts failed due to unexpected keyword arguments.
         try:
             sig = inspect.signature(asr.transcribe)
-        except (TypeError, ValueError):  # pragma: no cover - signature unavailable
+        except (TypeError, ValueError):
             sig_repr = "<unavailable>"
         else:
             sig_repr = str(sig)
@@ -307,11 +311,12 @@ def parakeet_to_srt(
         raise RuntimeError("Parakeet ASR did not return any hypotheses")
 
     hypothesis = results[0]
-    # 1) Turn NeMo timestamps into our segment/word structure
+
+    # 4) Build segments from NeMo hypothesis
     with (step("ASR: build segments from hypothesis") if step else nullcontext()):
         segments = _build_segments_from_hypothesis(hypothesis)
 
-    # 2) Netflix-style segmentation, CPS balancing, gap fixing, etc.
+    # 5) Netflix-style segmentation & timing normalization
     with (step("ASR: segmentation & timing normalization") if step else nullcontext()):
         processed = postprocess_segments(
             segments,
@@ -331,7 +336,7 @@ def parakeet_to_srt(
             max_merge_gap_ms=max_merge_gap_ms,
         )
 
-    # 3) Write SRT + diagnostic sidecars
+    # 6) Write SRT + diagnostics sidecars
     with (step("ASR: write SRT + diagnostics") if step else nullcontext()):
         write_srt(processed, str(srt_out))
 
