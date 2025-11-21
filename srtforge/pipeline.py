@@ -107,16 +107,15 @@ class Pipeline:
                 tmp_kwargs["prefix"] = f"srtforge_{run_id}_"
                 run_logger.log(f"Media: {media_path}")
                 run_logger.log(f"Output: {output_path}")
-                run_logger.log(f"Temp base directory: {base_tmp_dir}")
+                self.console.log(f"[cyan]Run ID[/cyan] {run_id}")
 
-                # This used to be invisible; now we can see if it eats 1-2 minutes.
+                # Time stale temp-dir cleanup
                 with run_logger.step("Cleanup stale temporary run directories"):
                     cleanup_run_directories(base_tmp_dir)
 
-                self.console.log(f"[cyan]Run ID[/cyan] {run_id}")
-
-                with tempfile.TemporaryDirectory(**tmp_kwargs) as tmp_dir:
-                    tmp = Path(tmp_dir)
+                tmp_ctx = tempfile.TemporaryDirectory(**tmp_kwargs)
+                try:
+                    tmp = Path(tmp_ctx.name)
                     extracted = tmp / "english.wav"
                     vocals = tmp / "vocals.wav"
                     preprocessed = tmp / "preprocessed.wav"
@@ -173,8 +172,6 @@ class Pipeline:
                         and channels >= 2
                         and (not filter_chain or "pan=" not in filter_chain)
                     ):
-                        # FFmpeg's ``pan`` filter addresses channels by symbolic names
-                        # such as ``FL``, ``FR``, and ``FC``.
                         pan_expr = "pan=mono|c0=FC" if has_center else "pan=mono|c0=0.5*FL+0.5*FR"
                     if pan_expr:
                         filter_chain = f"{pan_expr},{filter_chain}" if filter_chain else pan_expr
@@ -186,7 +183,6 @@ class Pipeline:
                             preprocessed,
                             filter_chain=filter_chain,
                         )
-                    self.config.ffmpeg_filter_chain = filter_chain
 
                     with status("Running Parakeet ASR and subtitle post-processing"), run_logger.step(
                         "ASR pipeline"
@@ -203,6 +199,10 @@ class Pipeline:
                             prefer_gpu=self.config.prefer_gpu,
                             run_logger=run_logger,
                         )
+                finally:
+                    # Time deletion of the per-run temp directory
+                    with run_logger.step("Cleanup run temporary directory"):
+                        tmp_ctx.cleanup()
 
         except Exception as exc:
             self.console.log(f"[bold red]Pipeline failed[/bold red] {media_path}: {exc}")
