@@ -357,12 +357,48 @@ def parakeet_to_srt(
             max_merge_gap_ms=max_merge_gap_ms,
         )
 
+    result = processed
+
     with (step("ASR: write SRT + diagnostics") if step else nullcontext()):
-        write_srt(processed, str(srt_out))
+        write_srt(result, str(srt_out))
+
+    with (step("ASR: cleanup & GPU cache") if step else nullcontext()):
+        try:
+            import gc
+
+            try:
+                del hypothesis
+            except NameError:
+                pass
+            try:
+                del segments
+            except NameError:
+                pass
+            try:
+                del processed
+            except NameError:
+                pass
+
+            if torch is not None:
+                try:
+                    if use_cuda and torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                except Exception as exc:
+                    _log_event(
+                        run_logger,
+                        f"torch.cuda.empty_cache() failed during cleanup: {exc}",
+                    )
+
+            try:
+                gc.collect()
+            except Exception as exc:
+                _log_event(run_logger, f"gc.collect() failed during cleanup: {exc}")
+        except Exception as exc:
+            _log_event(run_logger, f"ASR: cleanup step raised: {exc}")
 
     # NOTE: we deliberately do NOT delete the model here – it's held in the
     # module-level cache so the heavy destructor doesn't run per file.
-    return processed
+    return result
 
 
 __all__ = [
