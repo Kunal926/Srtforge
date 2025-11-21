@@ -22,7 +22,9 @@ import yaml
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from .config import DEFAULT_OUTPUT_SUFFIX
+from .ffmpeg import FFmpegTooling
 from .logging import LATEST_LOG, LOGS_DIR
+from .pipeline import PipelineConfig, run_pipeline
 from .settings import settings, CONFIG_ENV_VAR
 from .win11_backdrop import apply_win11_look, get_windows_accent_qcolor
 
@@ -549,8 +551,42 @@ class TranscriptionWorker(QtCore.QThread):
         return process.exitCode(), stdout, stderr
 
     def _run_pipeline_subprocess(self, media: Path) -> Path:
+        """
+        Run the core transcription pipeline for a single media file.
+
+        By default we execute the Pipeline in-process so that the Parakeet
+        model stays cached between queue items. Set SRTFORGE_GUI_USE_CLI=1
+        to restore the previous behaviour of spawning the CLI in a child
+        process per file.
+        """
         self._last_srt_path = None
         self._current_run_id = None
+
+        # Preferred path: run the pipeline directly in this worker thread
+        # so that the ASR model cache in parakeet_engine can be reused.
+        if os.getenv("SRTFORGE_GUI_USE_CLI", "0") != "1":
+            self.logMessage.emit(f"Transcription (in-process): {media}")
+            # Use the GUI-resolved FFmpeg/ffprobe paths so behaviour matches the CLI.
+            tools = FFmpegTooling(
+                ffmpeg_bin=self.options.ffmpeg_bin or "ffmpeg",
+                ffprobe_bin=self.options.ffprobe_bin or "ffprobe",
+            )
+            config = PipelineConfig(
+                media_path=media,
+                tools=tools,
+                prefer_gpu=self.options.prefer_gpu,
+                separation_prefer_gpu=self.options.prefer_gpu,
+            )
+            result = run_pipeline(config)
+            # The RunLogger already writes to LATEST_LOG, which the LogTailer reads,
+            # so we don't need to emit runLogReady here.
+            if result.skipped or not result.output_path:
+                reason = (result.reason or "Pipeline skipped").strip()
+                raise RuntimeError(reason or "Pipeline skipped")
+            self._last_srt_path = result.output_path
+            return result.output_path
+
+        # Fallback path: spawn the CLI exactly like before (for debugging)
         use_qprocess = os.getenv("SRTFORGE_USE_QPROCESS", "1") != "0"
         if use_qprocess:
             return_code, stdout, stderr = self._run_pipeline_qprocess(media)
@@ -562,6 +598,7 @@ class TranscriptionWorker(QtCore.QThread):
                 env=env,
                 check=False,
             )
+
         if return_code == 0:
             if self._last_srt_path and self._last_srt_path.exists():
                 return self._last_srt_path
@@ -589,6 +626,7 @@ class TranscriptionWorker(QtCore.QThread):
                     candidate = Path(m.group("path")).expanduser()
                     if candidate.exists():
                         return candidate
+
             # Fallback to expected path derived from settings
             output_path = _expected_srt_path(media)
             if output_path.exists():
