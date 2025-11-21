@@ -362,32 +362,16 @@ def parakeet_to_srt(
     with (step("ASR: write SRT + diagnostics") if step else nullcontext()):
         write_srt(result, str(srt_out))
 
-    with (step("ASR: cleanup & GPU cache") if step else nullcontext()):
+    with (step("ASR: cleanup") if step else nullcontext()):
         try:
             import gc
 
-            try:
-                del hypothesis
-            except NameError:
-                pass
-            try:
-                del segments
-            except NameError:
-                pass
-            try:
-                del processed
-            except NameError:
-                pass
-
-            if torch is not None:
+            # Drop large local references so Python can reclaim CPU RAM
+            for name in ("hypothesis", "segments", "processed"):
                 try:
-                    if use_cuda and torch.cuda.is_available():
-                        torch.cuda.empty_cache()
-                except Exception as exc:
-                    _log_event(
-                        run_logger,
-                        f"torch.cuda.empty_cache() failed during cleanup: {exc}",
-                    )
+                    del locals()[name]
+                except Exception:
+                    pass
 
             try:
                 gc.collect()
