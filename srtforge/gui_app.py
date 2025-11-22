@@ -1264,17 +1264,22 @@ class MainWindow(QtWidgets.QMainWindow):
         header_row.addWidget(title)
         header_row.addStretch()
 
-        # Light/Dark mode toggle (solid button, no outline)
+        # Light/Dark mode toggle – icon only (🌙 / ☀)
         self.theme_toggle = QtWidgets.QToolButton()
         self.theme_toggle.setObjectName("ThemeToggle")
-        self.theme_toggle.setText("Dark mode")
         self.theme_toggle.setCheckable(True)
         self.theme_toggle.setCursor(pointer_cursor)
         self.theme_toggle.toggled.connect(self._on_theme_toggled)
         header_row.addWidget(self.theme_toggle)
 
-        self.options_button = QtWidgets.QPushButton("Options")
+        # Settings / options – gear icon only
+        self.options_button = QtWidgets.QToolButton()
+        self.options_button.setObjectName("OptionsButton")
         self.options_button.setCursor(pointer_cursor)
+        self.options_button.setToolTip("Options")
+        self.options_button.setIcon(
+            self.style().standardIcon(QtWidgets.QStyle.StandardPixmap.SP_FileDialogDetailedView)
+        )
         self.options_button.clicked.connect(self._open_options_dialog)
         header_row.addWidget(self.options_button)
 
@@ -1292,30 +1297,33 @@ class MainWindow(QtWidgets.QMainWindow):
         action_bar = QtWidgets.QHBoxLayout()
 
         self.add_button = QtWidgets.QPushButton("Add files…")
+        self.add_button.setObjectName("PrimaryButton")
         self.add_button.setCursor(pointer_cursor)
         self.add_button.clicked.connect(self._open_file_dialog)
         action_bar.addWidget(self.add_button)
 
-        self.remove_button = QtWidgets.QPushButton("Remove selected")
+        self.remove_button = QtWidgets.QPushButton("Remove")
+        self.remove_button.setObjectName("SecondaryButton")
         self.remove_button.setCursor(pointer_cursor)
         self.remove_button.clicked.connect(self._remove_selected_items)
         action_bar.addWidget(self.remove_button)
 
-        self.clear_button = QtWidgets.QPushButton("Clear queue")
+        self.clear_button = QtWidgets.QPushButton("Clear")
+        self.clear_button.setObjectName("SecondaryButton")
         self.clear_button.setCursor(pointer_cursor)
-        self.clear_button.setFlat(True)  # text-only vibe, red hover via QSS
+        self.clear_button.setFlat(True)  # secondary / ghost-style
         self.clear_button.clicked.connect(self._clear_queue)
         action_bar.addWidget(self.clear_button)
 
         action_bar.addStretch()
 
-        language_label = QtWidgets.QLabel("Language")
         self.language_combo = QtWidgets.QComboBox()
+        self.language_combo.setObjectName("LanguageCombo")
         # Honest: Parakeet is English-only today
-        self.language_combo.addItem("Auto-detect (English only)")
+        self.language_combo.addItem("🌐 Auto-detect (English)")
         self.language_combo.setEnabled(False)
         self.language_combo.setToolTip("The bundled Parakeet model is English-only for now.")
-        action_bar.addWidget(language_label)
+        self.language_combo.setMinimumWidth(220)
         action_bar.addWidget(self.language_combo)
 
         card_layout.addLayout(action_bar)
@@ -1327,14 +1335,17 @@ class MainWindow(QtWidgets.QMainWindow):
         self.queue_placeholder = QtWidgets.QWidget()
         ph_layout = QtWidgets.QVBoxLayout(self.queue_placeholder)
         ph_layout.addStretch()
+
         icon_lbl = QtWidgets.QLabel("🎬")
+        icon_lbl.setObjectName("DropIcon")
         icon_lbl.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
-        icon_lbl.setStyleSheet("font-size: 40px;")
         ph_layout.addWidget(icon_lbl)
+
         text_lbl = QtWidgets.QLabel("Drag & drop video files here\nor click “Add files…”")
+        text_lbl.setObjectName("DropHint")
         text_lbl.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
-        text_lbl.setStyleSheet("color: #6b7280;")
         ph_layout.addWidget(text_lbl)
+
         ph_layout.addStretch()
         self.queue_stack.addWidget(self.queue_placeholder)
 
@@ -1354,7 +1365,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # Bottom bar: total duration (left) + Start / Stop (right)
         bottom_bar = QtWidgets.QHBoxLayout()
-        self.queue_summary_label = QtWidgets.QLabel("No files in queue")
+        self.queue_summary_label = QtWidgets.QLabel("")
         bottom_bar.addWidget(self.queue_summary_label)
         bottom_bar.addStretch()
 
@@ -1424,11 +1435,15 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # “Terminal” toggle for the log drawer
         self.log_toggle_button = QtWidgets.QToolButton()
+        self.log_toggle_button.setObjectName("LogToggle")
         self.log_toggle_button.setCheckable(True)
-        self.log_toggle_button.setToolTip("Show logs")
+        self.log_toggle_button.setToolTip("Show console")
         self.log_toggle_button.setCursor(QtGui.QCursor(QtCore.Qt.CursorShape.PointingHandCursor))
-        # There’s no built-in terminal icon, but this is close enough.
-        self.log_toggle_button.setIcon(self.style().standardIcon(QtWidgets.QStyle.StandardPixmap.SP_ComputerIcon))
+        self.log_toggle_button.setText(">_ Console")
+        self.log_toggle_button.setToolButtonStyle(QtCore.Qt.ToolButtonTextBesideIcon)
+        self.log_toggle_button.setIcon(
+            self.style().standardIcon(QtWidgets.QStyle.StandardPixmap.SP_ComputerIcon)
+        )
         self.log_toggle_button.toggled.connect(self._toggle_log_panel)
         status_bar.addPermanentWidget(self.log_toggle_button)
 
@@ -1507,7 +1522,7 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         self.log_container.setVisible(checked)
         if hasattr(self, "log_toggle_button"):
-            self.log_toggle_button.setToolTip("Hide logs" if checked else "Show logs")
+            self.log_toggle_button.setToolTip("Hide console" if checked else "Show console")
 
     def _zoom_in(self) -> None:
         self._log_zoom_delta += 1
@@ -1651,6 +1666,50 @@ class MainWindow(QtWidgets.QMainWindow):
                 background-color: {darker.name()};
             }}
 
+            /* Ghost secondary actions: Remove / Clear */
+            QPushButton#SecondaryButton {{
+                background-color: transparent;
+                color: #94A3B8;
+                border-radius: 8px;
+                border: 1px solid #1F2937;
+            }}
+            QPushButton#SecondaryButton:disabled {{
+                color: #4B5563;
+                border: 1px solid #1F2937;
+            }}
+            QPushButton#SecondaryButton:hover {{
+                color: #FCA5A5;
+                border-color: #FCA5A5;
+                background-color: rgba(248, 113, 113, 0.10);
+            }}
+            QPushButton#SecondaryButton:pressed {{
+                background-color: rgba(248, 113, 113, 0.18);
+            }}
+
+            QToolButton#ThemeToggle,
+            QToolButton#OptionsButton {{
+                min-width: 32px;
+                max-width: 32px;
+                min-height: 32px;
+                max-height: 32px;
+                padding: 0;
+            }}
+
+            QToolButton#LogToggle {{
+                background-color: transparent;
+                color: #94A3B8;
+                border-radius: 6px;
+                padding: 4px 8px;
+            }}
+            QToolButton#LogToggle:hover {{
+                background-color: rgba(148, 163, 184, 0.25);
+                color: #E5E7EB;
+            }}
+            QToolButton#LogToggle:checked {{
+                background-color: rgba(15, 23, 42, 0.80);
+                color: #F9FAFB;
+            }}
+
             QLineEdit, QComboBox {{
                 background-color: #020617;
                 border-radius: 8px;
@@ -1658,6 +1717,14 @@ class MainWindow(QtWidgets.QMainWindow):
                 padding: 4px 8px;
                 color: #E5E7EB;
                 selection-background-color: {accent.name()};
+            }}
+
+            QLabel#DropIcon {{
+                font-size: 56px;
+                color: rgba(148, 163, 184, 0.5);
+            }}
+            QLabel#DropHint {{
+                color: #94A3B8;
             }}
 
             QScrollArea {{
@@ -1730,19 +1797,78 @@ class MainWindow(QtWidgets.QMainWindow):
                 background-color: {darker.name()};
             }}
 
+            /* Ghost secondary actions: Remove / Clear */
+            QPushButton#SecondaryButton {{
+                background-color: transparent;
+                color: #64748B;
+                border-radius: 8px;
+                border: 1px solid #CBD5E1;
+            }}
+            QPushButton#SecondaryButton:disabled {{
+                color: #CBD5E1;
+                border: 1px solid #E5E7EB;
+            }}
+            QPushButton#SecondaryButton:hover {{
+                color: #EF4444;
+                border-color: #FCA5A5;
+                background-color: #FEF2F2;
+            }}
+            QPushButton#SecondaryButton:pressed {{
+                background-color: #FEE2E2;
+            }}
+
+            QToolButton#ThemeToggle,
+            QToolButton#OptionsButton {{
+                min-width: 32px;
+                max-width: 32px;
+                min-height: 32px;
+                max-height: 32px;
+                padding: 0;
+            }}
+
+            QToolButton#LogToggle {{
+                background-color: transparent;
+                color: #64748B;
+                border-radius: 6px;
+                padding: 4px 8px;
+            }}
+            QToolButton#LogToggle:hover {{
+                background-color: rgba(148, 163, 184, 0.20);
+                color: #0F172A;
+            }}
+            QToolButton#LogToggle:checked {{
+                background-color: rgba(59, 130, 246, 0.08);
+                color: #1D4ED8;
+            }}
+
             QPlainTextEdit {{
                 background-color: #FFFFFF;
                 border-radius: 10px;
                 border: 1px solid #E5E7EB;
+            }}
+
+            QLabel#DropIcon {{
+                font-size: 56px;
+                color: rgba(148, 163, 184, 0.5);
+            }}
+            QLabel#DropHint {{
+                color: #94A3B8;
             }}
             """
 
         self.setStyleSheet(base_qss + custom)
 
     def _update_theme_toggle_label(self) -> None:
-        """Update the toggle button text to reflect the current mode."""
-        if hasattr(self, "theme_toggle"):
-            self.theme_toggle.setText("Light mode" if self._dark_mode else "Dark mode")
+        """Update the theme toggle glyph + tooltip."""
+        if not hasattr(self, "theme_toggle"):
+            return
+        if self._dark_mode:
+            # Currently dark → show sun to indicate you can go back to light
+            self.theme_toggle.setText("☀")
+            self.theme_toggle.setToolTip("Switch to light mode")
+        else:
+            self.theme_toggle.setText("🌙")
+            self.theme_toggle.setToolTip("Switch to dark mode")
 
     def _on_theme_toggled(self, checked: bool) -> None:
         """Switch between light and dark palettes."""
@@ -1896,7 +2022,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
         count = self.queue_list.count()
         if count == 0:
-            self.queue_summary_label.setText("No files in queue")
+            # Empty state: let the central watermark do the talking.
+            self.queue_summary_label.setText("")
             return
 
         total_s = 0.0
