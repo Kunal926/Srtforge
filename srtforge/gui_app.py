@@ -1216,6 +1216,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self._log_tailer: Optional[LogTailer] = None
         self._last_worker_options: Optional[WorkerOptions] = None
         self._runtime_config_path: Optional[str] = None
+        # UI theme state
+        self._dark_mode: bool = False
         # Single source of truth for user options (kept only in the Options dialog)
         self._basic_options = {
             "prefer_gpu": True,
@@ -1314,6 +1316,13 @@ class MainWindow(QtWidgets.QMainWindow):
         for button in (self.start_button, self.stop_button):
             button.setCursor(pointer_cursor)
             button_row.addWidget(button)
+
+        # Bottom-right dark-mode toggle
+        self.theme_toggle = QtWidgets.QPushButton("Dark mode")
+        self.theme_toggle.setCheckable(True)
+        self.theme_toggle.setCursor(pointer_cursor)
+        self.theme_toggle.toggled.connect(self._handle_theme_toggled)
+        button_row.addWidget(self.theme_toggle)
         layout.addLayout(button_row)
 
         self.tool_status = QtWidgets.QLabel()
@@ -1407,19 +1416,89 @@ class MainWindow(QtWidgets.QMainWindow):
         self._apply_log_font()
     def _apply_styles(self) -> None:
         accent = get_windows_accent_qcolor() or QtGui.QColor("#2563eb")
-        palette = self.palette()
-        palette.setColor(QtGui.QPalette.ColorRole.Window, QtGui.QColor("#f5f6f8"))
-        palette.setColor(QtGui.QPalette.ColorRole.Base, QtGui.QColor("#ffffff"))
-        palette.setColor(QtGui.QPalette.ColorRole.Highlight, accent)
-        palette.setColor(QtGui.QPalette.ColorRole.Button, accent)
-        palette.setColor(QtGui.QPalette.ColorRole.ButtonText, QtGui.QColor("#ffffff"))
+
+        # --- Palette ---------------------------------------------------------
+        palette = QtGui.QPalette()
+        if self._dark_mode:
+            bg = QtGui.QColor("#020617")
+            fg = QtGui.QColor("#e5e7eb")
+            palette.setColor(QtGui.QPalette.ColorRole.Window, bg)
+            palette.setColor(QtGui.QPalette.ColorRole.WindowText, fg)
+            palette.setColor(QtGui.QPalette.ColorRole.Base, bg)
+            palette.setColor(QtGui.QPalette.ColorRole.AlternateBase, QtGui.QColor("#0f172a"))
+            palette.setColor(QtGui.QPalette.ColorRole.Text, fg)
+            palette.setColor(QtGui.QPalette.ColorRole.ToolTipBase, QtGui.QColor("#0f172a"))
+            palette.setColor(QtGui.QPalette.ColorRole.ToolTipText, fg)
+            palette.setColor(QtGui.QPalette.ColorRole.Button, accent)
+            palette.setColor(QtGui.QPalette.ColorRole.ButtonText, QtGui.QColor("#f9fafb"))
+            palette.setColor(QtGui.QPalette.ColorRole.BrightText, QtGui.QColor("#ffffff"))
+            palette.setColor(QtGui.QPalette.ColorRole.Highlight, accent)
+            palette.setColor(QtGui.QPalette.ColorRole.HighlightedText, QtGui.QColor("#f9fafb"))
+        else:
+            palette.setColor(QtGui.QPalette.ColorRole.Window, QtGui.QColor("#f5f6f8"))
+            palette.setColor(QtGui.QPalette.ColorRole.WindowText, QtGui.QColor("#111827"))
+            palette.setColor(QtGui.QPalette.ColorRole.Base, QtGui.QColor("#ffffff"))
+            palette.setColor(QtGui.QPalette.ColorRole.AlternateBase, QtGui.QColor("#f9fafb"))
+            palette.setColor(QtGui.QPalette.ColorRole.Text, QtGui.QColor("#111827"))
+            palette.setColor(QtGui.QPalette.ColorRole.ToolTipBase, QtGui.QColor("#111827"))
+            palette.setColor(QtGui.QPalette.ColorRole.ToolTipText, QtGui.QColor("#f9fafb"))
+            palette.setColor(QtGui.QPalette.ColorRole.Button, accent)
+            palette.setColor(QtGui.QPalette.ColorRole.ButtonText, QtGui.QColor("#ffffff"))
+            palette.setColor(QtGui.QPalette.ColorRole.BrightText, QtGui.QColor("#ffffff"))
+            palette.setColor(QtGui.QPalette.ColorRole.Highlight, accent)
+            palette.setColor(QtGui.QPalette.ColorRole.HighlightedText, QtGui.QColor("#ffffff"))
         self.setPalette(palette)
 
-        stylesheet = self._load_win11_stylesheet(accent)
-        if stylesheet:
-            self.setStyleSheet(
-                stylesheet
-                + """
+        # --- QSS -------------------------------------------------------------
+        stylesheet = self._load_win11_stylesheet(accent) or ""
+        if self._dark_mode:
+            extra = """
+                QWidget {
+                    background-color: #020617;
+                    color: #e5e7eb;
+                }
+                QLabel,QLineEdit,QComboBox,QPushButton,QCheckBox {
+                    padding-top: 4px;
+                    padding-bottom: 4px;
+                }
+                QGroupBox {
+                    margin-top: 12px;
+                    border-radius: 12px;
+                    border: 1px solid #1f2937;
+                }
+                QGroupBox::title {
+                    subcontrol-origin: margin;
+                    left: 12px;
+                    padding: 4px 8px 4px 8px;
+                }
+                #DropArea {
+                    border: none;
+                    background: #020617;
+                    border-radius: 12px;
+                }
+                #QueueList {
+                    background: #020617;
+                    border: 1px solid #1f2937;
+                    border-radius: 8px;
+                }
+                #QueueList::item { padding: 6px 8px; }
+                #QueueList::item:hover { background: rgba(255,255,255,0.06); }
+                #QueueList::item:selected {
+                    background: rgba(37,99,235,0.40);
+                    color: #e5e7eb;
+                }
+                QPlainTextEdit {
+                    background: #020617;
+                    border: 1px solid #1f2937;
+                    border-radius: 8px;
+                }
+                #EtaLabel {
+                    color: #9ca3af;
+                    padding: 6px 10px;
+                }
+            """
+        else:
+            extra = """
                 QLabel,QLineEdit,QComboBox,QPushButton,QCheckBox {
                     padding-top: 4px; padding-bottom: 4px;
                 }
@@ -1441,8 +1520,16 @@ class MainWindow(QtWidgets.QMainWindow):
                     color: #111827;
                 }
                 #EtaLabel { color: #6b7280; padding: 6px 10px; }
-                """
-            )
+            """
+
+        self.setStyleSheet(stylesheet + extra)
+
+    def _handle_theme_toggled(self, checked: bool) -> None:
+        """Slot for the Dark mode toggle button."""
+        self._dark_mode = bool(checked)
+        # Flip label so it always shows the *other* mode
+        self.theme_toggle.setText("Light mode" if self._dark_mode else "Dark mode")
+        self._apply_styles()
 
     def _load_win11_stylesheet(self, accent: QtGui.QColor) -> Optional[str]:
         try:
@@ -1471,6 +1558,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self._basic_options["srt_default"] = s.value("srt_default", False, type=bool)
         self._basic_options["srt_forced"] = s.value("srt_forced", False, type=bool)
 
+        # Theme
+        self._dark_mode = s.value("dark_mode", False, type=bool)
+        if hasattr(self, "theme_toggle"):
+            self.theme_toggle.setChecked(self._dark_mode)
+            self.theme_toggle.setText("Light mode" if self._dark_mode else "Dark mode")
+
     def _save_persistent_options(self) -> None:
         """Persist current GUI options for the next run."""
         s = self._qsettings
@@ -1485,6 +1578,7 @@ class MainWindow(QtWidgets.QMainWindow):
         s.setValue("srt_language", str(self._basic_options.get("srt_language", "eng")))
         s.setValue("srt_default", bool(self._basic_options.get("srt_default", False)))
         s.setValue("srt_forced", bool(self._basic_options.get("srt_forced", False)))
+        s.setValue("dark_mode", bool(self._dark_mode))
 
         s.sync()
 
