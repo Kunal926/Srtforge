@@ -1240,6 +1240,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self._eta_mode_gpu: bool = True
         self._eta_media: Optional[str] = None
         self._eta_memory = _EtaMemory()
+        # Track per-file durations for the “Total duration” summary
+        self._queue_duration_cache: dict[str, float] = {}
+        # Track the current ETA window so we can compute % progress
+        self._eta_total: float = 0.0
         self._build_ui()  # builds a page widget; we wrap it in a scroll area below
         self._log_tailer = LogTailer(self._append_log, self)
         self._load_persistent_options()
@@ -1252,88 +1256,184 @@ class MainWindow(QtWidgets.QMainWindow):
         page = QtWidgets.QWidget()
         layout = QtWidgets.QVBoxLayout(page)
         layout.setSpacing(16)
-        header = QtWidgets.QLabel("Srtforge Studio")
-        header.setObjectName("HeaderLabel")
-        header.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(header)
+        header_row = QtWidgets.QHBoxLayout()
+        title = QtWidgets.QLabel("Srtforge Studio")
+        title.setObjectName("HeaderLabel")
+        header_row.addWidget(title)
+        header_row.addStretch()
 
-        queue_group = QtWidgets.QGroupBox("Transcription queue")
-        queue_layout = QtWidgets.QHBoxLayout(queue_group)
-        queue_layout.setContentsMargins(12, 12, 12, 12)
+        self.options_button = QtWidgets.QToolButton()
+        self.options_button.setText("⚙")
+        self.options_button.setToolTip("Options")
+        self.options_button.setCursor(QtGui.QCursor(QtCore.Qt.CursorShape.PointingHandCursor))
+        self.options_button.clicked.connect(self._open_options_dialog)
+        header_row.addWidget(self.options_button)
+
+        layout.addLayout(header_row)
+
+        # --- Queue card ------------------------------------------------------
+        queue_card = QtWidgets.QFrame()
+        queue_card.setObjectName("QueueCard")
+        queue_card.setFrameShape(QtWidgets.QFrame.NoFrame)
+        card_layout = QtWidgets.QVBoxLayout(queue_card)
+        card_layout.setContentsMargins(16, 16, 16, 16)
+        card_layout.setSpacing(12)
+
+        # Top action bar: Add / Remove / Clear ...  Language: Auto-detect
+        action_bar = QtWidgets.QHBoxLayout()
+        pointer_cursor = QtGui.QCursor(QtCore.Qt.CursorShape.PointingHandCursor)
+
+        self.add_button = QtWidgets.QPushButton("Add files…")
+        self.add_button.setCursor(pointer_cursor)
+        self.add_button.clicked.connect(self._open_file_dialog)
+        action_bar.addWidget(self.add_button)
+
+        self.remove_button = QtWidgets.QPushButton("Remove selected")
+        self.remove_button.setCursor(pointer_cursor)
+        self.remove_button.clicked.connect(self._remove_selected_items)
+        action_bar.addWidget(self.remove_button)
+
+        self.clear_button = QtWidgets.QPushButton("Clear queue")
+        self.clear_button.setCursor(pointer_cursor)
+        self.clear_button.setFlat(True)  # text-only vibe, red hover via QSS
+        self.clear_button.clicked.connect(self._clear_queue)
+        action_bar.addWidget(self.clear_button)
+
+        action_bar.addStretch()
+
+        language_label = QtWidgets.QLabel("Language")
+        self.language_combo = QtWidgets.QComboBox()
+        # Honest: Parakeet is English-only today
+        self.language_combo.addItem("Auto-detect (English only)")
+        self.language_combo.setEnabled(False)
+        self.language_combo.setToolTip("The bundled Parakeet model is English-only for now.")
+        action_bar.addWidget(language_label)
+        action_bar.addWidget(self.language_combo)
+
+        card_layout.addLayout(action_bar)
+
+        # Center: stacked empty state vs queue list
+        self.queue_stack = QtWidgets.QStackedWidget()
+
+        # Empty drag & drop state
+        self.queue_placeholder = QtWidgets.QWidget()
+        ph_layout = QtWidgets.QVBoxLayout(self.queue_placeholder)
+        ph_layout.addStretch()
+        icon_lbl = QtWidgets.QLabel("🎬")
+        icon_lbl.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        icon_lbl.setStyleSheet("font-size: 40px;")
+        ph_layout.addWidget(icon_lbl)
+        text_lbl = QtWidgets.QLabel("Drag & drop video files here\nor click “Add files…”")
+        text_lbl.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        text_lbl.setStyleSheet("color: #6b7280;")
+        ph_layout.addWidget(text_lbl)
+        ph_layout.addStretch()
+        self.queue_stack.addWidget(self.queue_placeholder)
+
+        # Actual queue list
         self.queue_list = QtWidgets.QListWidget()
         self.queue_list.setObjectName("QueueList")
         self.queue_list.setFrameShape(QtWidgets.QFrame.NoFrame)
-        self.queue_list.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.ExtendedSelection)
-        # Smooth per-pixel scrolling + compact rows so the list doesn't "jump"
+        self.queue_list.setSelectionMode(
+            QtWidgets.QAbstractItemView.SelectionMode.ExtendedSelection
+        )
         self.queue_list.setVerticalScrollMode(QtWidgets.QAbstractItemView.ScrollPerPixel)
         self.queue_list.setUniformItemSizes(True)
-        # Slightly taller list with alternating rows for a clearer queue overview
         self.queue_list.setMinimumHeight(160)
-        queue_layout.addWidget(self.queue_list)
-        queue_layout.setStretch(0, 1)
-        queue_buttons = QtWidgets.QVBoxLayout()
-        add_button = QtWidgets.QPushButton("Add files")
-        add_button.clicked.connect(self._open_file_dialog)
-        remove_button = QtWidgets.QPushButton("Remove selected")
-        remove_button.clicked.connect(self._remove_selected_items)
-        clear_button = QtWidgets.QPushButton("Clear queue")
-        clear_button.clicked.connect(self._clear_queue)
-        for button in (add_button, remove_button, clear_button):
-            button.setCursor(QtGui.QCursor(QtCore.Qt.CursorShape.PointingHandCursor))
-            queue_buttons.addWidget(button)
-        queue_buttons.addStretch()
-        queue_layout.addLayout(queue_buttons)
-        layout.addWidget(queue_group)
-        add_shadow(queue_group)
+        self.queue_stack.addWidget(self.queue_list)
 
-        # NOTE: The main window no longer shows processing controls.
-        # All options live exclusively under the “Options…” dialog.
+        card_layout.addWidget(self.queue_stack)
+
+        # Bottom bar: total duration (left) + Start / Stop (right)
+        bottom_bar = QtWidgets.QHBoxLayout()
+        self.queue_summary_label = QtWidgets.QLabel("No files in queue")
+        bottom_bar.addWidget(self.queue_summary_label)
+        bottom_bar.addStretch()
+
+        self.start_button = QtWidgets.QPushButton("Start transcription")
+        self.start_button.setCursor(pointer_cursor)
+        self.start_button.clicked.connect(self._start_processing)
+        bottom_bar.addWidget(self.start_button)
+
+        self.stop_button = QtWidgets.QPushButton("Stop")
+        self.stop_button.setCursor(pointer_cursor)
+        self.stop_button.setEnabled(False)
+        self.stop_button.clicked.connect(self._stop_processing)
+        bottom_bar.addWidget(self.stop_button)
+
+        card_layout.addLayout(bottom_bar)
+
+        layout.addWidget(queue_card)
+        add_shadow(queue_card)
+
+        # Log drawer (hidden by default – toggled from the status bar)
+        self.log_container = QtWidgets.QFrame()
+        self.log_container.setObjectName("LogContainer")
+        log_layout = QtWidgets.QVBoxLayout(self.log_container)
+        log_layout.setContentsMargins(0, 0, 0, 0)
 
         self.log_view = QtWidgets.QPlainTextEdit()
         self.log_view.setReadOnly(True)
-        # Slightly smaller console frees space for controls
         self.log_view.setMinimumHeight(110)
         self.log_view.setMaximumHeight(260)
         self.log_view.setMaximumBlockCount(10000)
         self._init_log_zoom()
-        layout.addWidget(self.log_view)
+        log_layout.addWidget(self.log_view)
 
-        button_row = QtWidgets.QHBoxLayout()
-        self.eta_label = QtWidgets.QLabel("ETA —")
-        self.eta_label.setObjectName("EtaLabel")
-        button_row.addWidget(self.eta_label)
-        self.options_button = QtWidgets.QPushButton("Options")
-        self.options_button.setCursor(QtGui.QCursor(QtCore.Qt.CursorShape.PointingHandCursor))
-        self.options_button.clicked.connect(self._open_options_dialog)
-        button_row.addWidget(self.options_button)
-        button_row.addStretch()
-        self.start_button = QtWidgets.QPushButton("Start")
-        self.start_button.clicked.connect(self._start_processing)
-        self.stop_button = QtWidgets.QPushButton("Stop")
-        self.stop_button.clicked.connect(self._stop_processing)
-        self.stop_button.setEnabled(False)
-        pointer_cursor = QtGui.QCursor(QtCore.Qt.CursorShape.PointingHandCursor)
-        for button in (self.start_button, self.stop_button):
-            button.setCursor(pointer_cursor)
-            button_row.addWidget(button)
+        # Start hidden; user can reveal via the terminal icon in the status bar
+        self.log_container.setVisible(False)
+        layout.addWidget(self.log_container)
 
         # Bottom-right dark-mode toggle
+        theme_row = QtWidgets.QHBoxLayout()
+        theme_row.addStretch()
         self.theme_toggle = QtWidgets.QPushButton("Dark mode")
         self.theme_toggle.setCheckable(True)
         self.theme_toggle.setCursor(pointer_cursor)
         self.theme_toggle.toggled.connect(self._handle_theme_toggled)
-        button_row.addWidget(self.theme_toggle)
-        layout.addLayout(button_row)
-
-        self.tool_status = QtWidgets.QLabel()
-        self.tool_status.setWordWrap(True)
-        layout.addWidget(self.tool_status)
+        theme_row.addWidget(self.theme_toggle)
+        layout.addLayout(theme_row)
 
         scroll = QtWidgets.QScrollArea()
         scroll.setFrameShape(QtWidgets.QFrame.NoFrame)
         scroll.setWidgetResizable(True)
         scroll.setWidget(page)
         self.setCentralWidget(scroll)
+
+        # --- Status bar: system status + ETA + log toggle --------------------
+        status_bar = QtWidgets.QStatusBar(self)
+        self.setStatusBar(status_bar)
+
+        # Tiny coloured dot + short text; full details in tooltip
+        self.status_indicator = QtWidgets.QLabel()
+        self.status_indicator.setObjectName("StatusIndicator")
+        status_bar.addWidget(self.status_indicator)
+
+        # We’ll move ETA text down here
+        self.eta_label = QtWidgets.QLabel("Idle")
+        self.eta_label.setObjectName("EtaLabel")
+        status_bar.addWidget(self.eta_label)
+
+        # Sleek progress bar, only visible while processing
+        self.progress_bar = QtWidgets.QProgressBar()
+        self.progress_bar.setMaximumWidth(180)
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setValue(0)
+        self.progress_bar.setTextVisible(False)
+        self.progress_bar.setVisible(False)
+        status_bar.addPermanentWidget(self.progress_bar)
+
+        # “Terminal” toggle for the log drawer
+        self.log_toggle_button = QtWidgets.QToolButton()
+        self.log_toggle_button.setCheckable(True)
+        self.log_toggle_button.setToolTip("Show logs")
+        self.log_toggle_button.setCursor(QtGui.QCursor(QtCore.Qt.CursorShape.PointingHandCursor))
+        # There’s no built-in terminal icon, but this is close enough.
+        self.log_toggle_button.setIcon(self.style().standardIcon(QtWidgets.QStyle.StandardPixmap.SP_ComputerIcon))
+        self.log_toggle_button.toggled.connect(self._toggle_log_panel)
+        status_bar.addPermanentWidget(self.log_toggle_button)
+
+        self._update_start_state()
 
     # Make the whole window a drop target with a gentle grey overlay
     def dragEnterEvent(self, event: QtGui.QDragEnterEvent) -> None:  # noqa: D401 - Qt override
@@ -1403,6 +1503,13 @@ class MainWindow(QtWidgets.QMainWindow):
         font.setPointSize(size)
         self.log_view.setFont(font)
 
+    def _toggle_log_panel(self, checked: bool) -> None:
+        if getattr(self, "log_container", None) is None:
+            return
+        self.log_container.setVisible(checked)
+        if hasattr(self, "log_toggle_button"):
+            self.log_toggle_button.setToolTip("Hide logs" if checked else "Show logs")
+
     def _zoom_in(self) -> None:
         self._log_zoom_delta += 1
         self._apply_log_font()
@@ -1415,7 +1522,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._log_zoom_delta = 0
         self._apply_log_font()
     def _apply_styles(self) -> None:
-        accent = get_windows_accent_qcolor() or QtGui.QColor("#2563eb")
+        accent = get_windows_accent_qcolor() or QtGui.QColor("#0066ff")
 
         # --- Palette ---------------------------------------------------------
         palette = QtGui.QPalette()
@@ -1451,15 +1558,46 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # --- QSS -------------------------------------------------------------
         stylesheet = self._load_win11_stylesheet(accent) or ""
+        common = """
+                #QueueCard {
+                    background: #ffffff;
+                    border-radius: 12px;
+                }
+                #LogContainer {
+                    background: #020617;
+                    border-radius: 10px;
+                }
+                #LogContainer QPlainTextEdit {
+                    background: transparent;
+                    border: none;
+                    color: #e5e7eb;
+                }
+                QLabel,QLineEdit,QComboBox,QPushButton,QCheckBox {
+                    padding-top: 4px; padding-bottom: 4px;
+                }
+                QGroupBox { margin-top: 12px; }
+                QGroupBox::title {
+                    subcontrol-origin: margin; left: 12px;
+                    padding: 4px 8px 4px 8px;
+                }
+                #QueueList {
+                    background: #ffffff;
+                    border: 1px solid #e5e7eb;
+                    border-radius: 8px;
+                }
+                #QueueList::item { padding: 6px 8px; }
+                #QueueList::item:hover { background: rgba(0,0,0,0.04); }
+                #QueueList::item:selected {
+                    background: rgba(37,99,235,0.16);
+                    color: #111827;
+                }
+                #EtaLabel { color: #6b7280; padding: 6px 10px; }
+            """
         if self._dark_mode:
             extra = """
                 QWidget {
                     background-color: #020617;
                     color: #e5e7eb;
-                }
-                QLabel,QLineEdit,QComboBox,QPushButton,QCheckBox {
-                    padding-top: 4px;
-                    padding-bottom: 4px;
                 }
                 QGroupBox {
                     margin-top: 12px;
@@ -1492,21 +1630,9 @@ class MainWindow(QtWidgets.QMainWindow):
                     border: 1px solid #1f2937;
                     border-radius: 8px;
                 }
-                #EtaLabel {
-                    color: #9ca3af;
-                    padding: 6px 10px;
-                }
             """
         else:
             extra = """
-                QLabel,QLineEdit,QComboBox,QPushButton,QCheckBox {
-                    padding-top: 4px; padding-bottom: 4px;
-                }
-                QGroupBox { margin-top: 12px; }
-                QGroupBox::title {
-                    subcontrol-origin: margin; left: 12px;
-                    padding: 4px 8px 4px 8px;
-                }
                 #DropArea { border: none; background: #ffffff; border-radius: 12px; }
                 #QueueList {
                     background: #ffffff;
@@ -1519,10 +1645,9 @@ class MainWindow(QtWidgets.QMainWindow):
                     background: rgba(37,99,235,0.16);
                     color: #111827;
                 }
-                #EtaLabel { color: #6b7280; padding: 6px 10px; }
             """
 
-        self.setStyleSheet(stylesheet + extra)
+        self.setStyleSheet(stylesheet + common + extra)
 
     def _handle_theme_toggled(self, checked: bool) -> None:
         """Slot for the Dark mode toggle button."""
@@ -1593,7 +1718,21 @@ class MainWindow(QtWidgets.QMainWindow):
             lines.append(f"MKVToolNix (mkvmerge) detected at {self.mkv_paths.mkvmerge.parent}")
         else:
             lines.append("MKVToolNix (mkvmerge) not found. Set SRTFORGE_MKV_DIR or install MKVToolNix for soft embedding.")
-        self.tool_status.setText("\n".join(lines))
+        detail = "\n".join(lines)
+
+        if not hasattr(self, "status_indicator"):
+            return
+
+        # Tiny coloured bullet + short text; hover shows full details
+        all_ok = bool(self.ffmpeg_paths)
+        color = "#10b981" if all_ok else "#f97316"
+        text = "System ready" if all_ok else "Limited: FFmpeg missing"
+
+        self.status_indicator.setText(
+            f'<span style="color:{color};">●</span> {text}'
+        )
+        self.status_indicator.setTextFormat(QtCore.Qt.TextFormat.RichText)
+        self.status_indicator.setToolTip(detail)
 
     def _handle_dropped_files(self, files: list) -> None:
         self._add_files_to_queue(files)
@@ -1608,28 +1747,91 @@ class MainWindow(QtWidgets.QMainWindow):
             Path(self.queue_list.item(i).data(QtCore.Qt.ItemDataRole.UserRole))
             for i in range(self.queue_list.count())
         }
+        ffprobe = self.ffmpeg_paths.ffprobe if self.ffmpeg_paths else None
+
         for path in _normalize_paths(files):
             if path in existing:
                 continue
-            item = QtWidgets.QListWidgetItem(str(path))
+            item = QtWidgets.QListWidgetItem(path.name)
             item.setData(QtCore.Qt.ItemDataRole.UserRole, str(path))
             self.queue_list.addItem(item)
             existing.add(path)
+
+            # Cache duration for total in card footer
+            try:
+                duration_s = _probe_media_duration_ffprobe(path, ffprobe)
+            except Exception:
+                duration_s = 0.0
+            self._queue_duration_cache[str(path)] = float(duration_s or 0.0)
+
         self._update_start_state()
 
     def _remove_selected_items(self) -> None:
         for item in self.queue_list.selectedItems():
+            path = item.data(QtCore.Qt.ItemDataRole.UserRole)
             row = self.queue_list.row(item)
             self.queue_list.takeItem(row)
+            if path:
+                self._queue_duration_cache.pop(str(path), None)
         self._update_start_state()
 
     def _clear_queue(self) -> None:
         self.queue_list.clear()
+        self._queue_duration_cache.clear()
         self._update_start_state()
 
     def _update_start_state(self) -> None:
         has_items = self.queue_list.count() > 0
         self.start_button.setEnabled(has_items and not self._worker)
+
+        # Switch between empty placeholder and actual list
+        if hasattr(self, "queue_stack"):
+            self.queue_stack.setCurrentWidget(
+                self.queue_list if has_items else self.queue_placeholder
+            )
+
+        self._update_queue_summary()
+
+    def _update_queue_summary(self) -> None:
+        if not hasattr(self, "queue_summary_label"):
+            return
+
+        count = self.queue_list.count()
+        if count == 0:
+            self.queue_summary_label.setText("No files in queue")
+            return
+
+        total_s = 0.0
+        for i in range(count):
+            path = self.queue_list.item(i).data(QtCore.Qt.ItemDataRole.UserRole)
+            if not path:
+                continue
+            total_s += float(self._queue_duration_cache.get(str(path), 0.0))
+
+        if total_s <= 0:
+            summary = f"{count} file{'s' if count != 1 else ''} in queue"
+        else:
+            total_seconds = int(round(total_s))
+            minutes, secs = divmod(total_seconds, 60)
+            hours, minutes = divmod(minutes, 60)
+            if hours:
+                dur_str = f"{hours:d}:{minutes:02d}:{secs:02d}"
+            else:
+                dur_str = f"{minutes:02d}:{secs:02d}"
+            summary = f"{count} file{'s' if count != 1 else ''} – Total duration: {dur_str}"
+
+        self.queue_summary_label.setText(summary)
+
+    def _set_queue_item_status(self, media: str, status: str) -> None:
+        path = Path(media)
+        for i in range(self.queue_list.count()):
+            item = self.queue_list.item(i)
+            raw = item.data(QtCore.Qt.ItemDataRole.UserRole)
+            if not raw:
+                continue
+            if Path(str(raw)) == path:
+                item.setText(f"{path.name} — {status}")
+                break
 
     # (embed panel handling removed — lives in OptionsDialog now)
 
@@ -1690,6 +1892,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if self._log_tailer:
             self._log_tailer.start()
         self._append_log(f"Processing {path}")
+        self._set_queue_item_status(path, "Processing…")
         self._eta_mode_gpu = bool(self._basic_options.get("prefer_gpu", True))
         self._eta_media = path
         ffprobe = self.ffmpeg_paths.ffprobe if self.ffmpeg_paths else None
@@ -1698,18 +1901,22 @@ class MainWindow(QtWidgets.QMainWindow):
         if estimate > 0:
             self._set_eta(estimate)
         else:
-            self.eta_label.setText("ETA —")
+            self.eta_label.setText(f"Processing {Path(path).name}")
+            if hasattr(self, "progress_bar"):
+                self.progress_bar.setVisible(False)
 
     def _on_file_completed(self, media: str, summary: str) -> None:
         if self._log_tailer:
             self._log_tailer.stop()
         self._append_log(f"✅ {media}: {summary}")
+        self._set_queue_item_status(media, "Completed")
         self._clear_eta()
 
     def _on_file_failed(self, media: str, reason: str) -> None:
         if self._log_tailer:
             self._log_tailer.stop()
         self._append_log(f"⚠️ {media}: {reason}")
+        self._set_queue_item_status(media, "Failed")
         self._clear_eta()
 
     def _handle_run_log_ready(self, run_id: str) -> None:
@@ -1768,24 +1975,51 @@ class MainWindow(QtWidgets.QMainWindow):
         return path
 
     def _set_eta(self, seconds: float) -> None:
-        self._eta_deadline = time.monotonic() + float(seconds)
+        self._eta_total = float(seconds)
+        if self._eta_total <= 0:
+            self._clear_eta()
+            return
+        self._eta_deadline = time.monotonic() + self._eta_total
         self._tick_eta()
         if not self._eta_timer.isActive():
             self._eta_timer.start()
 
     def _clear_eta(self) -> None:
         self._eta_deadline = None
-        self.eta_label.setText("ETA —")
+        self._eta_total = 0.0
+        if hasattr(self, "eta_label"):
+            self.eta_label.setText("Idle")
+        if hasattr(self, "progress_bar"):
+            self.progress_bar.setVisible(False)
+            self.progress_bar.setValue(0)
         if self._eta_timer.isActive():
             self._eta_timer.stop()
 
     def _tick_eta(self) -> None:
-        if self._eta_deadline is None:
-            self.eta_label.setText("ETA —")
+        if self._eta_deadline is None or self._eta_total <= 0:
+            if hasattr(self, "eta_label"):
+                self.eta_label.setText("Idle")
+            if hasattr(self, "progress_bar"):
+                self.progress_bar.setVisible(False)
             return
-        remaining = max(0.0, self._eta_deadline - time.monotonic())
+
+        now = time.monotonic()
+        remaining = max(0.0, self._eta_deadline - now)
+        elapsed = self._eta_total - remaining
+        progress = max(0.0, min(1.0, elapsed / self._eta_total))
+        percent = int(progress * 100)
+
         minutes, secs = divmod(int(round(remaining)), 60)
-        self.eta_label.setText(f"ETA ~ {minutes:02d}:{secs:02d}")
+        basename = Path(self._eta_media).name if self._eta_media else "current file"
+
+        if hasattr(self, "eta_label"):
+            self.eta_label.setText(
+                f"Processing {basename} ({percent:3d}%) – ETA ~ {minutes:02d}:{secs:02d}"
+            )
+        if hasattr(self, "progress_bar"):
+            self.progress_bar.setVisible(True)
+            self.progress_bar.setValue(percent)
+
         if remaining <= 0:
             self._eta_timer.stop()
 
