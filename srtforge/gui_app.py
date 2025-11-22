@@ -1293,7 +1293,7 @@ class MainWindow(QtWidgets.QMainWindow):
         card_layout.setContentsMargins(16, 16, 16, 16)
         card_layout.setSpacing(12)
 
-        # Top action bar: Add / Remove / Clear ...  Language: Auto-detect
+        # Top action bar: Add / Remove / Clear
         action_bar = QtWidgets.QHBoxLayout()
 
         self.add_button = QtWidgets.QPushButton("Add files…")
@@ -1316,15 +1316,6 @@ class MainWindow(QtWidgets.QMainWindow):
         action_bar.addWidget(self.clear_button)
 
         action_bar.addStretch()
-
-        self.language_combo = QtWidgets.QComboBox()
-        self.language_combo.setObjectName("LanguageCombo")
-        # Honest: Parakeet is English-only today
-        self.language_combo.addItem("🌐 Auto-detect (English)")
-        self.language_combo.setEnabled(False)
-        self.language_combo.setToolTip("The bundled Parakeet model is English-only for now.")
-        self.language_combo.setMinimumWidth(220)
-        action_bar.addWidget(self.language_combo)
 
         card_layout.addLayout(action_bar)
 
@@ -1434,18 +1425,46 @@ class MainWindow(QtWidgets.QMainWindow):
         status_bar.addPermanentWidget(self.progress_bar)
 
         # “Terminal” toggle for the log drawer
-        self.log_toggle_button = QtWidgets.QToolButton()
+        console_trigger = QtWidgets.QWidget()
+        console_trigger.setObjectName("FooterConsoleTrigger")
+        console_trigger.setCursor(pointer_cursor)
+
+        console_layout = QtWidgets.QHBoxLayout(console_trigger)
+        console_layout.setContentsMargins(0, 0, 0, 0)
+        console_layout.setSpacing(8)
+
+        # Icon button (acts as the actual toggle)
+        self.log_toggle_button = QtWidgets.QToolButton(console_trigger)
         self.log_toggle_button.setObjectName("LogToggle")
         self.log_toggle_button.setCheckable(True)
         self.log_toggle_button.setToolTip("Show console")
-        self.log_toggle_button.setCursor(QtGui.QCursor(QtCore.Qt.CursorShape.PointingHandCursor))
-        self.log_toggle_button.setText(">_ Console")
-        self.log_toggle_button.setToolButtonStyle(QtCore.Qt.ToolButtonTextBesideIcon)
+        self.log_toggle_button.setCursor(pointer_cursor)
         self.log_toggle_button.setIcon(
             self.style().standardIcon(QtWidgets.QStyle.StandardPixmap.SP_ComputerIcon)
         )
+        # icon-only; text lives in a separate label for cleaner alignment
+        self.log_toggle_button.setText("")
         self.log_toggle_button.toggled.connect(self._toggle_log_panel)
-        status_bar.addPermanentWidget(self.log_toggle_button)
+
+        # Text label >_ Console
+        log_label = QtWidgets.QLabel(">_ Console", console_trigger)
+        log_label.setObjectName("LogToggleLabel")
+        log_label.setCursor(pointer_cursor)
+
+        console_layout.addWidget(self.log_toggle_button)
+        console_layout.addWidget(log_label)
+        console_layout.setAlignment(QtCore.Qt.AlignVCenter)
+
+        # Make the whole pill clickable
+        def _toggle_console_from_mouse(event: QtGui.QMouseEvent) -> None:
+            if event.button() == QtCore.Qt.LeftButton:
+                self.log_toggle_button.toggle()
+            event.accept()
+
+        console_trigger.mousePressEvent = _toggle_console_from_mouse  # type: ignore[assignment]
+        log_label.mousePressEvent = _toggle_console_from_mouse  # type: ignore[assignment]
+
+        status_bar.addPermanentWidget(console_trigger)
 
         self._update_start_state()
 
@@ -1615,13 +1634,13 @@ class MainWindow(QtWidgets.QMainWindow):
                 background-color: #020617;
                 color: #E5E7EB;
                 border-radius: 12px;
-                border: 1px solid #020617; /* effectively borderless, keeps card shape */
+                border: 1px solid #020617;
             }}
 
             QGroupBox {{
                 background-color: #020617;
                 border-radius: 16px;
-                border: none;              /* no wireframe box */
+                border: none;
                 margin-top: 16px;
             }}
             QGroupBox::title {{
@@ -1635,7 +1654,7 @@ class MainWindow(QtWidgets.QMainWindow):
             QListWidget#QueueList {{
                 background-color: #020617;
                 border-radius: 10px;
-                border: none;              /* remove blue outline */
+                border: none;
             }}
             QListWidget#QueueList::item {{
                 padding: 6px 8px;
@@ -1653,7 +1672,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 color: #F9FAFB;
                 border-radius: 8px;
                 padding: 6px 14px;
-                border: none;              /* solid fill, no ghost buttons */
+                border: none;
             }}
             QPushButton:disabled, QToolButton:disabled {{
                 background-color: #1E293B;
@@ -1686,6 +1705,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 background-color: rgba(248, 113, 113, 0.18);
             }}
 
+            /* Top-right header icons: ghost buttons */
             QToolButton#ThemeToggle,
             QToolButton#OptionsButton {{
                 min-width: 32px;
@@ -1693,6 +1713,18 @@ class MainWindow(QtWidgets.QMainWindow):
                 min-height: 32px;
                 max-height: 32px;
                 padding: 0;
+                border-radius: 16px;
+                background-color: transparent;   /* no solid blue block */
+                border: none;
+                color: #E5E7EB;                  /* slate-ish icon color */
+            }}
+            QToolButton#ThemeToggle:hover,
+            QToolButton#OptionsButton:hover {{
+                background-color: rgba(148, 163, 184, 0.24); /* light grey circle on hover */
+            }}
+            QToolButton#ThemeToggle:pressed,
+            QToolButton#OptionsButton:pressed {{
+                background-color: rgba(148, 163, 184, 0.32);
             }}
 
             QToolButton#LogToggle {{
@@ -1708,6 +1740,16 @@ class MainWindow(QtWidgets.QMainWindow):
             QToolButton#LogToggle:checked {{
                 background-color: rgba(15, 23, 42, 0.80);
                 color: #F9FAFB;
+            }}
+
+            #FooterConsoleTrigger {{
+                border-radius: 999px;
+            }}
+            #FooterConsoleTrigger:hover {{
+                background-color: rgba(148, 163, 184, 0.16);
+            }}
+            QLabel#LogToggleLabel {{
+                color: #94A3B8;
             }}
 
             QLineEdit, QComboBox {{
@@ -1737,7 +1779,7 @@ class MainWindow(QtWidgets.QMainWindow):
             }}
             """
         else:
-            # --- Light mode QSS: subtle borders, same accent, solid buttons ---
+            # --- Light mode QSS ---
             custom = f"""
             QLabel,QLineEdit,QComboBox,QPushButton,QCheckBox {{
                 padding-top: 4px;
@@ -1817,6 +1859,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 background-color: #FEE2E2;
             }}
 
+            /* Top-right header icons: ghost buttons */
             QToolButton#ThemeToggle,
             QToolButton#OptionsButton {{
                 min-width: 32px;
@@ -1824,6 +1867,18 @@ class MainWindow(QtWidgets.QMainWindow):
                 min-height: 32px;
                 max-height: 32px;
                 padding: 0;
+                border-radius: 16px;
+                background-color: transparent;
+                border: none;
+                color: #475569;                 /* slate/dark grey */
+            }}
+            QToolButton#ThemeToggle:hover,
+            QToolButton#OptionsButton:hover {{
+                background-color: rgba(148, 163, 184, 0.20); /* light grey circle on hover */
+            }}
+            QToolButton#ThemeToggle:pressed,
+            QToolButton#OptionsButton:pressed {{
+                background-color: rgba(148, 163, 184, 0.30);
             }}
 
             QToolButton#LogToggle {{
@@ -1839,6 +1894,16 @@ class MainWindow(QtWidgets.QMainWindow):
             QToolButton#LogToggle:checked {{
                 background-color: rgba(59, 130, 246, 0.08);
                 color: #1D4ED8;
+            }}
+
+            #FooterConsoleTrigger {{
+                border-radius: 999px;
+            }}
+            #FooterConsoleTrigger:hover {{
+                background-color: rgba(148, 163, 184, 0.12);
+            }}
+            QLabel#LogToggleLabel {{
+                color: #64748B;
             }}
 
             QPlainTextEdit {{
