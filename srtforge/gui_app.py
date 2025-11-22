@@ -1216,7 +1216,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self._log_tailer: Optional[LogTailer] = None
         self._last_worker_options: Optional[WorkerOptions] = None
         self._runtime_config_path: Optional[str] = None
-        # UI theme state
+
+        # Theme state (persisted via QSettings)
         self._dark_mode: bool = False
         # Single source of truth for user options (kept only in the Options dialog)
         self._basic_options = {
@@ -1256,16 +1257,24 @@ class MainWindow(QtWidgets.QMainWindow):
         page = QtWidgets.QWidget()
         layout = QtWidgets.QVBoxLayout(page)
         layout.setSpacing(16)
+        pointer_cursor = QtGui.QCursor(QtCore.Qt.CursorShape.PointingHandCursor)
         header_row = QtWidgets.QHBoxLayout()
         title = QtWidgets.QLabel("Srtforge Studio")
         title.setObjectName("HeaderLabel")
         header_row.addWidget(title)
         header_row.addStretch()
 
-        self.options_button = QtWidgets.QToolButton()
-        self.options_button.setText("⚙")
-        self.options_button.setToolTip("Options")
-        self.options_button.setCursor(QtGui.QCursor(QtCore.Qt.CursorShape.PointingHandCursor))
+        # Light/Dark mode toggle (solid button, no outline)
+        self.theme_toggle = QtWidgets.QToolButton()
+        self.theme_toggle.setObjectName("ThemeToggle")
+        self.theme_toggle.setText("Dark mode")
+        self.theme_toggle.setCheckable(True)
+        self.theme_toggle.setCursor(pointer_cursor)
+        self.theme_toggle.toggled.connect(self._on_theme_toggled)
+        header_row.addWidget(self.theme_toggle)
+
+        self.options_button = QtWidgets.QPushButton("Options")
+        self.options_button.setCursor(pointer_cursor)
         self.options_button.clicked.connect(self._open_options_dialog)
         header_row.addWidget(self.options_button)
 
@@ -1281,7 +1290,6 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # Top action bar: Add / Remove / Clear ...  Language: Auto-detect
         action_bar = QtWidgets.QHBoxLayout()
-        pointer_cursor = QtGui.QCursor(QtCore.Qt.CursorShape.PointingHandCursor)
 
         self.add_button = QtWidgets.QPushButton("Add files…")
         self.add_button.setCursor(pointer_cursor)
@@ -1379,20 +1387,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self.log_view.setMaximumBlockCount(10000)
         self._init_log_zoom()
         log_layout.addWidget(self.log_view)
+        add_shadow(self.log_view)
 
         # Start hidden; user can reveal via the terminal icon in the status bar
         self.log_container.setVisible(False)
         layout.addWidget(self.log_container)
-
-        # Bottom-right dark-mode toggle
-        theme_row = QtWidgets.QHBoxLayout()
-        theme_row.addStretch()
-        self.theme_toggle = QtWidgets.QPushButton("Dark mode")
-        self.theme_toggle.setCheckable(True)
-        self.theme_toggle.setCursor(pointer_cursor)
-        self.theme_toggle.toggled.connect(self._handle_theme_toggled)
-        theme_row.addWidget(self.theme_toggle)
-        layout.addLayout(theme_row)
 
         scroll = QtWidgets.QScrollArea()
         scroll.setFrameShape(QtWidgets.QFrame.NoFrame)
@@ -1522,138 +1521,233 @@ class MainWindow(QtWidgets.QMainWindow):
         self._log_zoom_delta = 0
         self._apply_log_font()
     def _apply_styles(self) -> None:
-        accent = get_windows_accent_qcolor() or QtGui.QColor("#0066ff")
+        # Accent color is still taken from Windows; fall back to Tailwind-ish blue
+        accent = get_windows_accent_qcolor() or QtGui.QColor("#3B82F6")
+        palette = self.palette()
 
-        # --- Palette ---------------------------------------------------------
-        palette = QtGui.QPalette()
         if self._dark_mode:
-            bg = QtGui.QColor("#020617")
-            fg = QtGui.QColor("#e5e7eb")
-            palette.setColor(QtGui.QPalette.ColorRole.Window, bg)
-            palette.setColor(QtGui.QPalette.ColorRole.WindowText, fg)
-            palette.setColor(QtGui.QPalette.ColorRole.Base, bg)
-            palette.setColor(QtGui.QPalette.ColorRole.AlternateBase, QtGui.QColor("#0f172a"))
-            palette.setColor(QtGui.QPalette.ColorRole.Text, fg)
-            palette.setColor(QtGui.QPalette.ColorRole.ToolTipBase, QtGui.QColor("#0f172a"))
-            palette.setColor(QtGui.QPalette.ColorRole.ToolTipText, fg)
+            # ---- Dark (Slate) palette ----
+            # App background      #0F172A
+            # Card / queue bg     #1E293B-ish (we use cards via QSS)
+            # Primary text        #F1F5F9
+            # Secondary text      #94A3B8
+            palette.setColor(QtGui.QPalette.ColorRole.Window, QtGui.QColor("#0F172A"))
+            palette.setColor(QtGui.QPalette.ColorRole.Base, QtGui.QColor("#020617"))
+            palette.setColor(QtGui.QPalette.ColorRole.AlternateBase, QtGui.QColor("#020617"))
+            palette.setColor(QtGui.QPalette.ColorRole.Text, QtGui.QColor("#E5E7EB"))
+            palette.setColor(QtGui.QPalette.ColorRole.WindowText, QtGui.QColor("#F1F5F9"))
             palette.setColor(QtGui.QPalette.ColorRole.Button, accent)
-            palette.setColor(QtGui.QPalette.ColorRole.ButtonText, QtGui.QColor("#f9fafb"))
-            palette.setColor(QtGui.QPalette.ColorRole.BrightText, QtGui.QColor("#ffffff"))
+            palette.setColor(QtGui.QPalette.ColorRole.ButtonText, QtGui.QColor("#F9FAFB"))
             palette.setColor(QtGui.QPalette.ColorRole.Highlight, accent)
-            palette.setColor(QtGui.QPalette.ColorRole.HighlightedText, QtGui.QColor("#f9fafb"))
+            palette.setColor(QtGui.QPalette.ColorRole.ToolTipBase, QtGui.QColor("#020617"))
+            palette.setColor(QtGui.QPalette.ColorRole.ToolTipText, QtGui.QColor("#E5E7EB"))
         else:
-            palette.setColor(QtGui.QPalette.ColorRole.Window, QtGui.QColor("#f5f6f8"))
-            palette.setColor(QtGui.QPalette.ColorRole.WindowText, QtGui.QColor("#111827"))
-            palette.setColor(QtGui.QPalette.ColorRole.Base, QtGui.QColor("#ffffff"))
-            palette.setColor(QtGui.QPalette.ColorRole.AlternateBase, QtGui.QColor("#f9fafb"))
-            palette.setColor(QtGui.QPalette.ColorRole.Text, QtGui.QColor("#111827"))
-            palette.setColor(QtGui.QPalette.ColorRole.ToolTipBase, QtGui.QColor("#111827"))
-            palette.setColor(QtGui.QPalette.ColorRole.ToolTipText, QtGui.QColor("#f9fafb"))
+            # ---- Light palette ----
+            # App background      #F8FAFC
+            # Card / queue bg     #FFFFFF
+            # Primary text        #0F172A
+            # Secondary text      #64748B
+            palette.setColor(QtGui.QPalette.ColorRole.Window, QtGui.QColor("#F8FAFC"))
+            palette.setColor(QtGui.QPalette.ColorRole.Base, QtGui.QColor("#FFFFFF"))
+            palette.setColor(QtGui.QPalette.ColorRole.AlternateBase, QtGui.QColor("#F1F5F9"))
+            palette.setColor(QtGui.QPalette.ColorRole.Text, QtGui.QColor("#0F172A"))
+            palette.setColor(QtGui.QPalette.ColorRole.WindowText, QtGui.QColor("#0F172A"))
             palette.setColor(QtGui.QPalette.ColorRole.Button, accent)
-            palette.setColor(QtGui.QPalette.ColorRole.ButtonText, QtGui.QColor("#ffffff"))
-            palette.setColor(QtGui.QPalette.ColorRole.BrightText, QtGui.QColor("#ffffff"))
+            palette.setColor(QtGui.QPalette.ColorRole.ButtonText, QtGui.QColor("#FFFFFF"))
             palette.setColor(QtGui.QPalette.ColorRole.Highlight, accent)
-            palette.setColor(QtGui.QPalette.ColorRole.HighlightedText, QtGui.QColor("#ffffff"))
+            palette.setColor(QtGui.QPalette.ColorRole.ToolTipBase, QtGui.QColor("#E5E7EB"))
+            palette.setColor(QtGui.QPalette.ColorRole.ToolTipText, QtGui.QColor("#020617"))
+
         self.setPalette(palette)
 
-        # --- QSS -------------------------------------------------------------
-        stylesheet = self._load_win11_stylesheet(accent) or ""
-        common = """
-                #QueueCard {
-                    background: #ffffff;
-                    border-radius: 12px;
-                }
-                #LogContainer {
-                    background: #020617;
-                    border-radius: 10px;
-                }
-                #LogContainer QPlainTextEdit {
-                    background: transparent;
-                    border: none;
-                    color: #e5e7eb;
-                }
-                QLabel,QLineEdit,QComboBox,QPushButton,QCheckBox {
-                    padding-top: 4px; padding-bottom: 4px;
-                }
-                QGroupBox { margin-top: 12px; }
-                QGroupBox::title {
-                    subcontrol-origin: margin; left: 12px;
-                    padding: 4px 8px 4px 8px;
-                }
-                #QueueList {
-                    background: #ffffff;
-                    border: 1px solid #e5e7eb;
-                    border-radius: 8px;
-                }
-                #QueueList::item { padding: 6px 8px; }
-                #QueueList::item:hover { background: rgba(0,0,0,0.04); }
-                #QueueList::item:selected {
-                    background: rgba(37,99,235,0.16);
-                    color: #111827;
-                }
-                #EtaLabel { color: #6b7280; padding: 6px 10px; }
-            """
+        # Only use the Win11 .qss file as a base for light mode; in dark mode we fully override.
+        base_qss = ""
+        if not self._dark_mode:
+            base_qss = self._load_win11_stylesheet(accent) or ""
+
+        lighter = QtGui.QColor(accent)
+        lighter = lighter.lighter(115)
+        darker = QtGui.QColor(accent)
+        darker = darker.darker(115)
+
         if self._dark_mode:
-            extra = """
-                QWidget {
-                    background-color: #020617;
-                    color: #e5e7eb;
-                }
-                QGroupBox {
-                    margin-top: 12px;
-                    border-radius: 12px;
-                    border: 1px solid #1f2937;
-                }
-                QGroupBox::title {
-                    subcontrol-origin: margin;
-                    left: 12px;
-                    padding: 4px 8px 4px 8px;
-                }
-                #DropArea {
-                    border: none;
-                    background: #020617;
-                    border-radius: 12px;
-                }
-                #QueueList {
-                    background: #020617;
-                    border: 1px solid #1f2937;
-                    border-radius: 8px;
-                }
-                #QueueList::item { padding: 6px 8px; }
-                #QueueList::item:hover { background: rgba(255,255,255,0.06); }
-                #QueueList::item:selected {
-                    background: rgba(37,99,235,0.40);
-                    color: #e5e7eb;
-                }
-                QPlainTextEdit {
-                    background: #020617;
-                    border: 1px solid #1f2937;
-                    border-radius: 8px;
-                }
+            # --- Dark mode QSS: no bright borders, rely on elevation + slate cards ---
+            custom = f"""
+            #MainWindow {{
+                background-color: #0F172A;
+            }}
+
+            QLabel {{
+                color: #E5E7EB;
+            }}
+            QLabel#HeaderLabel {{
+                color: #F9FAFB;
+                font-size: 20px;
+                font-weight: 600;
+            }}
+            QLabel#EtaLabel {{
+                color: #94A3B8;
+                padding: 6px 10px;
+            }}
+
+            #QueueCard {{
+                background-color: #020617;
+                border-radius: 16px;
+                border: none;
+            }}
+
+            QPlainTextEdit, QTextEdit {{
+                background-color: #020617;
+                color: #E5E7EB;
+                border-radius: 12px;
+                border: 1px solid #020617; /* effectively borderless, keeps card shape */
+            }}
+
+            QGroupBox {{
+                background-color: #020617;
+                border-radius: 16px;
+                border: none;              /* no wireframe box */
+                margin-top: 16px;
+            }}
+            QGroupBox::title {{
+                subcontrol-origin: margin;
+                left: 16px;
+                padding: 4px 8px 4px 8px;
+                color: #E5E7EB;
+                font-weight: 500;
+            }}
+
+            QListWidget#QueueList {{
+                background-color: #020617;
+                border-radius: 10px;
+                border: none;              /* remove blue outline */
+            }}
+            QListWidget#QueueList::item {{
+                padding: 6px 8px;
+            }}
+            QListWidget#QueueList::item:hover {{
+                background-color: rgba(148, 163, 184, 0.18);
+            }}
+            QListWidget#QueueList::item:selected {{
+                background-color: rgba(59, 130, 246, 0.35);
+                color: #E5E7EB;
+            }}
+
+            QPushButton, QToolButton {{
+                background-color: {accent.name()};
+                color: #F9FAFB;
+                border-radius: 8px;
+                padding: 6px 14px;
+                border: none;              /* solid fill, no ghost buttons */
+            }}
+            QPushButton:disabled, QToolButton:disabled {{
+                background-color: #1E293B;
+                color: #64748B;
+            }}
+            QPushButton:hover, QToolButton:hover {{
+                background-color: {lighter.name()};
+            }}
+            QPushButton:pressed, QToolButton:pressed {{
+                background-color: {darker.name()};
+            }}
+
+            QLineEdit, QComboBox {{
+                background-color: #020617;
+                border-radius: 8px;
+                border: 1px solid #1E293B;
+                padding: 4px 8px;
+                color: #E5E7EB;
+                selection-background-color: {accent.name()};
+            }}
+
+            QScrollArea {{
+                background-color: #0F172A;
+                border: none;
+            }}
+
+            #GlobalDropOverlay {{
+                background: rgba(15, 23, 42, 0.80);
+            }}
             """
         else:
-            extra = """
-                #DropArea { border: none; background: #ffffff; border-radius: 12px; }
-                #QueueList {
-                    background: #ffffff;
-                    border: 1px solid #e5e7eb;
-                    border-radius: 8px;
-                }
-                #QueueList::item { padding: 6px 8px; }
-                #QueueList::item:hover { background: rgba(0,0,0,0.04); }
-                #QueueList::item:selected {
-                    background: rgba(37,99,235,0.16);
-                    color: #111827;
-                }
+            # --- Light mode QSS: subtle borders, same accent, solid buttons ---
+            custom = f"""
+            QLabel,QLineEdit,QComboBox,QPushButton,QCheckBox {{
+                padding-top: 4px;
+                padding-bottom: 4px;
+            }}
+
+            QGroupBox {{
+                margin-top: 12px;
+                background: #FFFFFF;
+                border-radius: 16px;
+                border: 1px solid #E2E8F0;
+            }}
+            QGroupBox::title {{
+                subcontrol-origin: margin;
+                left: 16px;
+                padding: 4px 8px 4px 8px;
+            }}
+
+            #QueueCard {{
+                background: #FFFFFF;
+                border-radius: 16px;
+                border: 1px solid #E2E8F0;
+            }}
+
+            #QueueList {{
+                background: #FFFFFF;
+                border: 1px solid #E2E8F0;
+                border-radius: 10px;
+            }}
+            #QueueList::item {{ padding: 6px 8px; }}
+            #QueueList::item:hover {{ background: rgba(0,0,0,0.03); }}
+            #QueueList::item:selected {{
+                background: rgba(59,130,246,0.14);
+                color: #111827;
+            }}
+
+            #EtaLabel {{
+                color: #64748B;
+                padding: 6px 10px;
+            }}
+
+            QPushButton, QToolButton {{
+                background-color: {accent.name()};
+                color: #FFFFFF;
+                border-radius: 8px;
+                padding: 6px 14px;
+                border: none;
+            }}
+            QPushButton:disabled, QToolButton:disabled {{
+                background-color: #E5E7EB;
+                color: #9CA3AF;
+            }}
+            QPushButton:hover, QToolButton:hover {{
+                background-color: {lighter.name()};
+            }}
+            QPushButton:pressed, QToolButton:pressed {{
+                background-color: {darker.name()};
+            }}
+
+            QPlainTextEdit {{
+                background-color: #FFFFFF;
+                border-radius: 10px;
+                border: 1px solid #E5E7EB;
+            }}
             """
 
-        self.setStyleSheet(stylesheet + common + extra)
+        self.setStyleSheet(base_qss + custom)
 
-    def _handle_theme_toggled(self, checked: bool) -> None:
-        """Slot for the Dark mode toggle button."""
+    def _update_theme_toggle_label(self) -> None:
+        """Update the toggle button text to reflect the current mode."""
+        if hasattr(self, "theme_toggle"):
+            self.theme_toggle.setText("Light mode" if self._dark_mode else "Dark mode")
+
+    def _on_theme_toggled(self, checked: bool) -> None:
+        """Switch between light and dark palettes."""
         self._dark_mode = bool(checked)
-        # Flip label so it always shows the *other* mode
-        self.theme_toggle.setText("Light mode" if self._dark_mode else "Dark mode")
+        self._update_theme_toggle_label()
         self._apply_styles()
 
     def _load_win11_stylesheet(self, accent: QtGui.QColor) -> Optional[str]:
@@ -1686,8 +1780,12 @@ class MainWindow(QtWidgets.QMainWindow):
         # Theme
         self._dark_mode = s.value("dark_mode", False, type=bool)
         if hasattr(self, "theme_toggle"):
-            self.theme_toggle.setChecked(self._dark_mode)
-            self.theme_toggle.setText("Light mode" if self._dark_mode else "Dark mode")
+            block = self.theme_toggle.blockSignals(True)
+            try:
+                self.theme_toggle.setChecked(self._dark_mode)
+            finally:
+                self.theme_toggle.blockSignals(block)
+        self._update_theme_toggle_label()
 
     def _save_persistent_options(self) -> None:
         """Persist current GUI options for the next run."""
@@ -1703,7 +1801,7 @@ class MainWindow(QtWidgets.QMainWindow):
         s.setValue("srt_language", str(self._basic_options.get("srt_language", "eng")))
         s.setValue("srt_default", bool(self._basic_options.get("srt_default", False)))
         s.setValue("srt_forced", bool(self._basic_options.get("srt_forced", False)))
-        s.setValue("dark_mode", bool(self._dark_mode))
+        s.setValue("dark_mode", bool(getattr(self, "_dark_mode", False)))
 
         s.sync()
 
