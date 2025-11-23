@@ -71,6 +71,30 @@ def add_shadow(widget: QtWidgets.QWidget) -> None:
     widget.setGraphicsEffect(effect)
 
 
+class QueueItemDelegate(QtWidgets.QStyledItemDelegate):
+    """
+    Custom delegate for the queue list that removes the inner focus rectangle.
+
+    This gets rid of the 'double box' effect where you see a second
+    thinner rectangle inside the selected row.
+    """
+
+    def paint(
+        self,
+        painter: QtGui.QPainter,
+        option: QtWidgets.QStyleOptionViewItem,
+        index: QtCore.QModelIndex,
+    ) -> None:  # type: ignore[override]
+        opt = QtWidgets.QStyleOptionViewItem(option)
+        self.initStyleOption(opt, index)
+
+        # Remove the focus state so the style doesn't draw a focus rect
+        opt.state &= ~QtWidgets.QStyle.StateFlag.State_HasFocus
+
+        style = opt.widget.style() if opt.widget else QtWidgets.QApplication.style()
+        style.drawControl(QtWidgets.QStyle.ControlElement.CE_ItemViewItem, opt, painter, opt.widget)
+
+
 def _normalize_paths(paths: Iterable[str]) -> List[Path]:
     unique: List[Path] = []
     seen = set()
@@ -1350,6 +1374,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.queue_list.setVerticalScrollMode(QtWidgets.QAbstractItemView.ScrollPerPixel)
         self.queue_list.setUniformItemSizes(True)
         self.queue_list.setMinimumHeight(160)
+
+        # 🔧 Remove inner focus border (fixes 'double boxing')
+        self.queue_list.setItemDelegate(QueueItemDelegate(self.queue_list))
+
         self.queue_stack.addWidget(self.queue_list)
 
         card_layout.addWidget(self.queue_stack)
@@ -1431,7 +1459,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         console_layout = QtWidgets.QHBoxLayout(console_trigger)
         console_layout.setContentsMargins(0, 0, 0, 0)
-        console_layout.setSpacing(8)
+        console_layout.setSpacing(4)
 
         # Icon button (acts as the actual toggle)
         self.log_toggle_button = QtWidgets.QToolButton(console_trigger)
@@ -1445,6 +1473,22 @@ class MainWindow(QtWidgets.QMainWindow):
         # icon-only; text lives in a separate label for cleaner alignment
         self.log_toggle_button.setText("")
         self.log_toggle_button.toggled.connect(self._toggle_log_panel)
+
+        # 🔧 Ensure the icon button itself never adds its own grey background
+        self.log_toggle_button.setStyleSheet(
+            """
+            QToolButton#LogToggle {
+                background-color: transparent;
+                border: none;
+                padding: 0px;
+            }
+            QToolButton#LogToggle:hover,
+            QToolButton#LogToggle:pressed,
+            QToolButton#LogToggle:checked {
+                background-color: transparent;
+            }
+            """
+        )
 
         # Keep the whole pill in sync with the toggle state for styling
         console_trigger.setProperty("checked", False)
