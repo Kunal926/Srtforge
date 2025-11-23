@@ -1446,6 +1446,17 @@ class MainWindow(QtWidgets.QMainWindow):
         self.log_toggle_button.setText("")
         self.log_toggle_button.toggled.connect(self._toggle_log_panel)
 
+        # Keep the whole pill in sync with the toggle state for styling
+        console_trigger.setProperty("checked", False)
+
+        def _sync_console_pill(checked: bool, w=console_trigger) -> None:
+            w.setProperty("checked", checked)
+            w.style().unpolish(w)
+            w.style().polish(w)
+            w.update()
+
+        self.log_toggle_button.toggled.connect(_sync_console_pill)
+
         # Text label >_ Console
         log_label = QtWidgets.QLabel(">_ Console", console_trigger)
         log_label.setObjectName("LogToggleLabel")
@@ -1658,13 +1669,20 @@ class MainWindow(QtWidgets.QMainWindow):
             }}
             QListWidget#QueueList::item {{
                 padding: 6px 8px;
+                border: none;
+                outline: none;
             }}
             QListWidget#QueueList::item:hover {{
                 background-color: rgba(148, 163, 184, 0.18);
             }}
-            QListWidget#QueueList::item:selected {{
+            QListWidget#QueueList::item:selected,
+            QListWidget#QueueList::item:selected:active,
+            QListWidget#QueueList::item:selected:!active,
+            QListWidget#QueueList::item:focus {{
                 background-color: rgba(59, 130, 246, 0.35);
                 color: #E5E7EB;
+                border: none;
+                outline: none;
             }}
 
             QPushButton, QToolButton {{
@@ -1732,13 +1750,17 @@ class MainWindow(QtWidgets.QMainWindow):
                 color: #94A3B8;
                 border-radius: 6px;
                 padding: 4px 8px;
+                border: none;
             }}
+            
+            /* No separate hover background on the button itself – the pill handles it */
             QToolButton#LogToggle:hover {{
-                background-color: rgba(148, 163, 184, 0.25);
-                color: #E5E7EB;
+                background-color: transparent;
             }}
+            
+            /* Checked state only changes the icon color; background stays on the pill */
             QToolButton#LogToggle:checked {{
-                background-color: rgba(15, 23, 42, 0.80);
+                background-color: transparent;
                 color: #F9FAFB;
             }}
 
@@ -1748,8 +1770,19 @@ class MainWindow(QtWidgets.QMainWindow):
             #FooterConsoleTrigger:hover {{
                 background-color: rgba(148, 163, 184, 0.16);
             }}
+
+            /* When the console is open, keep the pill visibly active */
+            #FooterConsoleTrigger[checked="true"] {{
+                background-color: rgba(15, 23, 42, 0.80);
+            }}
             QLabel#LogToggleLabel {{
                 color: #94A3B8;
+            }}
+            #FooterConsoleTrigger:hover QLabel#LogToggleLabel {{
+                color: #E5E7EB;
+            }}
+            #FooterConsoleTrigger[checked="true"] QLabel#LogToggleLabel {{
+                color: #F9FAFB;
             }}
 
             QLineEdit, QComboBox {{
@@ -1809,11 +1842,25 @@ class MainWindow(QtWidgets.QMainWindow):
                 border: 1px solid #E2E8F0;
                 border-radius: 10px;
             }}
-            #QueueList::item {{ padding: 6px 8px; }}
-            #QueueList::item:hover {{ background: rgba(0,0,0,0.03); }}
-            #QueueList::item:selected {{
+
+            #QueueList::item {{
+                padding: 6px 8px;
+                border: none;
+                outline: none;
+            }}
+
+            #QueueList::item:hover {{
+                background: rgba(0,0,0,0.03);
+            }}
+
+            #QueueList::item:selected,
+            #QueueList::item:selected:active,
+            #QueueList::item:selected:!active,
+            #QueueList::item:focus {{
                 background: rgba(59,130,246,0.14);
                 color: #111827;
+                border: none;
+                outline: none;
             }}
 
             #EtaLabel {{
@@ -1886,13 +1933,13 @@ class MainWindow(QtWidgets.QMainWindow):
                 color: #64748B;
                 border-radius: 6px;
                 padding: 4px 8px;
+                border: none;
             }}
             QToolButton#LogToggle:hover {{
-                background-color: rgba(148, 163, 184, 0.20);
-                color: #0F172A;
+                background-color: transparent;
             }}
             QToolButton#LogToggle:checked {{
-                background-color: rgba(59, 130, 246, 0.08);
+                background-color: transparent;
                 color: #1D4ED8;
             }}
 
@@ -1902,8 +1949,19 @@ class MainWindow(QtWidgets.QMainWindow):
             #FooterConsoleTrigger:hover {{
                 background-color: rgba(148, 163, 184, 0.12);
             }}
+            /* Active/open state when console is shown */
+            #FooterConsoleTrigger[checked="true"] {{
+                background-color: rgba(59, 130, 246, 0.08);
+            }}
+
             QLabel#LogToggleLabel {{
                 color: #64748B;
+            }}
+            #FooterConsoleTrigger:hover QLabel#LogToggleLabel {{
+                color: #0F172A;
+            }}
+            #FooterConsoleTrigger[checked="true"] QLabel#LogToggleLabel {{
+                color: #1D4ED8;
             }}
 
             QPlainTextEdit {{
