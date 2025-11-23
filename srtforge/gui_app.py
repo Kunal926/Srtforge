@@ -1458,8 +1458,9 @@ class MainWindow(QtWidgets.QMainWindow):
         console_trigger.setCursor(pointer_cursor)
 
         console_layout = QtWidgets.QHBoxLayout(console_trigger)
-        console_layout.setContentsMargins(0, 0, 0, 0)
-        console_layout.setSpacing(4)
+        # Give the pill its own padding instead of the icon button doing it
+        console_layout.setContentsMargins(6, 2, 10, 2)
+        console_layout.setSpacing(6)
 
         # Icon button (acts as the actual toggle)
         self.log_toggle_button = QtWidgets.QToolButton(console_trigger)
@@ -1470,6 +1471,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.log_toggle_button.setIcon(
             self.style().standardIcon(QtWidgets.QStyle.StandardPixmap.SP_ComputerIcon)
         )
+        # make it look like a flat icon inside the pill, not its own button box
+        self.log_toggle_button.setAutoRaise(True)
+        self.log_toggle_button.setFocusPolicy(QtCore.Qt.FocusPolicy.NoFocus)
+        self.log_toggle_button.setIconSize(QtCore.QSize(16, 16))
         # icon-only; text lives in a separate label for cleaner alignment
         self.log_toggle_button.setText("")
         self.log_toggle_button.toggled.connect(self._toggle_log_panel)
@@ -1789,27 +1794,23 @@ class MainWindow(QtWidgets.QMainWindow):
                 background-color: rgba(148, 163, 184, 0.32);
             }}
 
+            /* Console pill in status bar (dark mode) */
             QToolButton#LogToggle {{
                 background-color: transparent;
                 color: #94A3B8;
-                border-radius: 6px;
-                padding: 4px 8px;
                 border: none;
+                padding: 0;                 /* no internal button padding */
+                margin: 0 4px 0 0;          /* small gap before the label */
             }}
-            
-            /* No separate hover background on the button itself – the pill handles it */
-            QToolButton#LogToggle:hover {{
-                background-color: transparent;
-            }}
-            
-            /* Checked state only changes the icon color; background stays on the pill */
+            QToolButton#LogToggle:hover,
+            QToolButton#LogToggle:pressed,
             QToolButton#LogToggle:checked {{
-                background-color: transparent;
-                color: #F9FAFB;
+                background-color: transparent;   /* pill handles hover/active */
             }}
 
             #FooterConsoleTrigger {{
                 border-radius: 999px;
+                padding: 2px 10px;              /* pill height + horizontal breathing room */
             }}
             #FooterConsoleTrigger:hover {{
                 background-color: rgba(148, 163, 184, 0.16);
@@ -1819,6 +1820,7 @@ class MainWindow(QtWidgets.QMainWindow):
             #FooterConsoleTrigger[checked="true"] {{
                 background-color: rgba(15, 23, 42, 0.80);
             }}
+
             QLabel#LogToggleLabel {{
                 color: #94A3B8;
             }}
@@ -1972,23 +1974,23 @@ class MainWindow(QtWidgets.QMainWindow):
                 background-color: rgba(148, 163, 184, 0.30);
             }}
 
+            /* Console pill in status bar (light mode) */
             QToolButton#LogToggle {{
                 background-color: transparent;
                 color: #64748B;
-                border-radius: 6px;
-                padding: 4px 8px;
                 border: none;
+                padding: 0;                 /* let the pill own the padding */
+                margin: 0 4px 0 0;
             }}
-            QToolButton#LogToggle:hover {{
-                background-color: transparent;
-            }}
+            QToolButton#LogToggle:hover,
+            QToolButton#LogToggle:pressed,
             QToolButton#LogToggle:checked {{
-                background-color: transparent;
-                color: #1D4ED8;
+                background-color: transparent;   /* no extra box on hover */
             }}
 
             #FooterConsoleTrigger {{
                 border-radius: 999px;
+                padding: 2px 10px;
             }}
             #FooterConsoleTrigger:hover {{
                 background-color: rgba(148, 163, 184, 0.12);
