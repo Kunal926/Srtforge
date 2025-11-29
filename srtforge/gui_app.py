@@ -1135,28 +1135,40 @@ class OptionsDialog(QtWidgets.QDialog):
         header = QtWidgets.QFrame()
         header.setObjectName("EmbedHeader")
         header_layout = QtWidgets.QHBoxLayout(header)
-        header_layout.setContentsMargins(0, 0, 0, 0)
-        header_layout.setSpacing(6)
+        # Slight inner padding so the pill looks intentional
+        header_layout.setContentsMargins(4, 2, 4, 2)
+        header_layout.setSpacing(4)
 
         # Checkbox is the source of truth for soft-embed being enabled
         self.embed_checkbox = QtWidgets.QCheckBox("Embed subtitles (soft track)")
+        self.embed_checkbox.setObjectName("EmbedCheckbox")
         self.embed_checkbox.setChecked(bool(initial_basic.get("embed_subtitles", False)))
 
         # Chevron is a visual indicator + extra click target; it does not
         # have independent state, it simply mirrors the checkbox.
         self.embed_chevron = QtWidgets.QToolButton()
+        self.embed_chevron.setObjectName("EmbedChevron")
         self.embed_chevron.setToolButtonStyle(QtCore.Qt.ToolButtonIconOnly)
         self.embed_chevron.setAutoRaise(True)
         self.embed_chevron.setArrowType(QtCore.Qt.RightArrow)
         self.embed_chevron.setCursor(QtGui.QCursor(QtCore.Qt.PointingHandCursor))
+        self.embed_chevron.setFocusPolicy(QtCore.Qt.FocusPolicy.NoFocus)
 
+        # Put chevron right after the text, then push everything left
         header_layout.addWidget(self.embed_checkbox)
-        header_layout.addStretch()
         header_layout.addWidget(self.embed_chevron)
+        header_layout.addStretch()
 
         grid.addWidget(header, row, 0, 1, 2)
         self.embed_header = header
         row += 1
+
+        def _toggle_embed_from_header(event: QtGui.QMouseEvent) -> None:
+            if event.button() == QtCore.Qt.LeftButton:
+                self.embed_checkbox.toggle()
+            event.accept()
+
+        header.mousePressEvent = _toggle_embed_from_header  # type: ignore[assignment]
 
         self.embed_panel = QtWidgets.QWidget()
         ep_grid = QtWidgets.QGridLayout(self.embed_panel)
@@ -1869,10 +1881,27 @@ class MainWindow(QtWidgets.QMainWindow):
 
             #EmbedHeader {{
                 border-radius: 8px;
-                padding: 4px 8px;
+                padding: 2px 8px;
             }}
             #EmbedHeader[checked="true"] {{
                 background-color: rgba(30, 64, 175, 0.75); /* dark blue-ish box */
+            }}
+
+            /* Header contents: keep them flat on the pill */
+            QCheckBox#EmbedCheckbox {{
+                background-color: transparent;
+                border: none;
+            }}
+            QToolButton#EmbedChevron {{
+                background-color: transparent;
+                border: none;
+                padding: 0;
+                margin-left: 4px;
+                min-width: 20px;
+                max-width: 20px;
+            }}
+            #EmbedHeader[checked="true"] QCheckBox#EmbedCheckbox {{
+                font-weight: 500;
             }}
 
             QListWidget#QueueList {{
@@ -2043,10 +2072,27 @@ class MainWindow(QtWidgets.QMainWindow):
 
             #EmbedHeader {{
                 border-radius: 8px;
-                padding: 4px 8px;
+                padding: 2px 8px;
             }}
             #EmbedHeader[checked="true"] {{
                 background-color: rgba(59, 130, 246, 0.08);  /* soft blue pill */
+            }}
+
+            /* Header contents: no extra boxes, just text + arrow */
+            QCheckBox#EmbedCheckbox {{
+                background-color: transparent;
+                border: none;
+            }}
+            QToolButton#EmbedChevron {{
+                background-color: transparent;
+                border: none;
+                padding: 0;
+                margin-left: 4px;
+                min-width: 20px;
+                max-width: 20px;
+            }}
+            #EmbedHeader[checked="true"] QCheckBox#EmbedCheckbox {{
+                font-weight: 500;
             }}
 
             #QueueCard {{
