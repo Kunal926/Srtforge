@@ -1892,6 +1892,19 @@ class MainWindow(QtWidgets.QMainWindow):
                 background-color: transparent;
                 border: none;
             }}
+            /* Always show a real checkbox box so it looks toggle-able */
+            QCheckBox#EmbedCheckbox::indicator {{
+                width: 16px;
+                height: 16px;
+                border-radius: 3px;
+                border: 1px solid #1F2937;
+                background: #020617;
+                margin-right: 6px;
+            }}
+            QCheckBox#EmbedCheckbox::indicator:checked {{
+                background: {accent.name()};
+                border-color: {accent.name()};
+            }}
             QToolButton#EmbedChevron {{
                 background-color: transparent;
                 border: none;
@@ -2078,10 +2091,22 @@ class MainWindow(QtWidgets.QMainWindow):
                 background-color: rgba(59, 130, 246, 0.08);  /* soft blue pill */
             }}
 
-            /* Header contents: no extra boxes, just text + arrow */
+            /* Header contents: keep a visible checkbox so it's clearly clickable */
             QCheckBox#EmbedCheckbox {{
                 background-color: transparent;
                 border: none;
+            }}
+            QCheckBox#EmbedCheckbox::indicator {{
+                width: 16px;
+                height: 16px;
+                border-radius: 3px;
+                border: 1px solid #CBD5E1;
+                background: #FFFFFF;
+                margin-right: 6px;
+            }}
+            QCheckBox#EmbedCheckbox::indicator:checked {{
+                background: {accent.name()};
+                border-color: {accent.name()};
             }}
             QToolButton#EmbedChevron {{
                 background-color: transparent;
