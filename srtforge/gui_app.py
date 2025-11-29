@@ -58,6 +58,8 @@ class WorkerOptions:
     srt_language: str
     srt_default: bool
     srt_forced: bool
+    # NEW: overwrite source container instead of creating *_subbed.*
+    soft_embed_overwrite_source: bool = False
     # NEW: override global output_dir and put the .srt next to the media file
     place_srt_next_to_media: bool = False
     config_path: Optional[str] = None
@@ -639,17 +641,33 @@ class TranscriptionWorker(QtCore.QThread):
         raise RuntimeError(message)
 
     def _embed_subtitles_ffmpeg(self, media: Path, subtitles: Path) -> Path:
-        output = media.with_name(f"{media.stem}_subbed{media.suffix}")
+        overwrite_source = bool(getattr(self.options, "soft_embed_overwrite_source", False))
+
+        if overwrite_source:
+            # Write to a temporary file in the same directory, then atomically
+            # replace the original container once the command succeeds.
+            fd, tmp_path_str = tempfile.mkstemp(
+                prefix=f"{media.stem}_srtforge_embed_",
+                suffix=media.suffix,
+                dir=str(media.parent),
+            )
+            os.close(fd)
+            output = Path(tmp_path_str)
+        else:
+            output = media.with_name(f"{media.stem}_subbed{media.suffix}")
+
         codec = "mov_text" if media.suffix.lower() in {".mp4", ".m4v", ".mov"} else "subrip"
         subtitle_index = self._count_subtitle_streams(media)
         title = self.options.srt_title or "Srtforge (English)"
         language = self.options.srt_language or "eng"
+
         disposition_flags: list[str] = []
         if self.options.srt_default:
             disposition_flags.append("default")
         if self.options.srt_forced:
             disposition_flags.append("forced")
         disposition_value = "+".join(disposition_flags) if disposition_flags else "0"
+
         command = [
             self.options.ffmpeg_bin or "ffmpeg",
             "-y",
@@ -677,13 +695,49 @@ class TranscriptionWorker(QtCore.QThread):
             f"language={language}",
             str(output),
         ]
-        self._run_command(command, "Embed subtitles (ffmpeg)")
+
+        try:
+            self._run_command(command, "Embed subtitles (ffmpeg)")
+        except Exception:
+            if overwrite_source and output.exists():
+                try:
+                    output.unlink()
+                except OSError:
+                    pass
+            raise
+
+        if overwrite_source:
+            try:
+                os.replace(output, media)
+            except OSError as exc:
+                if output.exists():
+                    try:
+                        output.unlink()
+                    except OSError:
+                        pass
+                raise RuntimeError(
+                    f"Failed to overwrite original media file with embedded version: {exc}"
+                ) from exc
+            return media
+
         return output
 
     def _embed_subtitles_mkvmerge(self, media: Path, subtitles: Path) -> Path:
         if media.suffix.lower() not in {".mkv", ".webm"}:
             return self._embed_subtitles_ffmpeg(media, subtitles)
-        output = media.with_name(f"{media.stem}_subbed{media.suffix}")
+
+        overwrite_source = bool(getattr(self.options, "soft_embed_overwrite_source", False))
+
+        if overwrite_source:
+            fd, tmp_path_str = tempfile.mkstemp(
+                prefix=f"{media.stem}_srtforge_embed_",
+                suffix=media.suffix,
+                dir=str(media.parent),
+            )
+            os.close(fd)
+            output = Path(tmp_path_str)
+        else:
+            output = media.with_name(f"{media.stem}_subbed{media.suffix}")
         mkvmerge = self.options.mkvmerge_bin or _find_mkvmerge()
         if not mkvmerge:
             raise RuntimeError("MKVToolNix (mkvmerge) not found. Install it or set SRTFORGE_MKV_DIR.")
@@ -706,7 +760,30 @@ class TranscriptionWorker(QtCore.QThread):
             f"0:{forced_flag}",
             str(subtitles),
         ]
-        self._run_command(command, "Embed subtitles (mkvmerge)")
+        try:
+            self._run_command(command, "Embed subtitles (mkvmerge)")
+        except Exception:
+            if overwrite_source and output.exists():
+                try:
+                    output.unlink()
+                except OSError:
+                    pass
+            raise
+
+        if overwrite_source:
+            try:
+                os.replace(output, media)
+            except OSError as exc:
+                if output.exists():
+                    try:
+                        output.unlink()
+                    except OSError:
+                        pass
+                raise RuntimeError(
+                    f"Failed to overwrite original media file with embedded version: {exc}"
+                ) from exc
+            return media
+
         return output
 
     def _count_subtitle_streams(self, media: Path) -> int:
@@ -1088,6 +1165,19 @@ class OptionsDialog(QtWidgets.QDialog):
         self.forced_cb.setChecked(bool(initial_basic.get("srt_forced", False)))
         ep_grid.addWidget(self.default_cb, 3, 0)
         ep_grid.addWidget(self.forced_cb, 3, 1)
+
+        # NEW: option to overwrite the source container
+        self.embed_overwrite_cb = QtWidgets.QCheckBox("Replace original video file")
+        self.embed_overwrite_cb.setToolTip(
+            "Write the soft-embedded subtitle track back into the source container, "
+            "overwriting the original video file in-place. The path and filename are "
+            "preserved. A temporary file and atomic replace are used so failures do "
+            "not corrupt the original."
+        )
+        self.embed_overwrite_cb.setChecked(
+            bool(initial_basic.get("soft_embed_overwrite_source", False))
+        )
+        ep_grid.addWidget(self.embed_overwrite_cb, 4, 0, 1, 2)
         grid.addWidget(self.embed_panel, row, 0, 1, 2)
         # remember the “normal” max height so we can restore it later
         self._embed_panel_max = self.embed_panel.maximumHeight()
@@ -1216,6 +1306,7 @@ class OptionsDialog(QtWidgets.QDialog):
             "burn_subtitles": self.burn_cb.isChecked(),
             "cleanup_gpu": self.cleanup_cb.isChecked(),
             "soft_embed_method": str(self.embed_method.currentData()),
+            "soft_embed_overwrite_source": self.embed_overwrite_cb.isChecked(),  # NEW
             "srt_title": self.title_edit.text().strip() or "Srtforge (English)",
             "srt_language": self.lang_edit.text().strip() or "eng",
             "srt_default": self.default_cb.isChecked(),
@@ -1274,6 +1365,7 @@ class MainWindow(QtWidgets.QMainWindow):
             "burn_subtitles": False,
             "cleanup_gpu": False,
             "soft_embed_method": "auto",
+            "soft_embed_overwrite_source": False,  # NEW
             "srt_title": "Srtforge (English)",
             "srt_language": "eng",
             "srt_default": False,
@@ -2093,6 +2185,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self._basic_options["burn_subtitles"] = s.value("burn_subtitles", False, type=bool)
         self._basic_options["cleanup_gpu"] = s.value("cleanup_gpu", False, type=bool)
         self._basic_options["soft_embed_method"] = s.value("soft_embed_method", "auto", type=str)
+        self._basic_options["soft_embed_overwrite_source"] = s.value(
+            "soft_embed_overwrite_source", False, type=bool
+        )
         self._basic_options["srt_title"] = s.value("srt_title", "Srtforge (English)", type=str)
         self._basic_options["srt_language"] = s.value("srt_language", "eng", type=str)
         self._basic_options["srt_default"] = s.value("srt_default", False, type=bool)
@@ -2120,6 +2215,10 @@ class MainWindow(QtWidgets.QMainWindow):
         s.setValue("cleanup_gpu", bool(self._basic_options.get("cleanup_gpu", False)))
 
         s.setValue("soft_embed_method", str(self._basic_options.get("soft_embed_method", "auto")))
+        s.setValue(
+            "soft_embed_overwrite_source",
+            bool(self._basic_options.get("soft_embed_overwrite_source", False)),
+        )
         s.setValue("srt_title", str(self._basic_options.get("srt_title", "Srtforge (English)")))
         s.setValue("srt_language", str(self._basic_options.get("srt_language", "eng")))
         s.setValue("srt_default", bool(self._basic_options.get("srt_default", False)))
@@ -2281,6 +2380,9 @@ class MainWindow(QtWidgets.QMainWindow):
             srt_language=basic.get("srt_language", "eng"),
             srt_default=bool(basic.get("srt_default", False)),
             srt_forced=bool(basic.get("srt_forced", False)),
+            soft_embed_overwrite_source=bool(
+                basic.get("soft_embed_overwrite_source", False)
+            ),
             # NEW
             place_srt_next_to_media=bool(basic.get("srt_next_to_media", False)),
             config_path=self._runtime_config_path,
