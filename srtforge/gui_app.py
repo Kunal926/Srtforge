@@ -58,6 +58,8 @@ class WorkerOptions:
     srt_language: str
     srt_default: bool
     srt_forced: bool
+    # NEW: override global output_dir and put the .srt next to the media file
+    place_srt_next_to_media: bool = False
     config_path: Optional[str] = None
 
 
@@ -450,6 +452,12 @@ class TranscriptionWorker(QtCore.QThread):
         else:
             # -u => unbuffered stdout/stderr so the GUI can read lines as they appear (Python docs)
             command = [sys.executable, "-u", "-m", "srtforge", "run", str(media)]
+
+        # NEW: force the SRT to live next to the media file, matching the Lua script
+        if getattr(self.options, "place_srt_next_to_media", False):
+            output_path = media.with_suffix(DEFAULT_OUTPUT_SUFFIX)
+            command.extend(["--output", str(output_path)])
+
         if not self.options.prefer_gpu:
             command.append("--cpu")
         env = os.environ.copy()
@@ -613,8 +621,12 @@ class TranscriptionWorker(QtCore.QThread):
                     candidate = Path(m.group("path")).expanduser()
                     if candidate.exists():
                         return candidate
-            # Fallback to expected path derived from settings
-            output_path = _expected_srt_path(media)
+            # NEW: Fallback – either use media location or the configured output_dir
+            if getattr(self.options, "place_srt_next_to_media", False):
+                output_path = media.with_suffix(DEFAULT_OUTPUT_SUFFIX)
+            else:
+                # Existing behavior: derive from settings.paths.output_dir
+                output_path = _expected_srt_path(media)
             if output_path.exists():
                 return output_path
             raise RuntimeError("SRT output missing")
@@ -1088,6 +1100,16 @@ class OptionsDialog(QtWidgets.QDialog):
         self._update_embed_panel(initial_embed)
         self.embed_toggle.toggled.connect(self._update_embed_panel)
 
+        # NEW: explicit control over where the .srt ends up for GUI runs
+        self.external_srt_cb = QtWidgets.QCheckBox("Save .srt next to video file")
+        self.external_srt_cb.setToolTip(
+            "Ignore the global 'Output directory' for GUI jobs and write the subtitle beside "
+            "the media as 'filename.srt' so Jellyfin / Jellyfin MPV Shim can auto-detect it."
+        )
+        self.external_srt_cb.setChecked(bool(initial_basic.get("srt_next_to_media", False)))
+        grid.addWidget(self.external_srt_cb, row, 0, 1, 2)
+        row += 1
+
         self.burn_cb = QtWidgets.QCheckBox("Burn subtitles (hard sub)")
         self.burn_cb.setChecked(bool(initial_basic.get("burn_subtitles", False)))
         grid.addWidget(self.burn_cb, row, 0, 1, 2)
@@ -1198,6 +1220,8 @@ class OptionsDialog(QtWidgets.QDialog):
             "srt_language": self.lang_edit.text().strip() or "eng",
             "srt_default": self.default_cb.isChecked(),
             "srt_forced": self.forced_cb.isChecked(),
+            # NEW
+            "srt_next_to_media": self.external_srt_cb.isChecked(),
         }
 
     def settings_payload(self, *, prefer_gpu: Optional[bool] = None) -> dict:
@@ -1254,6 +1278,8 @@ class MainWindow(QtWidgets.QMainWindow):
             "srt_language": "eng",
             "srt_default": False,
             "srt_forced": False,
+            # NEW
+            "srt_next_to_media": False,
         }
         self.ffmpeg_paths = locate_ffmpeg_binaries()
         self.mkv_paths = locate_mkvmerge_binary()
@@ -2071,6 +2097,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self._basic_options["srt_language"] = s.value("srt_language", "eng", type=str)
         self._basic_options["srt_default"] = s.value("srt_default", False, type=bool)
         self._basic_options["srt_forced"] = s.value("srt_forced", False, type=bool)
+        # NEW
+        self._basic_options["srt_next_to_media"] = s.value("srt_next_to_media", False, type=bool)
 
         # Theme
         self._dark_mode = s.value("dark_mode", False, type=bool)
@@ -2096,6 +2124,8 @@ class MainWindow(QtWidgets.QMainWindow):
         s.setValue("srt_language", str(self._basic_options.get("srt_language", "eng")))
         s.setValue("srt_default", bool(self._basic_options.get("srt_default", False)))
         s.setValue("srt_forced", bool(self._basic_options.get("srt_forced", False)))
+        # NEW
+        s.setValue("srt_next_to_media", bool(self._basic_options.get("srt_next_to_media", False)))
         s.setValue("dark_mode", bool(getattr(self, "_dark_mode", False)))
 
         s.sync()
@@ -2251,6 +2281,8 @@ class MainWindow(QtWidgets.QMainWindow):
             srt_language=basic.get("srt_language", "eng"),
             srt_default=bool(basic.get("srt_default", False)),
             srt_forced=bool(basic.get("srt_forced", False)),
+            # NEW
+            place_srt_next_to_media=bool(basic.get("srt_next_to_media", False)),
             config_path=self._runtime_config_path,
         )
         self._last_worker_options = options
