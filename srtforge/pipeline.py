@@ -199,6 +199,25 @@ class Pipeline:
                             prefer_gpu=self.config.prefer_gpu,
                             run_logger=run_logger,
                         )
+
+                        # If the SRT is being written next to the media file, avoid
+                        # leaving diagnostic sidecars in the media directory. Move
+                        # them into the per-run temporary directory so they can be
+                        # cleaned up automatically.
+                        if output_path.parent == media_path.parent:
+                            try:
+                                diag_dir = tmp / "diagnostics"
+                                diag_dir.mkdir(exist_ok=True)
+                                for suffix in (".diag.csv", ".diag.json"):
+                                    diag_src = output_path.with_suffix(output_path.suffix + suffix)
+                                    if diag_src.exists():
+                                        diag_dst = diag_dir / diag_src.name
+                                        shutil.move(str(diag_src), str(diag_dst))
+                            except Exception:
+                                # Diagnostics are best-effort; never fail the run if
+                                # moving them fails for any reason (permissions,
+                                # cross-device moves, etc.).
+                                pass
                 finally:
                     # Time deletion of the per-run temp directory
                     with run_logger.step("Cleanup run temporary directory"):
