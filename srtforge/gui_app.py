@@ -1867,13 +1867,13 @@ class MainWindow(QtWidgets.QMainWindow):
                 font-weight: 500;
             }}
 
-            #EmbedHeader {
+            #EmbedHeader {{
                 border-radius: 8px;
                 padding: 4px 8px;
-            }
-            #EmbedHeader[checked="true"] {
+            }}
+            #EmbedHeader[checked="true"] {{
                 background-color: rgba(30, 64, 175, 0.75); /* dark blue-ish box */
-            }
+            }}
 
             QListWidget#QueueList {{
                 background-color: #020617;
@@ -2041,13 +2041,13 @@ class MainWindow(QtWidgets.QMainWindow):
                 padding: 4px 8px 4px 8px;
             }}
 
-            #EmbedHeader {
+            #EmbedHeader {{
                 border-radius: 8px;
                 padding: 4px 8px;
-            }
-            #EmbedHeader[checked="true"] {
+            }}
+            #EmbedHeader[checked="true"] {{
                 background-color: rgba(59, 130, 246, 0.08);  /* soft blue pill */
-            }
+            }}
 
             #QueueCard {{
                 background: #FFFFFF;
