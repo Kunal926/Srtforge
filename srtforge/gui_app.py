@@ -1131,13 +1131,31 @@ class OptionsDialog(QtWidgets.QDialog):
         grid.addWidget(self.device_combo, row, 1)
         row += 1
 
-        # Collapsible "Embed subtitles" section
-        self.embed_toggle = QtWidgets.QToolButton()
-        self.embed_toggle.setText("Embed subtitles (soft track)")
-        self.embed_toggle.setCheckable(True)
-        self.embed_toggle.setChecked(bool(initial_basic.get("embed_subtitles", False)))
-        self.embed_toggle.setToolButtonStyle(QtCore.Qt.ToolButtonTextBesideIcon)
-        grid.addWidget(self.embed_toggle, row, 0, 1, 2)
+        # Collapsible "Embed subtitles" section (checkbox + chevron header)
+        header = QtWidgets.QFrame()
+        header.setObjectName("EmbedHeader")
+        header_layout = QtWidgets.QHBoxLayout(header)
+        header_layout.setContentsMargins(0, 0, 0, 0)
+        header_layout.setSpacing(6)
+
+        # Checkbox is the source of truth for soft-embed being enabled
+        self.embed_checkbox = QtWidgets.QCheckBox("Embed subtitles (soft track)")
+        self.embed_checkbox.setChecked(bool(initial_basic.get("embed_subtitles", False)))
+
+        # Chevron is a visual indicator + extra click target; it does not
+        # have independent state, it simply mirrors the checkbox.
+        self.embed_chevron = QtWidgets.QToolButton()
+        self.embed_chevron.setToolButtonStyle(QtCore.Qt.ToolButtonIconOnly)
+        self.embed_chevron.setAutoRaise(True)
+        self.embed_chevron.setArrowType(QtCore.Qt.RightArrow)
+        self.embed_chevron.setCursor(QtGui.QCursor(QtCore.Qt.PointingHandCursor))
+
+        header_layout.addWidget(self.embed_checkbox)
+        header_layout.addStretch()
+        header_layout.addWidget(self.embed_chevron)
+
+        grid.addWidget(header, row, 0, 1, 2)
+        self.embed_header = header
         row += 1
 
         self.embed_panel = QtWidgets.QWidget()
@@ -1186,9 +1204,14 @@ class OptionsDialog(QtWidgets.QDialog):
         # Make sure the collapsible section really collapses and doesn’t leave
         # a big empty row in the grid when hidden.
         initial_embed = bool(initial_basic.get("embed_subtitles", False))
-        self.embed_toggle.setChecked(initial_embed)
+        self.embed_checkbox.setChecked(initial_embed)
         self._update_embed_panel(initial_embed)
-        self.embed_toggle.toggled.connect(self._update_embed_panel)
+
+        # Checkbox drives the on/off state; panel expands/collapses automatically.
+        self.embed_checkbox.toggled.connect(self._on_embed_checkbox_toggled)
+
+        # Chevron is just an alias click target for the same toggle.
+        self.embed_chevron.clicked.connect(self.embed_checkbox.toggle)
 
         # NEW: explicit control over where the .srt ends up for GUI runs
         self.external_srt_cb = QtWidgets.QCheckBox("Save .srt next to video file")
@@ -1284,15 +1307,30 @@ class OptionsDialog(QtWidgets.QDialog):
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
 
+    def _on_embed_checkbox_toggled(self, checked: bool) -> None:
+        """Entry point from the header checkbox; keeps panel + chevron in sync."""
+        self._update_embed_panel(checked)
+
     def _update_embed_panel(self, checked: bool) -> None:
         # 0 height when collapsed, natural height when expanded
         max_h = getattr(self, "_embed_panel_max", self.embed_panel.maximumHeight())
         self.embed_panel.setVisible(checked)
         self.embed_panel.setMaximumHeight(max_h if checked else 0)
         self.embed_panel.updateGeometry()
-        self.embed_toggle.setArrowType(
-            QtCore.Qt.DownArrow if checked else QtCore.Qt.RightArrow
-        )
+
+        # Update chevron direction to reflect expand/collapse
+        if hasattr(self, "embed_chevron"):
+            self.embed_chevron.setArrowType(
+                QtCore.Qt.DownArrow if checked else QtCore.Qt.RightArrow
+            )
+
+        # Tint the header row when enabled so “dark box means on”
+        header = getattr(self, "embed_header", None)
+        if header is not None:
+            header.setProperty("checked", checked)
+            header.style().unpolish(header)
+            header.style().polish(header)
+            header.update()
 
     def _pick_dir(self, edit: QtWidgets.QLineEdit) -> None:
         path = QtWidgets.QFileDialog.getExistingDirectory(self, "Select folder", edit.text().strip() or "")
@@ -1302,7 +1340,7 @@ class OptionsDialog(QtWidgets.QDialog):
     def basic_values(self) -> dict:
         return {
             "prefer_gpu": bool(self.device_combo.currentData()),
-            "embed_subtitles": self.embed_toggle.isChecked(),
+            "embed_subtitles": self.embed_checkbox.isChecked(),
             "burn_subtitles": self.burn_cb.isChecked(),
             "cleanup_gpu": self.cleanup_cb.isChecked(),
             "soft_embed_method": str(self.embed_method.currentData()),
@@ -1829,6 +1867,14 @@ class MainWindow(QtWidgets.QMainWindow):
                 font-weight: 500;
             }}
 
+            #EmbedHeader {
+                border-radius: 8px;
+                padding: 4px 8px;
+            }
+            #EmbedHeader[checked="true"] {
+                background-color: rgba(30, 64, 175, 0.75); /* dark blue-ish box */
+            }
+
             QListWidget#QueueList {{
                 background-color: #020617;
                 border-radius: 10px;
@@ -1994,6 +2040,14 @@ class MainWindow(QtWidgets.QMainWindow):
                 left: 16px;
                 padding: 4px 8px 4px 8px;
             }}
+
+            #EmbedHeader {
+                border-radius: 8px;
+                padding: 4px 8px;
+            }
+            #EmbedHeader[checked="true"] {
+                background-color: rgba(59, 130, 246, 0.08);  /* soft blue pill */
+            }
 
             #QueueCard {{
                 background: #FFFFFF;
