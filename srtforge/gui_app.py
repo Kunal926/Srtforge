@@ -1400,6 +1400,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.resize(1200, 720)
         self.setMinimumSize(960, 640)
         self.setObjectName("MainWindow")
+
+        icon = _load_app_icon()
+        if not icon.isNull():
+            self.setWindowIcon(icon)
         self.setAcceptDrops(True)
         self._worker: Optional[TranscriptionWorker] = None
         self._log_tailer: Optional[LogTailer] = None
@@ -2680,6 +2684,28 @@ class MainWindow(QtWidgets.QMainWindow):
         self._eta_memory.update(prefer_gpu, duration_s, runtime_s)
 
 
+def _load_app_icon() -> QtGui.QIcon:
+    """Return the application logo as a QIcon, or an empty icon on failure."""
+    candidates: list[Path] = []
+
+    # 1) Packaged resource (installed via setuptools)
+    try:
+        res = resources.files("srtforge.assets.images").joinpath("srtforge_logo.png")
+        candidates.append(Path(str(res)))
+    except Exception:
+        pass
+
+    # 2) Fallbacks for dev checkouts (run-from-source)
+    here = Path(__file__).resolve().parent
+    candidates.append(here / "assets" / "images" / "srtforge_logo.png")
+    candidates.append(here / "srtforge_logo.png")
+
+    for path in candidates:
+        if path.exists():
+            return QtGui.QIcon(str(path))
+    return QtGui.QIcon()
+
+
 def main() -> None:
     """Entry point used by ``srtforge-gui``."""
 
@@ -2693,6 +2719,10 @@ def main() -> None:
         pass
     app = QtWidgets.QApplication(sys.argv)
     app.setStyle("Fusion")
+    icon = _load_app_icon()
+    if not icon.isNull():
+        app.setWindowIcon(icon)
+
     window = MainWindow()
     window.show()
     sys.exit(app.exec())
