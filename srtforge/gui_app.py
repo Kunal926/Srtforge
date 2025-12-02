@@ -1483,7 +1483,7 @@ class MainWindow(QtWidgets.QMainWindow):
         icon = getattr(self, "_app_icon", _load_app_icon())
         if icon and not icon.isNull():
             # Bigger logo so it reads clearly
-            logo_pix = icon.pixmap(36, 36)
+            logo_pix = icon.pixmap(48, 48)
             logo_label.setPixmap(logo_pix)
             logo_label.setFixedSize(logo_pix.size())
         brand_row.addWidget(logo_label)
