@@ -2085,6 +2085,21 @@ class MainWindow(QtWidgets.QMainWindow):
                 padding-bottom: 4px;
             }}
 
+            /* Ensure all text inputs in light mode are dark-on-light and readable */
+            QLineEdit, QComboBox, QTextEdit, QPlainTextEdit {{
+                color: #0F172A;
+                selection-background-color: {accent.name()};
+                selection-color: #FFFFFF;
+            }}
+
+            /* Make inputs look like light-mode fields instead of dark-theme leftovers */
+            QLineEdit, QComboBox {{
+                background-color: #FFFFFF;
+                border-radius: 8px;
+                border: 1px solid #CBD5E1;
+                padding: 4px 8px;
+            }}
+
             QGroupBox {{
                 margin-top: 12px;
                 background: #FFFFFF;
@@ -2267,18 +2282,21 @@ class MainWindow(QtWidgets.QMainWindow):
                 color: #1D4ED8;
             }}
 
-            QPlainTextEdit {{
-                background-color: #FFFFFF;
-                border-radius: 10px;
-                border: 1px solid #E5E7EB;
-            }}
-
             QLabel#DropIcon {{
                 font-size: 56px;
                 color: rgba(148, 163, 184, 0.5);
             }}
             QLabel#DropHint {{
                 color: #94A3B8;
+            }}
+
+            QPlainTextEdit {{
+                background-color: #FFFFFF;
+                border-radius: 10px;
+                border: 1px solid #E5E7EB;
+                color: #0F172A;
+                selection-background-color: {accent.name()};
+                selection-color: #FFFFFF;
             }}
             """
 
@@ -2413,7 +2431,8 @@ class MainWindow(QtWidgets.QMainWindow):
         for path in _normalize_paths(files):
             if path in existing:
                 continue
-            item = QtWidgets.QListWidgetItem(path.name)
+            display_name = _elide_filename(path.name, max_chars=60)
+            item = QtWidgets.QListWidgetItem(display_name)
             item.setData(QtCore.Qt.ItemDataRole.UserRole, str(path))
             self.queue_list.addItem(item)
             existing.add(path)
@@ -2492,7 +2511,8 @@ class MainWindow(QtWidgets.QMainWindow):
             if not raw:
                 continue
             if Path(str(raw)) == path:
-                item.setText(f"{path.name} — {status}")
+                short = _elide_filename(path.name, max_chars=60)
+                item.setText(f"{short} — {status}")
                 break
 
     # (embed panel handling removed — lives in OptionsDialog now)
@@ -2568,7 +2588,8 @@ class MainWindow(QtWidgets.QMainWindow):
         if estimate > 0:
             self._set_eta(estimate)
         else:
-            self.eta_label.setText(f"Processing {Path(path).name}")
+            short = _elide_filename(Path(path).name, max_chars=40)
+            self.eta_label.setText(f"Processing {short}")
             if hasattr(self, "progress_bar"):
                 self.progress_bar.setVisible(False)
 
@@ -2677,7 +2698,10 @@ class MainWindow(QtWidgets.QMainWindow):
         percent = int(progress * 100)
 
         minutes, secs = divmod(int(round(remaining)), 60)
-        basename = Path(self._eta_media).name if self._eta_media else "current file"
+        if self._eta_media:
+            basename = _elide_filename(Path(self._eta_media).name, max_chars=40)
+        else:
+            basename = "current file"
 
         if hasattr(self, "eta_label"):
             self.eta_label.setText(
@@ -2736,6 +2760,33 @@ def main() -> None:
     window = MainWindow()
     window.show()
     sys.exit(app.exec())
+
+
+def _elide_filename(name: str, max_chars: int = 60) -> str:
+    """Return ``name`` truncated with an ellipsis if it exceeds ``max_chars``.
+
+    Keeps the extension visible when possible, e.g.
+    'really_long_file_name...mkv'.
+    """
+
+    if max_chars <= 0:
+        return ""
+    if len(name) <= max_chars:
+        return name
+    if max_chars <= 3:
+        return "..."[:max_chars]
+
+    base, dot, ext = name.rpartition(".")
+    if not dot:
+        return name[: max_chars - 3] + "..."
+
+    ext_block = dot + ext  # ".mkv"
+    if len(ext_block) + 3 >= max_chars:
+        # extension is too long to be clever; just hard-truncate
+        return name[: max_chars - 3] + "..."
+
+    keep = max_chars - len(ext_block) - 3
+    return base[:keep] + "..." + ext_block
 
 def _probe_media_duration_ffprobe_cmd(ffprobe_bin: Optional[Path], media: Path) -> float:
     exe = str(ffprobe_bin or "ffprobe")
