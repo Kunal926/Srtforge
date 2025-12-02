@@ -1459,7 +1459,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # --- Header: logo + title centered, controls on the right --------------
         header_layout = QtWidgets.QGridLayout()
-        header_layout.setContentsMargins(0, 8, 0, 4)
+        # Pull header a bit closer to the queue card
+        header_layout.setContentsMargins(0, 4, 0, 0)
         header_layout.setHorizontalSpacing(0)
         header_layout.setVerticalSpacing(0)
         header_layout.setColumnStretch(0, 1)  # left spacer
@@ -1481,21 +1482,27 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # Centered branding (bigger logo + title)
         brand_row = QtWidgets.QHBoxLayout()
-        brand_row.setSpacing(6)
+        # Make logo + text feel like a single lockup
+        brand_row.setSpacing(4)
         brand_row.setContentsMargins(0, 0, 0, 0)
 
         logo_label = QtWidgets.QLabel()
+        logo_label.setContentsMargins(0, 0, 0, 0)
+
         icon = getattr(self, "_app_icon", _load_app_icon())
         if icon and not icon.isNull():
-            # Slightly smaller so it sits closer to the text and feels tighter
-            logo_pix = icon.pixmap(40, 40)
+            # Slightly smaller so it visually sits on the same line as the title
+            logo_pix = icon.pixmap(28, 28)
             logo_label.setPixmap(logo_pix)
             logo_label.setFixedSize(logo_pix.size())
-        brand_row.addWidget(logo_label)
+
+        brand_row.addWidget(logo_label, 0, QtCore.Qt.AlignVCenter)
 
         title = QtWidgets.QLabel("Srtforge Studio")
         title.setObjectName("HeaderLabel")
-        brand_row.addWidget(title)
+        title.setContentsMargins(0, 0, 0, 0)
+        brand_row.addWidget(title, 0, QtCore.Qt.AlignVCenter)
+
         brand_row.addStretch()
 
         brand_widget = QtWidgets.QWidget()
