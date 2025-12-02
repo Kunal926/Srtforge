@@ -1455,30 +1455,60 @@ class MainWindow(QtWidgets.QMainWindow):
         layout = QtWidgets.QVBoxLayout(page)
         layout.setSpacing(16)
         pointer_cursor = QtGui.QCursor(QtCore.Qt.CursorShape.PointingHandCursor)
-        header_row = QtWidgets.QHBoxLayout()
 
-        # Small logo next to the title
+        # --- Header: logo + title centered, controls on the right --------------
+        header_layout = QtWidgets.QGridLayout()
+        header_layout.setColumnStretch(0, 1)  # left spacer
+        header_layout.setColumnStretch(1, 0)  # brand
+        header_layout.setColumnStretch(2, 1)  # right controls + spacer
+        layout.addLayout(header_layout)
+
+        # Dummy left column so 0 and 2 grow symmetrically
+        header_layout.addItem(
+            QtWidgets.QSpacerItem(
+                0,
+                0,
+                QtWidgets.QSizePolicy.Expanding,
+                QtWidgets.QSizePolicy.Minimum,
+            ),
+            0,
+            0,
+        )
+
+        # Centered branding (bigger logo + title)
+        brand_row = QtWidgets.QHBoxLayout()
+        brand_row.setSpacing(8)
+
         logo_label = QtWidgets.QLabel()
         icon = getattr(self, "_app_icon", _load_app_icon())
         if icon and not icon.isNull():
-            logo_label.setPixmap(icon.pixmap(24, 24))
-            logo_label.setFixedSize(24, 24)
-            header_row.addWidget(logo_label)
+            # Bigger logo so it reads clearly
+            logo_pix = icon.pixmap(36, 36)
+            logo_label.setPixmap(logo_pix)
+            logo_label.setFixedSize(logo_pix.size())
+        brand_row.addWidget(logo_label)
 
         title = QtWidgets.QLabel("Srtforge Studio")
         title.setObjectName("HeaderLabel")
-        header_row.addWidget(title)
-        header_row.addStretch()
+        brand_row.addWidget(title)
+        brand_row.addStretch()
 
-        # Light/Dark mode toggle – icon only (🌙 / ☀)
+        brand_widget = QtWidgets.QWidget()
+        brand_widget.setLayout(brand_row)
+        header_layout.addWidget(brand_widget, 0, 1, alignment=QtCore.Qt.AlignCenter)
+
+        # Right‑hand controls (theme toggle + options)
+        actions_row = QtWidgets.QHBoxLayout()
+        actions_row.setContentsMargins(0, 0, 0, 0)
+        actions_row.setSpacing(6)
+
         self.theme_toggle = QtWidgets.QToolButton()
         self.theme_toggle.setObjectName("ThemeToggle")
         self.theme_toggle.setCheckable(True)
         self.theme_toggle.setCursor(pointer_cursor)
         self.theme_toggle.toggled.connect(self._on_theme_toggled)
-        header_row.addWidget(self.theme_toggle)
+        actions_row.addWidget(self.theme_toggle)
 
-        # Settings / options – gear icon only
         self.options_button = QtWidgets.QToolButton()
         self.options_button.setObjectName("OptionsButton")
         self.options_button.setCursor(pointer_cursor)
@@ -1487,9 +1517,11 @@ class MainWindow(QtWidgets.QMainWindow):
             self.style().standardIcon(QtWidgets.QStyle.StandardPixmap.SP_FileDialogDetailedView)
         )
         self.options_button.clicked.connect(self._open_options_dialog)
-        header_row.addWidget(self.options_button)
+        actions_row.addWidget(self.options_button)
 
-        layout.addLayout(header_row)
+        actions_widget = QtWidgets.QWidget()
+        actions_widget.setLayout(actions_row)
+        header_layout.addWidget(actions_widget, 0, 2, alignment=QtCore.Qt.AlignRight)
 
         # --- Queue card ------------------------------------------------------
         queue_card = QtWidgets.QFrame()
@@ -1797,8 +1829,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self._log_zoom_delta = 0
         self._apply_log_font()
     def _apply_styles(self) -> None:
-        # Accent color is still taken from Windows; fall back to Tailwind-ish blue
-        accent = get_windows_accent_qcolor() or QtGui.QColor("#3B82F6")
+        # Brand accent: Parakeet-style green for buttons and highlights
+        accent = QtGui.QColor("#16A34A")  # close to that Parakeet green
         palette = self.palette()
 
         if self._dark_mode:
