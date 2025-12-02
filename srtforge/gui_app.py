@@ -1454,10 +1454,14 @@ class MainWindow(QtWidgets.QMainWindow):
         page = QtWidgets.QWidget()
         layout = QtWidgets.QVBoxLayout(page)
         layout.setSpacing(16)
+        layout.setContentsMargins(16, 8, 16, 12)
         pointer_cursor = QtGui.QCursor(QtCore.Qt.CursorShape.PointingHandCursor)
 
         # --- Header: logo + title centered, controls on the right --------------
         header_layout = QtWidgets.QGridLayout()
+        header_layout.setContentsMargins(0, 8, 0, 4)
+        header_layout.setHorizontalSpacing(0)
+        header_layout.setVerticalSpacing(0)
         header_layout.setColumnStretch(0, 1)  # left spacer
         header_layout.setColumnStretch(1, 0)  # brand
         header_layout.setColumnStretch(2, 1)  # right controls + spacer
@@ -1477,13 +1481,14 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # Centered branding (bigger logo + title)
         brand_row = QtWidgets.QHBoxLayout()
-        brand_row.setSpacing(8)
+        brand_row.setSpacing(6)
+        brand_row.setContentsMargins(0, 0, 0, 0)
 
         logo_label = QtWidgets.QLabel()
         icon = getattr(self, "_app_icon", _load_app_icon())
         if icon and not icon.isNull():
-            # Bigger logo so it reads clearly
-            logo_pix = icon.pixmap(48, 48)
+            # Slightly smaller so it sits closer to the text and feels tighter
+            logo_pix = icon.pixmap(40, 40)
             logo_label.setPixmap(logo_pix)
             logo_label.setFixedSize(logo_pix.size())
         brand_row.addWidget(logo_label)
@@ -2751,7 +2756,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
 
 def _load_app_icon() -> QtGui.QIcon:
-    """Return the application logo as a QIcon, or an empty icon on failure."""
+    """Return the application logo as a QIcon, trimming transparent padding."""
+
     candidates: list[Path] = []
 
     # 1) Packaged resource (installed via setuptools)
@@ -2767,8 +2773,37 @@ def _load_app_icon() -> QtGui.QIcon:
     candidates.append(here / "srtforge_logo.png")
 
     for path in candidates:
-        if path.exists():
-            return QtGui.QIcon(str(path))
+        if not path.exists():
+            continue
+
+        pixmap = QtGui.QPixmap(str(path))
+        if pixmap.isNull():
+            continue
+
+        # Trim fully transparent rows/columns so we get rid of big borders.
+        img = pixmap.toImage()
+        rect = img.rect()
+        left, right = rect.right(), rect.left()
+        top, bottom = rect.bottom(), rect.top()
+
+        for y in range(rect.top(), rect.bottom() + 1):
+            for x in range(rect.left(), rect.right() + 1):
+                if img.pixelColor(x, y).alpha() > 0:
+                    if x < left:
+                        left = x
+                    if x > right:
+                        right = x
+                    if y < top:
+                        top = y
+                    if y > bottom:
+                        bottom = y
+
+        if left <= right and top <= bottom:
+            img = img.copy(left, top, right - left + 1, bottom - top + 1)
+            pixmap = QtGui.QPixmap.fromImage(img)
+
+        return QtGui.QIcon(pixmap)
+
     return QtGui.QIcon()
 
 
