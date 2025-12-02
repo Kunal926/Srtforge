@@ -1402,6 +1402,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.setObjectName("MainWindow")
 
         icon = _load_app_icon()
+        self._app_icon = icon  # store for reuse
         if not icon.isNull():
             self.setWindowIcon(icon)
         self.setAcceptDrops(True)
@@ -1455,6 +1456,15 @@ class MainWindow(QtWidgets.QMainWindow):
         layout.setSpacing(16)
         pointer_cursor = QtGui.QCursor(QtCore.Qt.CursorShape.PointingHandCursor)
         header_row = QtWidgets.QHBoxLayout()
+
+        # Small logo next to the title
+        logo_label = QtWidgets.QLabel()
+        icon = getattr(self, "_app_icon", _load_app_icon())
+        if icon and not icon.isNull():
+            logo_label.setPixmap(icon.pixmap(24, 24))
+            logo_label.setFixedSize(24, 24)
+            header_row.addWidget(logo_label)
+
         title = QtWidgets.QLabel("Srtforge Studio")
         title.setObjectName("HeaderLabel")
         header_row.addWidget(title)
