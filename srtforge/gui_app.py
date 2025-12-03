@@ -1502,6 +1502,8 @@ class MainWindow(QtWidgets.QMainWindow):
         title = QtWidgets.QLabel("SrtForge\nStudio")
         title.setObjectName("HeaderLabel")
         title.setContentsMargins(0, 0, 0, 0)
+        title.setMargin(0)
+        title.setIndent(0)
         # Completely kill padding/margins so text hugs the logo
         title.setStyleSheet("margin: 0px; padding: 0px;")
 
@@ -2133,6 +2135,8 @@ class MainWindow(QtWidgets.QMainWindow):
             QLabel#HeaderLabel {{
                 font-size: 22px;
                 font-weight: 500;
+                padding: 0px;
+                margin: 0px;
             }}
 
             QLabel,QLineEdit,QComboBox,QPushButton,QCheckBox {{
