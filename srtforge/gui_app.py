@@ -1453,14 +1453,15 @@ class MainWindow(QtWidgets.QMainWindow):
     def _build_ui(self) -> None:
         page = QtWidgets.QWidget()
         layout = QtWidgets.QVBoxLayout(page)
-        layout.setSpacing(16)
-        layout.setContentsMargins(16, 8, 16, 12)
+        # No extra vertical gap above/below the header; keep side padding
+        layout.setSpacing(0)
+        layout.setContentsMargins(16, 0, 16, 12)
         pointer_cursor = QtGui.QCursor(QtCore.Qt.CursorShape.PointingHandCursor)
 
         # --- Header: logo + title centered, controls on the right --------------
         header_layout = QtWidgets.QGridLayout()
-        # Pull header a bit closer to the queue card
-        header_layout.setContentsMargins(0, 4, 0, 0)
+        # Remove header margins entirely so logo+title sit as tight as possible
+        header_layout.setContentsMargins(0, 0, 0, 0)
         header_layout.setHorizontalSpacing(0)
         header_layout.setVerticalSpacing(0)
         header_layout.setColumnStretch(0, 1)  # left spacer
@@ -1486,10 +1487,12 @@ class MainWindow(QtWidgets.QMainWindow):
 
         logo_label = QtWidgets.QLabel()
         logo_label.setContentsMargins(0, 0, 0, 0)
+        # Remove all padding/margins around the logo so the pixmap box is tight
+        logo_label.setStyleSheet("margin: 0px; padding: 0px;")
 
         icon = getattr(self, "_app_icon", _load_app_icon())
         if icon and not icon.isNull():
-            # Slightly smaller so it visually sits on the same line as the title
+            # Keep the logo at the same visual size, but with no extra border
             logo_pix = icon.pixmap(63, 63)
             logo_label.setPixmap(logo_pix)
             logo_label.setFixedSize(logo_pix.size())
@@ -1499,11 +1502,11 @@ class MainWindow(QtWidgets.QMainWindow):
         title = QtWidgets.QLabel("SrtForge\nStudio")
         title.setObjectName("HeaderLabel")
         title.setContentsMargins(0, 0, 0, 0)
-        title.setStyleSheet("padding-top: 1px;")
-        # Match the spacing to the width of a lowercase "o" so the icon feels
-        # like part of the wordmark instead of a separate element.
-        o_width = title.fontMetrics().horizontalAdvance("o")
-        brand_row.setSpacing(max(6, o_width))
+        # Completely kill padding/margins so text hugs the logo
+        title.setStyleSheet("margin: 0px; padding: 0px;")
+
+        # Hard 0px spacing between logo and text so they visually touch
+        brand_row.setSpacing(0)
         brand_row.addWidget(title, 0, QtCore.Qt.AlignVCenter)
 
         brand_row.addStretch()
