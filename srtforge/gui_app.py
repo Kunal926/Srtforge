@@ -1482,8 +1482,6 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # Centered branding (bigger logo + title)
         brand_row = QtWidgets.QHBoxLayout()
-        # Make logo + text feel like a single lockup
-        brand_row.setSpacing(4)
         brand_row.setContentsMargins(0, 0, 0, 0)
 
         logo_label = QtWidgets.QLabel()
@@ -1492,7 +1490,7 @@ class MainWindow(QtWidgets.QMainWindow):
         icon = getattr(self, "_app_icon", _load_app_icon())
         if icon and not icon.isNull():
             # Slightly smaller so it visually sits on the same line as the title
-            logo_pix = icon.pixmap(28, 28)
+            logo_pix = icon.pixmap(63, 63)
             logo_label.setPixmap(logo_pix)
             logo_label.setFixedSize(logo_pix.size())
 
@@ -1501,6 +1499,11 @@ class MainWindow(QtWidgets.QMainWindow):
         title = QtWidgets.QLabel("Srtforge Studio")
         title.setObjectName("HeaderLabel")
         title.setContentsMargins(0, 0, 0, 0)
+        title.setStyleSheet("padding-top: 1px;")
+        # Match the spacing to the width of a lowercase "o" so the icon feels
+        # like part of the wordmark instead of a separate element.
+        o_width = title.fontMetrics().horizontalAdvance("o")
+        brand_row.setSpacing(max(6, o_width))
         brand_row.addWidget(title, 0, QtCore.Qt.AlignVCenter)
 
         brand_row.addStretch()
@@ -1903,7 +1906,7 @@ class MainWindow(QtWidgets.QMainWindow):
             QLabel#HeaderLabel {{
                 color: #F9FAFB;
                 font-size: 20px;
-                font-weight: 600;
+                font-weight: 500;
             }}
             QLabel#EtaLabel {{
                 color: #94A3B8;
