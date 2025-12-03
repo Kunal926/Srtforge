@@ -2127,10 +2127,10 @@ class MainWindow(QtWidgets.QMainWindow):
         else:
             # --- Light mode QSS ---
             custom = f"""
-            QLabel#HeaderLabel {
+            QLabel#HeaderLabel {{
                 font-size: 22px;
                 font-weight: 500;
-            }
+            }}
 
             QLabel,QLineEdit,QComboBox,QPushButton,QCheckBox {{
                 padding-top: 4px;
