@@ -1496,7 +1496,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         brand_row.addWidget(logo_label, 0, QtCore.Qt.AlignVCenter)
 
-        title = QtWidgets.QLabel("Srtforge Studio")
+        title = QtWidgets.QLabel("SrtForge\nStudio")
         title.setObjectName("HeaderLabel")
         title.setContentsMargins(0, 0, 0, 0)
         title.setStyleSheet("padding-top: 1px;")
@@ -1905,7 +1905,7 @@ class MainWindow(QtWidgets.QMainWindow):
             }}
             QLabel#HeaderLabel {{
                 color: #F9FAFB;
-                font-size: 20px;
+                font-size: 22px;
                 font-weight: 500;
             }}
             QLabel#EtaLabel {{
@@ -2127,6 +2127,11 @@ class MainWindow(QtWidgets.QMainWindow):
         else:
             # --- Light mode QSS ---
             custom = f"""
+            QLabel#HeaderLabel {
+                font-size: 22px;
+                font-weight: 500;
+            }
+
             QLabel,QLineEdit,QComboBox,QPushButton,QCheckBox {{
                 padding-top: 4px;
                 padding-bottom: 4px;
