@@ -1440,6 +1440,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self._eta_memory = _EtaMemory()
         # Track per-file durations for the “Total duration” summary
         self._queue_duration_cache: dict[str, float] = {}
+        # Per-row progress widgets (queue list column)
+        self._item_progress: dict[str, QtWidgets.QProgressBar] = {}
+        # Queue-level progress (for the footer progress bar)
+        self._queue_total_count: int = 0
+        self._queue_completed_count: int = 0
         # Track the current ETA window so we can compute % progress
         self._eta_total: float = 0.0
         self._build_ui()  # builds a page widget; we wrap it in a scroll area below
@@ -1612,7 +1617,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.queue_list.setRootIsDecorated(False)
         self.queue_list.setItemsExpandable(False)
         self.queue_list.setIndentation(0)
-        self.queue_list.setHeaderLabels(["Name", "Status"])
+        self.queue_list.setHeaderLabels(["Name", "Status", "Progress"])
         # width‑based truncation (Explorer‑style)
         self.queue_list.setTextElideMode(QtCore.Qt.TextElideMode.ElideRight)
         self.queue_list.setMinimumHeight(160)
@@ -1622,14 +1627,12 @@ class MainWindow(QtWidgets.QMainWindow):
         header.setStretchLastSection(False)
         header.setSectionsMovable(False)
         # Allow the user to drag the Name column like in Explorer
-        header.setSectionResizeMode(
-            0, QtWidgets.QHeaderView.ResizeMode.Interactive
-        )
-        header.setSectionResizeMode(
-            1, QtWidgets.QHeaderView.ResizeMode.ResizeToContents
-        )
+        header.setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeMode.Interactive)
+        header.setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(2, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
         header.setMinimumSectionSize(80)
         header.resizeSection(1, 140)
+        header.resizeSection(2, 120)
 
         # 🔧 Remove inner focus border (fixes 'double boxing')
         self.queue_list.setItemDelegate(QueueItemDelegate(self.queue_list))
@@ -2552,6 +2555,14 @@ class MainWindow(QtWidgets.QMainWindow):
             self.queue_list.addTopLevelItem(item)
             existing.add(path)
 
+            # Per-file progress bar in the "Progress" column
+            progress = QtWidgets.QProgressBar()
+            progress.setRange(0, 100)
+            progress.setValue(0)
+            progress.setTextVisible(False)
+            self.queue_list.setItemWidget(item, 2, progress)
+            self._item_progress[str(path)] = progress
+
             # Cache duration for total in card footer
             try:
                 duration_s = _probe_media_duration_ffprobe(path, ffprobe)
@@ -2568,12 +2579,15 @@ class MainWindow(QtWidgets.QMainWindow):
             if row >= 0:
                 self.queue_list.takeTopLevelItem(row)
             if path:
-                self._queue_duration_cache.pop(str(path), None)
+                key = str(path)
+                self._queue_duration_cache.pop(key, None)
+                self._item_progress.pop(key, None)
         self._update_start_state()
 
     def _clear_queue(self) -> None:
         self.queue_list.clear()
         self._queue_duration_cache.clear()
+        self._item_progress.clear()
         self._update_start_state()
 
     def _update_start_state(self) -> None:
@@ -2585,6 +2599,9 @@ class MainWindow(QtWidgets.QMainWindow):
             self.queue_stack.setCurrentWidget(
                 self.queue_list if has_items else self.queue_placeholder
             )
+
+        if not has_items:
+            self._reset_queue_progress_bar()
 
         self._update_queue_summary()
 
@@ -2634,6 +2651,54 @@ class MainWindow(QtWidgets.QMainWindow):
                 item.setText(1, status)
                 break
 
+    def _set_queue_item_progress(self, media: str, percent: int) -> None:
+        """Update the per-file progress bar in the queue list, if present."""
+        key = str(media)
+        bar = self._item_progress.get(key)
+
+        if bar is None:
+            # Fallback: locate the item lazily and cache its widget
+            path = Path(media)
+            for i in range(self.queue_list.topLevelItemCount()):
+                item = self.queue_list.topLevelItem(i)
+                raw = item.data(0, QtCore.Qt.ItemDataRole.UserRole)
+                if raw and Path(str(raw)) == path:
+                    widget = self.queue_list.itemWidget(item, 2)
+                    if isinstance(widget, QtWidgets.QProgressBar):
+                        bar = widget
+                        self._item_progress[key] = bar
+                    break
+
+        if bar is not None:
+            value = max(0, min(100, int(percent)))
+            bar.setValue(value)
+
+    def _update_queue_progress_bar(self, current_file_fraction: float) -> None:
+        """Update the footer progress bar to reflect whole-queue progress."""
+        if not hasattr(self, "progress_bar"):
+            return
+
+        total = self._queue_total_count or self.queue_list.topLevelItemCount()
+        if total <= 0:
+            self.progress_bar.setVisible(False)
+            self.progress_bar.setValue(0)
+            return
+
+        done = max(0, min(total, self._queue_completed_count))
+        frac_current = max(0.0, min(1.0, float(current_file_fraction)))
+        overall = (done + frac_current) / float(total)
+        overall = max(0.0, min(1.0, overall))
+
+        self.progress_bar.setVisible(True)
+        self.progress_bar.setValue(int(round(overall * 100)))
+
+    def _reset_queue_progress_bar(self) -> None:
+        self._queue_total_count = 0
+        self._queue_completed_count = 0
+        if hasattr(self, "progress_bar"):
+            self.progress_bar.setVisible(False)
+            self.progress_bar.setValue(0)
+
     # (embed panel handling removed — lives in OptionsDialog now)
 
     def _start_processing(self) -> None:
@@ -2647,7 +2712,22 @@ class MainWindow(QtWidgets.QMainWindow):
         ]
         if not files:
             return
+
         self._clear_eta()
+
+        # Fresh run: reset per-file status + progress
+        for i in range(self.queue_list.topLevelItemCount()):
+            item = self.queue_list.topLevelItem(i)
+            item.setText(1, "Queued")
+            widget = self.queue_list.itemWidget(item, 2)
+            if isinstance(widget, QtWidgets.QProgressBar):
+                widget.setValue(0)
+
+        # Queue-level progress for the footer bar
+        self._queue_total_count = len(files)
+        self._queue_completed_count = 0
+        self._update_queue_progress_bar(0.0)
+
         basic = dict(self._basic_options)
         prefer_gpu = bool(basic.get("prefer_gpu", True))
         options = WorkerOptions(
@@ -2704,6 +2784,8 @@ class MainWindow(QtWidgets.QMainWindow):
             self._log_tailer.start()
         self._append_log(f"Processing {path}")
         self._set_queue_item_status(path, "Processing…")
+        self._set_queue_item_progress(path, 0)
+
         self._eta_mode_gpu = bool(self._basic_options.get("prefer_gpu", True))
         self._eta_media = path
         ffprobe = self.ffmpeg_paths.ffprobe if self.ffmpeg_paths else None
@@ -2714,14 +2796,23 @@ class MainWindow(QtWidgets.QMainWindow):
         else:
             short = _elide_filename(Path(path).name, max_chars=40)
             self.eta_label.setText(f"Processing {short}")
-            if hasattr(self, "progress_bar"):
-                self.progress_bar.setVisible(False)
+            # We still show queue-level progress (discrete per file)
+            self._update_queue_progress_bar(0.0)
 
     def _on_file_completed(self, media: str, summary: str) -> None:
         if self._log_tailer:
             self._log_tailer.stop()
         self._append_log(f"✅ {media}: {summary}")
         self._set_queue_item_status(media, "Completed")
+        self._set_queue_item_progress(media, 100)
+
+        if self._queue_total_count:
+            self._queue_completed_count = min(
+                self._queue_total_count, self._queue_completed_count + 1
+            )
+            # No active file at this instant → current_file_fraction = 0
+            self._update_queue_progress_bar(0.0)
+
         self._clear_eta()
 
     def _on_file_failed(self, media: str, reason: str) -> None:
@@ -2729,6 +2820,15 @@ class MainWindow(QtWidgets.QMainWindow):
             self._log_tailer.stop()
         self._append_log(f"⚠️ {media}: {reason}")
         self._set_queue_item_status(media, "Failed")
+        self._set_queue_item_progress(media, 0)
+
+        if self._queue_total_count:
+            # Treat failed attempts as "processed" for queue-level progress
+            self._queue_completed_count = min(
+                self._queue_total_count, self._queue_completed_count + 1
+            )
+            self._update_queue_progress_bar(0.0)
+
         self._clear_eta()
 
     def _handle_run_log_ready(self, run_id: str) -> None:
@@ -2750,6 +2850,7 @@ class MainWindow(QtWidgets.QMainWindow):
             cleanup_gpu_memory()
             self._append_log("GPU cache cleared")
         self._clear_eta()
+        self._reset_queue_progress_bar()
 
     def closeEvent(self, event: QtGui.QCloseEvent) -> None:  # noqa: D401 - Qt override
         if self._worker:
@@ -2799,11 +2900,9 @@ class MainWindow(QtWidgets.QMainWindow):
     def _clear_eta(self) -> None:
         self._eta_deadline = None
         self._eta_total = 0.0
+        self._eta_media = None
         if hasattr(self, "eta_label"):
             self.eta_label.setText("Idle")
-        if hasattr(self, "progress_bar"):
-            self.progress_bar.setVisible(False)
-            self.progress_bar.setValue(0)
         if self._eta_timer.isActive():
             self._eta_timer.stop()
 
@@ -2811,8 +2910,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if self._eta_deadline is None or self._eta_total <= 0:
             if hasattr(self, "eta_label"):
                 self.eta_label.setText("Idle")
-            if hasattr(self, "progress_bar"):
-                self.progress_bar.setVisible(False)
+            # Queue progress bar is managed separately
             return
 
         now = time.monotonic()
@@ -2831,9 +2929,13 @@ class MainWindow(QtWidgets.QMainWindow):
             self.eta_label.setText(
                 f"Processing {basename} ({percent:3d}%) – ETA ~ {minutes:02d}:{secs:02d}"
             )
-        if hasattr(self, "progress_bar"):
-            self.progress_bar.setVisible(True)
-            self.progress_bar.setValue(percent)
+
+        # Update the row progress bar for the current file
+        if self._eta_media:
+            self._set_queue_item_progress(self._eta_media, percent)
+
+        # And update the whole-queue bar in the footer
+        self._update_queue_progress_bar(progress)
 
         if remaining <= 0:
             self._eta_timer.stop()
