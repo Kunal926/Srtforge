@@ -2560,6 +2560,18 @@ class MainWindow(QtWidgets.QMainWindow):
             progress.setRange(0, 100)
             progress.setValue(0)
             progress.setTextVisible(False)
+
+            # Match the footer progress bar width (fallback to 180px)
+            footer_width = 0
+            if hasattr(self, "progress_bar"):
+                footer_width = self.progress_bar.maximumWidth()
+            if footer_width <= 0:
+                footer_width = 180
+            progress.setFixedWidth(footer_width)
+
+            # Only visible while the file is actually processing
+            progress.setVisible(False)
+
             self.queue_list.setItemWidget(item, 2, progress)
             self._item_progress[str(path)] = progress
 
@@ -2649,6 +2661,13 @@ class MainWindow(QtWidgets.QMainWindow):
             if Path(str(raw)) == path:
                 # Column 1 holds the status text
                 item.setText(1, status)
+
+                # Column 2: show progress bar only while processing
+                widget = self.queue_list.itemWidget(item, 2)
+                if isinstance(widget, QtWidgets.QProgressBar):
+                    show = status.lower().startswith("processing")
+                    widget.setVisible(show)
+
                 break
 
     def _set_queue_item_progress(self, media: str, percent: int) -> None:
@@ -2722,6 +2741,7 @@ class MainWindow(QtWidgets.QMainWindow):
             widget = self.queue_list.itemWidget(item, 2)
             if isinstance(widget, QtWidgets.QProgressBar):
                 widget.setValue(0)
+                widget.setVisible(False)  # hide until we start processing this file
 
         # Queue-level progress for the footer bar
         self._queue_total_count = len(files)
