@@ -9,6 +9,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterable, Optional
 
+
 from rich.table import Table
 
 from .asr.parakeet_engine import parakeet_to_srt
@@ -17,6 +18,21 @@ from .ffmpeg import DEFAULT_TOOLS, AudioStream, FFmpegTooling
 from .logging import RunLogger, get_console, status
 from .settings import settings
 from .utils import probe_video_fps
+
+
+def _has_center_channel(layout: str | None, channels: int | None) -> bool:
+    """Return ``True`` if the probed layout strongly indicates a center channel."""
+
+    if not channels:
+        return False
+    text = (layout or "").upper()
+    # Modern ffprobe exposes ``ch_layout`` as symbolic channel names (``FL+FR+FC``...)
+    if "+" in text and "FC" in text:
+        return True
+    # Legacy ``channel_layout`` names provide less detail; fall back to conservative heuristics
+    if channels >= 3 and any(tag in text for tag in {"3.0", "3.1", "4.0", "4.1", "5.0", "5.1", "6.1", "7.1"}):
+        return True
+    return False
 
 
 @dataclass(slots=True)
@@ -40,6 +56,7 @@ class PipelineConfig:
     ffmpeg_prefer_center: bool = settings.ffmpeg.prefer_center
     force_float32: bool = settings.parakeet.force_float32
     prefer_gpu: bool = settings.parakeet.prefer_gpu
+    allow_untagged_english: bool = settings.separation.allow_untagged_english
 
 
 @dataclass(slots=True)
@@ -84,8 +101,6 @@ class Pipeline:
             tmp_kwargs["dir"] = str(self.config.temp_dir)
             base_tmp_dir = self.config.temp_dir
 
-        cleanup_run_directories(base_tmp_dir)
-
         try:
             with RunLogger.start() as run_logger:
                 run_id = run_logger.run_id
@@ -94,8 +109,13 @@ class Pipeline:
                 run_logger.log(f"Output: {output_path}")
                 self.console.log(f"[cyan]Run ID[/cyan] {run_id}")
 
-                with tempfile.TemporaryDirectory(**tmp_kwargs) as tmp_dir:
-                    tmp = Path(tmp_dir)
+                # Time stale temp-dir cleanup
+                with run_logger.step("Cleanup stale temporary run directories"):
+                    cleanup_run_directories(base_tmp_dir)
+
+                tmp_ctx = tempfile.TemporaryDirectory(**tmp_kwargs)
+                try:
+                    tmp = Path(tmp_ctx.name)
                     extracted = tmp / "english.wav"
                     vocals = tmp / "vocals.wav"
                     preprocessed = tmp / "preprocessed.wav"
@@ -143,14 +163,18 @@ class Pipeline:
                         raise ValueError(message)
 
                     filter_chain = self.config.ffmpeg_filter_chain
+                    pan_expr = None
+                    layout = getattr(english_stream, "channel_layout", None)
+                    channels = english_stream.channels or 0
+                    has_center = _has_center_channel(layout, channels)
                     if (
-                        filter_chain
-                        and self.config.ffmpeg_prefer_center
-                        and english_stream.channels
-                        and english_stream.channels >= 3
-                        and "pan=" not in filter_chain
+                        self.config.ffmpeg_prefer_center
+                        and channels >= 2
+                        and (not filter_chain or "pan=" not in filter_chain)
                     ):
-                        filter_chain = f"pan=mono|c0=c2,{filter_chain}"
+                        pan_expr = "pan=mono|c0=FC" if has_center else "pan=mono|c0=0.5*FL+0.5*FR"
+                    if pan_expr:
+                        filter_chain = f"{pan_expr},{filter_chain}" if filter_chain else pan_expr
                     with status("Applying FFmpeg preprocessing filters"), run_logger.step(
                         "FFmpeg preprocessing"
                     ):
@@ -176,6 +200,29 @@ class Pipeline:
                             run_logger=run_logger,
                         )
 
+                        # If the SRT is being written next to the media file, avoid
+                        # leaving diagnostic sidecars in the media directory. Move
+                        # them into the per-run temporary directory so they can be
+                        # cleaned up automatically.
+                        if output_path.parent == media_path.parent:
+                            try:
+                                diag_dir = tmp / "diagnostics"
+                                diag_dir.mkdir(exist_ok=True)
+                                for suffix in (".diag.csv", ".diag.json"):
+                                    diag_src = output_path.with_suffix(output_path.suffix + suffix)
+                                    if diag_src.exists():
+                                        diag_dst = diag_dir / diag_src.name
+                                        shutil.move(str(diag_src), str(diag_dst))
+                            except Exception:
+                                # Diagnostics are best-effort; never fail the run if
+                                # moving them fails for any reason (permissions,
+                                # cross-device moves, etc.).
+                                pass
+                finally:
+                    # Time deletion of the per-run temp directory
+                    with run_logger.step("Cleanup run temporary directory"):
+                        tmp_ctx.cleanup()
+
         except Exception as exc:
             self.console.log(f"[bold red]Pipeline failed[/bold red] {media_path}: {exc}")
             return PipelineResult(media_path, None, True, str(exc), run_id)
@@ -185,7 +232,7 @@ class Pipeline:
 
     # ---- internal methods --------------------------------------------------------
     def _show_summary(self, media: Path, srt: Path) -> None:
-        table = Table(title="srtforge summary", show_header=True, header_style="bold magenta")
+        table = Table(title="Srtforge summary", show_header=True, header_style="bold magenta")
         table.add_column("Media", style="cyan")
         table.add_column("SRT", style="green")
         table.add_row(str(media), str(srt))
@@ -197,13 +244,18 @@ class Pipeline:
             lang = (stream.language or "").lower()
             if lang in {"en", "eng", "english"}:
                 english_streams.append(stream)
-        if not english_streams:
-            return None
-        if self.config.separation_prefer_center:
-            for stream in english_streams:
-                if stream.channels == 1:
-                    return stream
-        return english_streams[0]
+        if english_streams:
+            if self.config.separation_prefer_center:
+                for stream in english_streams:
+                    if stream.channels == 1:
+                        return stream
+            return english_streams[0]
+        # Fallback path when opt-in setting is enabled
+        if getattr(self.config, "allow_untagged_english", False):
+            # Pick the first audio stream as a best-effort default
+            for stream in streams:
+                return stream
+        return None
 
     def _resolve_parakeet_checkpoint(self) -> Optional[Path]:
         """Locate a local Parakeet checkpoint if available."""
