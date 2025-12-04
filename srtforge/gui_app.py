@@ -1598,16 +1598,38 @@ class MainWindow(QtWidgets.QMainWindow):
         ph_layout.addStretch()
         self.queue_stack.addWidget(self.queue_placeholder)
 
-        # Actual queue list
-        self.queue_list = QtWidgets.QListWidget()
+        # Actual queue list with expandable header
+        self.queue_list = QtWidgets.QTreeWidget()
         self.queue_list.setObjectName("QueueList")
         self.queue_list.setFrameShape(QtWidgets.QFrame.NoFrame)
         self.queue_list.setSelectionMode(
             QtWidgets.QAbstractItemView.SelectionMode.ExtendedSelection
         )
-        self.queue_list.setVerticalScrollMode(QtWidgets.QAbstractItemView.ScrollPerPixel)
-        self.queue_list.setUniformItemSizes(True)
+        self.queue_list.setVerticalScrollMode(
+            QtWidgets.QAbstractItemView.ScrollPerPixel
+        )
+        self.queue_list.setUniformRowHeights(True)
+        self.queue_list.setRootIsDecorated(False)
+        self.queue_list.setItemsExpandable(False)
+        self.queue_list.setIndentation(0)
+        self.queue_list.setHeaderLabels(["Name", "Status"])
+        # width‑based truncation (Explorer‑style)
+        self.queue_list.setTextElideMode(QtCore.Qt.TextElideMode.ElideRight)
         self.queue_list.setMinimumHeight(160)
+
+        header = self.queue_list.header()
+        header.setHighlightSections(False)
+        header.setStretchLastSection(False)
+        header.setSectionsMovable(False)
+        # Allow the user to drag the Name column like in Explorer
+        header.setSectionResizeMode(
+            0, QtWidgets.QHeaderView.ResizeMode.Interactive
+        )
+        header.setSectionResizeMode(
+            1, QtWidgets.QHeaderView.ResizeMode.ResizeToContents
+        )
+        header.setMinimumSectionSize(80)
+        header.resizeSection(1, 140)
 
         # 🔧 Remove inner focus border (fixes 'double boxing')
         self.queue_list.setItemDelegate(QueueItemDelegate(self.queue_list))
@@ -1983,23 +2005,30 @@ class MainWindow(QtWidgets.QMainWindow):
                 font-weight: 500;
             }}
 
-            QListWidget#QueueList {{
+            #QueueList {{
                 background-color: #020617;
                 border-radius: 10px;
                 border: none;
             }}
-            QListWidget#QueueList::item {{
+            #QueueList QHeaderView::section {{
+                background-color: transparent;
+                color: #9CA3AF;
+                border: none;
+                padding: 4px 8px;
+                font-weight: 500;
+            }}
+            #QueueList::item {{
                 padding: 6px 8px;
                 border: none;
                 outline: none;
             }}
-            QListWidget#QueueList::item:hover {{
+            #QueueList::item:hover {{
                 background-color: rgba(148, 163, 184, 0.18);
             }}
-            QListWidget#QueueList::item:selected,
-            QListWidget#QueueList::item:selected:active,
-            QListWidget#QueueList::item:selected:!active,
-            QListWidget#QueueList::item:focus {{
+            #QueueList::item:selected,
+            #QueueList::item:selected:active,
+            #QueueList::item:selected:!active,
+            #QueueList::item:focus {{
                 background-color: rgba(59, 130, 246, 0.35);
                 color: #E5E7EB;
                 border: none;
@@ -2218,6 +2247,14 @@ class MainWindow(QtWidgets.QMainWindow):
                 background: #FFFFFF;
                 border: 1px solid #E2E8F0;
                 border-radius: 10px;
+            }}
+
+            #QueueList QHeaderView::section {{
+                background: #F8FAFC;
+                color: #475569;
+                border: none;
+                padding: 4px 8px;
+                font-weight: 500;
             }}
 
             #QueueList::item {{
@@ -2482,18 +2519,29 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _add_files_to_queue(self, files: Iterable[str]) -> None:
         existing = {
-            Path(self.queue_list.item(i).data(QtCore.Qt.ItemDataRole.UserRole))
-            for i in range(self.queue_list.count())
+            Path(
+                self.queue_list.topLevelItem(i).data(
+                    0, QtCore.Qt.ItemDataRole.UserRole
+                )
+            )
+            for i in range(self.queue_list.topLevelItemCount())
         }
         ffprobe = self.ffmpeg_paths.ffprobe if self.ffmpeg_paths else None
 
         for path in _normalize_paths(files):
             if path in existing:
                 continue
-            display_name = _elide_filename(path.name, max_chars=60)
-            item = QtWidgets.QListWidgetItem(display_name)
-            item.setData(QtCore.Qt.ItemDataRole.UserRole, str(path))
-            self.queue_list.addItem(item)
+            item = QtWidgets.QTreeWidgetItem()
+            # Full filename; truncation handled by view + header width
+            item.setText(0, path.name)
+            # New status column
+            item.setText(1, "Queued")
+            # store the full path on column 0
+            item.setData(0, QtCore.Qt.ItemDataRole.UserRole, str(path))
+            # tooltip showing the full path
+            item.setToolTip(0, str(path))
+
+            self.queue_list.addTopLevelItem(item)
             existing.add(path)
 
             # Cache duration for total in card footer
@@ -2507,9 +2555,10 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _remove_selected_items(self) -> None:
         for item in self.queue_list.selectedItems():
-            path = item.data(QtCore.Qt.ItemDataRole.UserRole)
-            row = self.queue_list.row(item)
-            self.queue_list.takeItem(row)
+            path = item.data(0, QtCore.Qt.ItemDataRole.UserRole)
+            row = self.queue_list.indexOfTopLevelItem(item)
+            if row >= 0:
+                self.queue_list.takeTopLevelItem(row)
             if path:
                 self._queue_duration_cache.pop(str(path), None)
         self._update_start_state()
@@ -2520,7 +2569,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._update_start_state()
 
     def _update_start_state(self) -> None:
-        has_items = self.queue_list.count() > 0
+        has_items = self.queue_list.topLevelItemCount() > 0
         self.start_button.setEnabled(has_items and not self._worker)
 
         # Switch between empty placeholder and actual list
@@ -2535,7 +2584,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if not hasattr(self, "queue_summary_label"):
             return
 
-        count = self.queue_list.count()
+        count = self.queue_list.topLevelItemCount()
         if count == 0:
             # Empty state: let the central watermark do the talking.
             self.queue_summary_label.setText("")
@@ -2543,7 +2592,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
         total_s = 0.0
         for i in range(count):
-            path = self.queue_list.item(i).data(QtCore.Qt.ItemDataRole.UserRole)
+            item = self.queue_list.topLevelItem(i)
+            path = item.data(0, QtCore.Qt.ItemDataRole.UserRole)
             if not path:
                 continue
             total_s += float(self._queue_duration_cache.get(str(path), 0.0))
@@ -2558,20 +2608,22 @@ class MainWindow(QtWidgets.QMainWindow):
                 dur_str = f"{hours:d}:{minutes:02d}:{secs:02d}"
             else:
                 dur_str = f"{minutes:02d}:{secs:02d}"
-            summary = f"{count} file{'s' if count != 1 else ''} – Total duration: {dur_str}"
+            summary = (
+                f"{count} file{'s' if count != 1 else ''} – Total duration: {dur_str}"
+            )
 
         self.queue_summary_label.setText(summary)
 
     def _set_queue_item_status(self, media: str, status: str) -> None:
         path = Path(media)
-        for i in range(self.queue_list.count()):
-            item = self.queue_list.item(i)
-            raw = item.data(QtCore.Qt.ItemDataRole.UserRole)
+        for i in range(self.queue_list.topLevelItemCount()):
+            item = self.queue_list.topLevelItem(i)
+            raw = item.data(0, QtCore.Qt.ItemDataRole.UserRole)
             if not raw:
                 continue
             if Path(str(raw)) == path:
-                short = _elide_filename(path.name, max_chars=60)
-                item.setText(f"{short} — {status}")
+                # Column 1 holds the status text
+                item.setText(1, status)
                 break
 
     # (embed panel handling removed — lives in OptionsDialog now)
@@ -2579,7 +2631,12 @@ class MainWindow(QtWidgets.QMainWindow):
     def _start_processing(self) -> None:
         if self._worker:
             return
-        files = [self.queue_list.item(i).data(QtCore.Qt.ItemDataRole.UserRole) for i in range(self.queue_list.count())]
+        files = [
+            self.queue_list.topLevelItem(i).data(
+                0, QtCore.Qt.ItemDataRole.UserRole
+            )
+            for i in range(self.queue_list.topLevelItemCount())
+        ]
         if not files:
             return
         self._clear_eta()
