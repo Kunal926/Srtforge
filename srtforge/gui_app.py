@@ -1634,6 +1634,10 @@ class MainWindow(QtWidgets.QMainWindow):
         header.resizeSection(1, 140)
         header.resizeSection(2, 120)
 
+        # 🔧 Track the progress column index and hide it by default
+        self._progress_column = 2
+        header.setSectionHidden(self._progress_column, True)
+
         # 🔧 Remove inner focus border (fixes 'double boxing')
         self.queue_list.setItemDelegate(QueueItemDelegate(self.queue_list))
 
@@ -2817,6 +2821,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self.stop_button.setEnabled(running)
         self.queue_list.setEnabled(not running)
         self.options_button.setEnabled(not running)
+
+        # Show the Progress column only while a job is running
+        if hasattr(self, "queue_list"):
+            header = self.queue_list.header()
+            if header and hasattr(self, "_progress_column"):
+                header.setSectionHidden(self._progress_column, not running)
 
     def _append_log(self, message: str) -> None:
         self.log_view.appendPlainText(message)
