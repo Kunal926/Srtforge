@@ -36,12 +36,13 @@ except Exception as exc:  # pragma: no cover - delay failure until used
     nemo_asr = None  # type: ignore[assignment]
     _IMPORT_ERROR = exc
 
-# Make the vendored post-processing modules importable via their original module names.
-POST_DIR = Path(__file__).resolve().parents[1] / "post"
-if str(POST_DIR) not in sys.path:
-    sys.path.insert(0, str(POST_DIR))
+# Cache so we don't repeatedly tear down the Parakeet model
+_MODEL_CACHE = None          # type: ignore[var-annotated]
+_MODEL_CACHE_DTYPE = None    # type: ignore[var-annotated]
+_MODEL_CACHE_USE_CUDA = None # type: ignore[var-annotated]
+_MODEL_CACHE_KEY = None      # type: ignore[var-annotated]
 
-from srt_utils import postprocess_segments, write_srt  # type: ignore  # noqa: E402
+from ..post.srt_utils import postprocess_segments, write_srt  # noqa: E402
 from ..logging import RunLogger
 
 
@@ -95,6 +96,22 @@ def load_parakeet(
     if torch is None:  # pragma: no cover - surfaced when dependency missing
         raise RuntimeError("PyTorch is required for Parakeet transcription") from _TORCH_IMPORT_ERROR
 
+    global _MODEL_CACHE, _MODEL_CACHE_DTYPE, _MODEL_CACHE_USE_CUDA, _MODEL_CACHE_KEY
+
+    cache_key = (
+        str(nemo_local.resolve()) if nemo_local else None,
+        bool(force_float32),
+        bool(prefer_gpu),
+    )
+
+    # Reuse an existing model if we're called with the same configuration
+    if _MODEL_CACHE is not None and _MODEL_CACHE_KEY == cache_key:
+        asr = _MODEL_CACHE
+        dtype = _MODEL_CACHE_DTYPE
+        use_cuda = bool(_MODEL_CACHE_USE_CUDA)
+        _log_event(run_logger, "Reusing cached Parakeet model instance")
+        return asr, dtype, use_cuda
+
     use_cuda = prefer_gpu and torch.cuda.is_available()
     if use_cuda:
         try:
@@ -107,6 +124,7 @@ def load_parakeet(
             print(f"{message} ({exc})", file=sys.stderr)
             _log_event(run_logger, message)
             use_cuda = False
+
     if nemo_local and nemo_local.exists():
         asr = nemo_asr.models.ASRModel.restore_from(restore_path=str(nemo_local))
     else:
@@ -128,6 +146,13 @@ def load_parakeet(
                 asr = asr.half()
                 dtype = torch.float16
     asr.eval()
+
+    # Remember this model so we don't destroy it between calls
+    _MODEL_CACHE = asr
+    _MODEL_CACHE_DTYPE = dtype
+    _MODEL_CACHE_USE_CUDA = use_cuda
+    _MODEL_CACHE_KEY = cache_key
+
     return asr, dtype, use_cuda
 
 
@@ -261,7 +286,7 @@ def parakeet_to_srt(
                 success_message = "Long audio settings applied: Local Attention."
                 print(success_message, file=sys.stderr)
                 _log_event(run_logger, success_message)
-        else:  # pragma: no cover - depends on upstream implementation
+        else:  # pragma: no cover
             warning = (
                 "Warning: Parakeet model does not support change_attention_model; "
                 "skipping long audio settings."
@@ -270,7 +295,7 @@ def parakeet_to_srt(
             _log_event(run_logger, warning)
 
     def _attempt_transcribe() -> List[object]:
-        """Call ``asr.transcribe`` while handling API differences between NeMo versions."""
+        """Call asr.transcribe while handling API differences between NeMo versions."""
 
         candidates: List[Dict[str, object]] = [
             {"timestamps": True, "return_hypotheses": True},
@@ -278,10 +303,9 @@ def parakeet_to_srt(
             {"return_timestamps": True, "return_hypotheses": True},
             {"return_hypotheses": True},
         ]
-
         unexpected_kw_error_fragments = (
-            "unexpected keyword",  # CPython message fragment
-            "got an unexpected keyword",  # PyPy style fragment
+            "unexpected keyword",
+            "got an unexpected keyword",
         )
 
         for kwargs in candidates:
@@ -293,11 +317,9 @@ def parakeet_to_srt(
                     continue
                 raise
 
-        # All attempts failed due to unexpected keyword arguments.  Re-raise the
-        # final error using the latest signature information for easier debugging.
         try:
             sig = inspect.signature(asr.transcribe)
-        except (TypeError, ValueError):  # pragma: no cover - signature unavailable
+        except (TypeError, ValueError):
             sig_repr = "<unavailable>"
         else:
             sig_repr = str(sig)
@@ -312,9 +334,11 @@ def parakeet_to_srt(
         raise RuntimeError("Parakeet ASR did not return any hypotheses")
 
     hypothesis = results[0]
-    with (step("ASR: post-processing & cleanup") if step else nullcontext()):
+
+    with (step("ASR: build segments from hypothesis") if step else nullcontext()):
         segments = _build_segments_from_hypothesis(hypothesis)
 
+    with (step("ASR: segmentation & timing normalization") if step else nullcontext()):
         processed = postprocess_segments(
             segments,
             max_chars_per_line=max_chars_per_line,
@@ -332,8 +356,49 @@ def parakeet_to_srt(
             max_block_duration_s=max_block_duration_s,
             max_merge_gap_ms=max_merge_gap_ms,
         )
-        write_srt(processed, str(srt_out))
-    return processed
+
+    result = processed
+
+    with (step("ASR: write SRT + diagnostics") if step else nullcontext()):
+        write_srt(result, str(srt_out))
+
+    with (step("ASR: cleanup & GPU cache") if step else nullcontext()):
+        try:
+            import gc
+
+            try:
+                del hypothesis
+            except NameError:
+                pass
+            try:
+                del segments
+            except NameError:
+                pass
+            try:
+                del processed
+            except NameError:
+                pass
+
+            if torch is not None:
+                try:
+                    if use_cuda and torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                except Exception as exc:
+                    _log_event(
+                        run_logger,
+                        f"torch.cuda.empty_cache() failed during cleanup: {exc}",
+                    )
+
+            try:
+                gc.collect()
+            except Exception as exc:
+                _log_event(run_logger, f"gc.collect() failed during cleanup: {exc}")
+        except Exception as exc:
+            _log_event(run_logger, f"ASR: cleanup step raised: {exc}")
+
+    # NOTE: we deliberately do NOT delete the model here – it's held in the
+    # module-level cache so the heavy destructor doesn't run per file.
+    return result
 
 
 __all__ = [
