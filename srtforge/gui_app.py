@@ -2014,8 +2014,12 @@ class MainWindow(QtWidgets.QMainWindow):
                 background-color: transparent;
                 color: #9CA3AF;
                 border: none;
+                border-right: 1px solid rgba(148, 163, 184, 0.35);  /* column separator */
                 padding: 4px 8px;
                 font-weight: 500;
+            }}
+            #QueueList QHeaderView::section:last {{
+                border-right: none;  /* no extra line after the last column */
             }}
             #QueueList::item {{
                 padding: 6px 8px;
@@ -2253,8 +2257,12 @@ class MainWindow(QtWidgets.QMainWindow):
                 background: #F8FAFC;
                 color: #475569;
                 border: none;
+                border-right: 1px solid #E2E8F0;  /* column separator */
                 padding: 4px 8px;
                 font-weight: 500;
+            }}
+            #QueueList QHeaderView::section:last {{
+                border-right: none;
             }}
 
             #QueueList::item {{
