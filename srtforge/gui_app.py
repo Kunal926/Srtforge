@@ -2568,7 +2568,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 QtWidgets.QSizePolicy.Fixed,
             )
 
-            # Match the footer progress bar width (fallback to 180px)
+            # Match the footer progress bar width/height (fallback to 180px)
             footer_width = 0
             footer_height = 0
             if hasattr(self, "progress_bar") and self.progress_bar is not None:
