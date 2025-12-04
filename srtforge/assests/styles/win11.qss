@@ -1,1 +1,104 @@
+QWidget {
+    background-color: #f5f6f8;
+    color: #1f2933;
+    font-family: "Segoe UI", "Inter", system-ui;
+    font-size: 14px;
+}
 
+#HeaderLabel {
+    font-size: 22px;
+    font-weight: 500;
+    padding: 12px 0;
+}
+
+#DropArea {
+    border: 2px dashed rgba(148, 163, 184, 0.8);
+    border-radius: 24px;
+    background-color: #ffffff;
+}
+
+#DropArea QLabel {
+    color: #475569;
+}
+
+QGroupBox {
+    border: 1px solid #e2e8f0;
+    border-radius: 18px;
+    margin-top: 16px;
+    padding: 20px;
+    background-color: #ffffff;
+}
+
+QGroupBox::title {
+    subcontrol-origin: margin;
+    left: 24px;
+    top: 8px;
+    padding: 0 6px;
+    color: #0f172a;
+}
+
+QPushButton {
+    background-color: {ACCENT_COLOR};
+    border: 1px solid {ACCENT_COLOR};
+    border-radius: 12px;
+    color: #ffffff;
+    padding: 10px 22px;
+    font-weight: 600;
+}
+
+QPushButton:hover {
+    background-color: {ACCENT_COLOR_LIGHT};
+    border-color: {ACCENT_COLOR_LIGHT};
+}
+
+QPushButton:disabled {
+    background-color: rgba(148, 163, 184, 0.6);
+    border-color: rgba(148, 163, 184, 0.6);
+    color: rgba(15, 23, 42, 0.6);
+}
+
+QListWidget,
+QPlainTextEdit,
+QComboBox,
+QLineEdit {
+    border: 1px solid #e2e8f0;
+    border-radius: 12px;
+    padding: 6px 10px;
+    background-color: #ffffff;
+}
+
+QPlainTextEdit {
+    background-color: #0f172a;
+    color: #e2e8f0;
+    font-family: "Cascadia Code", Consolas, monospace;
+}
+
+QComboBox QAbstractItemView {
+    border-radius: 12px;
+    border: 1px solid #cbd5f5;
+    selection-background-color: {ACCENT_COLOR};
+}
+
+QCheckBox {
+    padding: 4px 0;
+}
+
+QScrollBar:vertical {
+    background: transparent;
+    width: 10px;
+    margin: 0;
+}
+
+QScrollBar::handle:vertical {
+    background: rgba(15, 23, 42, 0.2);
+    border-radius: 5px;
+}
+
+QScrollBar::handle:vertical:hover {
+    background: rgba(15, 23, 42, 0.4);
+}
+
+QScrollBar::add-line:vertical,
+QScrollBar::sub-line:vertical {
+    height: 0;
+}
