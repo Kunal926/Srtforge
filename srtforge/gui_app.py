@@ -1704,6 +1704,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # Sleek progress bar, only visible while processing
         self.progress_bar = QtWidgets.QProgressBar()
+        self.progress_bar.setObjectName("FooterProgressBar")
         self.progress_bar.setMaximumWidth(180)
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(0)
@@ -2557,22 +2558,34 @@ class MainWindow(QtWidgets.QMainWindow):
 
             # Per-file progress bar in the "Progress" column
             progress = QtWidgets.QProgressBar()
+            progress.setObjectName("QueueProgressBar")
             progress.setRange(0, 100)
             progress.setValue(0)
             progress.setTextVisible(False)
+            # Don't let it stretch vertically with the row
+            progress.setSizePolicy(
+                QtWidgets.QSizePolicy.Fixed,
+                QtWidgets.QSizePolicy.Fixed,
+            )
 
             # Match the footer progress bar width (fallback to 180px)
             footer_width = 0
-            if hasattr(self, "progress_bar"):
+            footer_height = 0
+            if hasattr(self, "progress_bar") and self.progress_bar is not None:
                 footer_width = self.progress_bar.maximumWidth()
+                footer_height = self.progress_bar.sizeHint().height()
             if footer_width <= 0:
                 footer_width = 180
+            if footer_height <= 0:
+                footer_height = progress.sizeHint().height()
             progress.setFixedWidth(footer_width)
+            progress.setFixedHeight(footer_height)
 
-            # Only visible while the file is actually processing
+            # Attach to the row first…
+            self.queue_list.setItemWidget(item, 2, progress)
+            # …then hide it so queued items don’t show a bar
             progress.setVisible(False)
 
-            self.queue_list.setItemWidget(item, 2, progress)
             self._item_progress[str(path)] = progress
 
             # Cache duration for total in card footer
@@ -2614,6 +2627,10 @@ class MainWindow(QtWidgets.QMainWindow):
 
         if not has_items:
             self._reset_queue_progress_bar()
+
+        # When nothing is running, keep all row progress bars hidden
+        if not self._worker:
+            self._hide_all_row_progress_bars()
 
         self._update_queue_summary()
 
@@ -2718,6 +2735,12 @@ class MainWindow(QtWidgets.QMainWindow):
             self.progress_bar.setVisible(False)
             self.progress_bar.setValue(0)
 
+    def _hide_all_row_progress_bars(self) -> None:
+        """Hide every per-file progress bar in the queue list."""
+        for bar in self._item_progress.values():
+            if isinstance(bar, QtWidgets.QProgressBar):
+                bar.setVisible(False)
+
     # (embed panel handling removed — lives in OptionsDialog now)
 
     def _start_processing(self) -> None:
@@ -2803,6 +2826,8 @@ class MainWindow(QtWidgets.QMainWindow):
         if self._log_tailer:
             self._log_tailer.start()
         self._append_log(f"Processing {path}")
+        # Ensure only this file's bar is visible
+        self._hide_all_row_progress_bars()
         self._set_queue_item_status(path, "Processing…")
         self._set_queue_item_progress(path, 0)
 
