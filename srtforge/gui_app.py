@@ -99,6 +99,27 @@ class QueueItemDelegate(QtWidgets.QStyledItemDelegate):
         style.drawControl(QtWidgets.QStyle.ControlElement.CE_ItemViewItem, opt, painter, opt.widget)
 
 
+class NoFocusFrameStyle(QtWidgets.QProxyStyle):
+    """
+    Proxy style that disables the dotted focus rectangle around item views.
+
+    This removes the extra inner box that appears on top of the normal
+    selection highlight in the queue list.
+    """
+
+    def drawPrimitive(
+        self,
+        element: QtWidgets.QStyle.PrimitiveElement,
+        option: QtWidgets.QStyleOption,
+        painter: QtGui.QPainter,
+        widget: Optional[QtWidgets.QWidget] = None,
+    ) -> None:  # type: ignore[override]
+        if element == QtWidgets.QStyle.PrimitiveElement.PE_FrameFocusRect:
+            # Skip drawing the focus frame entirely
+            return
+        super().drawPrimitive(element, option, painter, widget)
+
+
 def _normalize_paths(paths: Iterable[str]) -> List[Path]:
     unique: List[Path] = []
     seen = set()
@@ -1679,7 +1700,7 @@ class MainWindow(QtWidgets.QMainWindow):
             "Duration",
             "ETA",
             "Progress",
-            "Open",
+            "Output",
         ])
         # width‑based truncation (Explorer‑style)
         self.queue_list.setTextElideMode(QtCore.Qt.TextElideMode.ElideRight)
@@ -1717,6 +1738,9 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # 🔧 Remove inner focus border (fixes 'double boxing')
         self.queue_list.setItemDelegate(QueueItemDelegate(self.queue_list))
+
+        # 🔧 Also remove the global focus frame that adds a second rectangle
+        self.queue_list.setStyle(NoFocusFrameStyle(self.queue_list.style()))
 
         self.queue_stack.addWidget(self.queue_list)
 
@@ -2489,6 +2513,73 @@ class MainWindow(QtWidgets.QMainWindow):
             }}
             """
 
+        # ---- Per-row "Open…" button + its menu --------------------------------
+        if self._dark_mode:
+            open_text = "#E5E7EB"
+            open_bg = "rgba(15, 23, 42, 0.85)"
+            open_border = "rgba(148, 163, 184, 0.60)"
+            open_hover = "rgba(59, 130, 246, 0.45)"
+            open_disabled = "#4B5563"
+            menu_bg = "#020617"
+            menu_border = "#111827"
+            menu_item = "#E5E7EB"
+            menu_item_hover = "rgba(59, 130, 246, 0.40)"
+        else:
+            open_text = "#0F172A"
+            open_bg = "#FFFFFF"
+            open_border = "#CBD5E1"
+            open_hover = "rgba(59, 130, 246, 0.10)"
+            open_disabled = "#CBD5E1"
+            menu_bg = "#FFFFFF"
+            menu_border = "#E2E8F0"
+            menu_item = "#0F172A"
+            menu_item_hover = "rgba(59, 130, 246, 0.12)"
+
+        custom += f"""
+        QToolButton#QueueOpenButton {{
+            background-color: {open_bg};
+            border-radius: 999px;
+            border: 1px solid {open_border};
+            padding: 3px 14px;
+            color: {open_text};
+        }}
+        QToolButton#QueueOpenButton:disabled {{
+            background-color: transparent;
+            border-color: {open_disabled};
+            color: {open_disabled};
+        }}
+        QToolButton#QueueOpenButton:hover {{
+            background-color: {open_hover};
+        }}
+        QToolButton#QueueOpenButton:pressed {{
+            background-color: {darker.name()};
+        }}
+        /* Hide the tiny default menu arrow; the ellipsis already communicates a menu */
+        QToolButton#QueueOpenButton::menu-indicator {{
+            image: none;
+            width: 0px;
+        }}
+
+        QMenu#QueueOpenMenu {{
+            background-color: {menu_bg};
+            border: 1px solid {menu_border};
+            border-radius: 10px;
+            padding: 4px 0;
+        }}
+        QMenu#QueueOpenMenu::item {{
+            padding: 6px 18px;
+            color: {menu_item};
+        }}
+        QMenu#QueueOpenMenu::item:selected {{
+            background-color: {menu_item_hover};
+        }}
+        QMenu#QueueOpenMenu::separator {{
+            height: 1px;
+            background: rgba(148, 163, 184, 0.40);
+            margin: 4px 12px;
+        }}
+        """
+
         self.setStyleSheet(base_qss + custom)
 
     def _update_theme_toggle_label(self) -> None:
@@ -2687,6 +2778,7 @@ class MainWindow(QtWidgets.QMainWindow):
             open_button.setEnabled(False)
 
             menu = QtWidgets.QMenu(open_button)
+            menu.setObjectName("QueueOpenMenu")  # for styling
             open_button.setMenu(menu)
             open_button.setPopupMode(QtWidgets.QToolButton.ToolButtonPopupMode.InstantPopup)
 
