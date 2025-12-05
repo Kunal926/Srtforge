@@ -1617,7 +1617,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.queue_list.setRootIsDecorated(False)
         self.queue_list.setItemsExpandable(False)
         self.queue_list.setIndentation(0)
-        self.queue_list.setHeaderLabels(["Name", "Status", "Progress"])
+        # Name, Status, Duration, ETA, Progress
+        self.queue_list.setHeaderLabels(["Name", "Status", "Duration", "ETA", "Progress"])
         # width‑based truncation (Explorer‑style)
         self.queue_list.setTextElideMode(QtCore.Qt.TextElideMode.ElideRight)
         self.queue_list.setMinimumHeight(160)
@@ -1627,15 +1628,19 @@ class MainWindow(QtWidgets.QMainWindow):
         header.setStretchLastSection(False)
         header.setSectionsMovable(False)
         # Allow the user to drag the Name column like in Explorer
-        header.setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeMode.Interactive)
-        header.setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(2, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeMode.Interactive)          # Name
+        header.setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)    # Status
+        header.setSectionResizeMode(2, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)    # Duration
+        header.setSectionResizeMode(3, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)    # ETA
+        header.setSectionResizeMode(4, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)    # Progress
         header.setMinimumSectionSize(80)
         header.resizeSection(1, 140)
-        header.resizeSection(2, 120)
+        header.resizeSection(2, 90)
+        header.resizeSection(3, 120)
+        header.resizeSection(4, 120)
 
         # 🔧 Track the progress column index and hide it by default
-        self._progress_column = 2
+        self._progress_column = 4
         header.setSectionHidden(self._progress_column, True)
 
         # 🔧 Remove inner focus border (fixes 'double boxing')
@@ -2550,8 +2555,10 @@ class MainWindow(QtWidgets.QMainWindow):
             item = QtWidgets.QTreeWidgetItem()
             # Full filename; truncation handled by view + header width
             item.setText(0, path.name)
-            # New status column
+            # Status
             item.setText(1, "Queued")
+            # Duration (filled below once we know it)
+            # ETA (column 3) will be filled during processing
             # store the full path on column 0
             item.setData(0, QtCore.Qt.ItemDataRole.UserRole, str(path))
             # tooltip showing the full path
@@ -2590,12 +2597,14 @@ class MainWindow(QtWidgets.QMainWindow):
 
             self._item_progress[str(path)] = progress
 
-            # Cache duration for total in card footer
+            # Cache duration for total in card footer and populate the Duration column
             try:
                 duration_s = _probe_media_duration_ffprobe(path, ffprobe)
             except Exception:
                 duration_s = 0.0
-            self._queue_duration_cache[str(path)] = float(duration_s or 0.0)
+            duration_s = float(duration_s or 0.0)
+            self._queue_duration_cache[str(path)] = duration_s
+            item.setText(2, _format_hms(duration_s))
 
         self._update_start_state()
 
@@ -2657,13 +2666,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if total_s <= 0:
             summary = f"{count} file{'s' if count != 1 else ''} in queue"
         else:
-            total_seconds = int(round(total_s))
-            minutes, secs = divmod(total_seconds, 60)
-            hours, minutes = divmod(minutes, 60)
-            if hours:
-                dur_str = f"{hours:d}:{minutes:02d}:{secs:02d}"
-            else:
-                dur_str = f"{minutes:02d}:{secs:02d}"
+            dur_str = _format_hms(total_s)
             summary = (
                 f"{count} file{'s' if count != 1 else ''} – Total duration: {dur_str}"
             )
@@ -2739,7 +2742,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 item = self.queue_list.topLevelItem(i)
                 raw = item.data(0, QtCore.Qt.ItemDataRole.UserRole)
                 if raw and Path(str(raw)) == path:
-                    widget = self.queue_list.itemWidget(item, 2)
+                    widget = self.queue_list.itemWidget(item, self._progress_column)
                     if isinstance(widget, QtWidgets.QProgressBar):
                         bar = widget
                         self._item_progress[key] = bar
@@ -2748,6 +2751,34 @@ class MainWindow(QtWidgets.QMainWindow):
         if bar is not None:
             value = max(0, min(100, int(percent)))
             bar.setValue(value)
+
+    def _set_queue_item_eta(self, media: str, remaining_s: float | None) -> None:
+        """Update the ETA column (3) for the given media row."""
+
+        if not hasattr(self, "queue_list"):
+            return
+
+        target = Path(media)
+        text = ""
+        if remaining_s is not None and remaining_s > 0:
+            total = int(round(remaining_s))
+            minutes, secs = divmod(total, 60)
+            text = f"{minutes:02d}:{secs:02d}"
+
+        for i in range(self.queue_list.topLevelItemCount()):
+            item = self.queue_list.topLevelItem(i)
+            raw = item.data(0, QtCore.Qt.ItemDataRole.UserRole)
+            if raw and Path(str(raw)) == target:
+                item.setText(3, text)
+                break
+
+    def _clear_all_eta_cells(self) -> None:
+        if not hasattr(self, "queue_list"):
+            return
+
+        for i in range(self.queue_list.topLevelItemCount()):
+            item = self.queue_list.topLevelItem(i)
+            item.setText(3, "")
 
     def _update_queue_progress_bar(self, current_file_fraction: float) -> None:
         """Update the footer progress bar to reflect whole-queue progress."""
@@ -2805,7 +2836,7 @@ class MainWindow(QtWidgets.QMainWindow):
         for i in range(self.queue_list.topLevelItemCount()):
             item = self.queue_list.topLevelItem(i)
             item.setText(1, "Queued")
-            widget = self.queue_list.itemWidget(item, 2)
+            widget = self.queue_list.itemWidget(item, self._progress_column)
             if isinstance(widget, QtWidgets.QProgressBar):
                 widget.setValue(0)
                 widget.setVisible(False)  # hide until we start processing this file
@@ -2893,6 +2924,7 @@ class MainWindow(QtWidgets.QMainWindow):
         estimate = self._eta_memory.estimate(self._eta_mode_gpu, duration_s)
         if estimate > 0:
             self._set_eta(estimate)
+            self._set_queue_item_eta(path, estimate)
         else:
             short = _elide_filename(Path(path).name, max_chars=40)
             self.eta_label.setText(f"Processing {short}")
@@ -3000,6 +3032,8 @@ class MainWindow(QtWidgets.QMainWindow):
     def _clear_eta(self) -> None:
         self._eta_deadline = None
         self._eta_total = 0.0
+        # Clear ETA column for all rows
+        self._clear_all_eta_cells()
         self._eta_media = None
         if hasattr(self, "eta_label"):
             self.eta_label.setText("Idle")
@@ -3030,9 +3064,10 @@ class MainWindow(QtWidgets.QMainWindow):
                 f"Processing {basename} ({percent:3d}%) – ETA ~ {minutes:02d}:{secs:02d}"
             )
 
-        # Update the row progress bar for the current file
+        # Update the row progress bar and ETA cell for the current file
         if self._eta_media:
             self._set_queue_item_progress(self._eta_media, percent)
+            self._set_queue_item_eta(self._eta_media, remaining)
 
         # And update the whole-queue bar in the footer
         self._update_queue_progress_bar(progress)
@@ -3159,6 +3194,19 @@ def _probe_media_duration_ffprobe_cmd(ffprobe_bin: Optional[Path], media: Path) 
 
 def _probe_media_duration_ffprobe(media: Path, ffprobe_bin: Optional[Path]) -> float:
     return _probe_media_duration_ffprobe_cmd(ffprobe_bin, media)
+
+
+def _format_hms(seconds: float) -> str:
+    """Format seconds as H:MM:SS or MM:SS; return '–' for unknown."""
+
+    if seconds <= 0:
+        return "–"
+    total = int(round(seconds))
+    minutes, secs = divmod(total, 60)
+    hours, minutes = divmod(minutes, 60)
+    if hours:
+        return f"{hours:d}:{minutes:02d}:{secs:02d}"
+    return f"{minutes:02d}:{secs:02d}"
 
 
 class _EtaMemory:
