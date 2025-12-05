@@ -2828,6 +2828,11 @@ class MainWindow(QtWidgets.QMainWindow):
             if header and hasattr(self, "_progress_column"):
                 header.setSectionHidden(self._progress_column, not running)
 
+        # When a run starts, make sure all row bars are hidden until the
+        # specific file's handler shows its own bar.
+        if running:
+            self._hide_all_row_progress_bars()
+
     def _append_log(self, message: str) -> None:
         self.log_view.appendPlainText(message)
         self.log_view.verticalScrollBar().setValue(self.log_view.verticalScrollBar().maximum())
