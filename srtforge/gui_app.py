@@ -1115,6 +1115,7 @@ class OptionsDialog(QtWidgets.QDialog):
         super().__init__(parent)
         self.setWindowTitle("Options")
         self.resize(760, 520)
+        self._eta_reset_requested = False
         layout = QtWidgets.QVBoxLayout(self)
         self.tabs = QtWidgets.QTabWidget(self)
         layout.addWidget(self.tabs)
@@ -1238,6 +1239,16 @@ class OptionsDialog(QtWidgets.QDialog):
         self.burn_cb = QtWidgets.QCheckBox("Burn subtitles (hard sub)")
         self.burn_cb.setChecked(bool(initial_basic.get("burn_subtitles", False)))
         grid.addWidget(self.burn_cb, row, 0, 1, 2)
+        row += 1
+
+        # Reset ETA training data (clears eta_memory.json)
+        self.reset_eta_button = QtWidgets.QPushButton("Reset ETA training data")
+        self.reset_eta_button.setObjectName("ResetEtaButton")
+        self.reset_eta_button.setToolTip(
+            "Forget previously measured ETAs so future runs can retrain from scratch."
+        )
+        self.reset_eta_button.clicked.connect(self._on_reset_eta_clicked)
+        grid.addWidget(self.reset_eta_button, row, 0, 1, 2)
         row += 1
 
         self.cleanup_cb = QtWidgets.QCheckBox("Free GPU memory when stopping")
@@ -1389,6 +1400,22 @@ class OptionsDialog(QtWidgets.QDialog):
             },
         }
 
+    def _on_reset_eta_clicked(self) -> None:
+        """Mark ETA memory for reset and inform the user."""
+        self._eta_reset_requested = True
+        QtWidgets.QMessageBox.information(
+            self,
+            "ETA training reset",
+            (
+                "Existing ETA measurements will be cleared when you press OK.\n"
+                "The next few runs may have less accurate ETAs while the model retrains."
+            ),
+        )
+
+    def eta_reset_requested(self) -> bool:
+        """Return True if the user requested ETA training reset in this session."""
+        return bool(self._eta_reset_requested)
+
 
 class MainWindow(QtWidgets.QMainWindow):
     """Main application window."""
@@ -1538,9 +1565,19 @@ class MainWindow(QtWidgets.QMainWindow):
         self.options_button.setObjectName("OptionsButton")
         self.options_button.setCursor(pointer_cursor)
         self.options_button.setToolTip("Options")
-        self.options_button.setIcon(
-            self.style().standardIcon(QtWidgets.QStyle.StandardPixmap.SP_FileDialogDetailedView)
-        )
+
+        # Prefer a gear icon from the current icon theme, with a Unicode fallback.
+        gear_icon = QtGui.QIcon.fromTheme("settings")
+        if gear_icon.isNull():
+            gear_icon = QtGui.QIcon.fromTheme("preferences-system")
+
+        if not gear_icon.isNull():
+            self.options_button.setIcon(gear_icon)
+            self.options_button.setToolButtonStyle(QtCore.Qt.ToolButtonIconOnly)
+        else:
+            self.options_button.setText("⚙")
+            self.options_button.setToolButtonStyle(QtCore.Qt.ToolButtonTextOnly)
+
         self.options_button.clicked.connect(self._open_options_dialog)
         actions_row.addWidget(self.options_button)
 
@@ -1634,6 +1671,13 @@ class MainWindow(QtWidgets.QMainWindow):
         header.setSectionResizeMode(3, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)    # ETA
         header.setSectionResizeMode(4, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)    # Progress
         header.setMinimumSectionSize(80)
+
+        # Make the Name column wide enough for roughly ~50 characters
+        fm = self.queue_list.fontMetrics()
+        avg_char = max(1, fm.averageCharWidth())
+        name_width = max(320, avg_char * 50)
+        header.resizeSection(0, name_width)
+
         header.resizeSection(1, 140)
         header.resizeSection(2, 90)
         header.resizeSection(3, 120)
@@ -3001,6 +3045,8 @@ class MainWindow(QtWidgets.QMainWindow):
         dialog = OptionsDialog(parent=self, initial_basic=initial_basic, initial_settings=settings)
         if dialog.exec() != QtWidgets.QDialog.Accepted:
             return
+
+        reset_eta = dialog.eta_reset_requested()
         basic = dialog.basic_values()
         self._basic_options = basic
         payload = dialog.settings_payload(prefer_gpu=basic["prefer_gpu"])
@@ -3011,6 +3057,13 @@ class MainWindow(QtWidgets.QMainWindow):
                 pass
         self._runtime_config_path = self._write_runtime_yaml(payload)
         self._append_log(f"Using custom options for this session ({self._runtime_config_path})")
+
+        if reset_eta:
+            try:
+                self._eta_memory.reset()
+                self._append_log("ETA training data cleared; future runs will retrain from new jobs.")
+            except Exception as exc:
+                self._append_log(f"Failed to reset ETA training data: {exc}")
 
     def _write_runtime_yaml(self, payload: dict) -> str:
         fd, path = tempfile.mkstemp(prefix="srtforge_gui_", suffix=".yaml")
@@ -3040,6 +3093,51 @@ class MainWindow(QtWidgets.QMainWindow):
         if self._eta_timer.isActive():
             self._eta_timer.stop()
 
+    def _estimate_queue_remaining(self, current_remaining: float) -> float:
+        """Return an estimated remaining wall time for the entire queue.
+
+        ``current_remaining`` is the remaining ETA for the active file in seconds.
+        """
+        remaining = max(0.0, float(current_remaining))
+
+        # If the queue list or ETA memory are not available, fall back to the
+        # current file only.
+        if not hasattr(self, "queue_list") or not hasattr(self, "_eta_memory"):
+            return remaining
+
+        current_path = Path(self._eta_media) if self._eta_media else None
+
+        for i in range(self.queue_list.topLevelItemCount()):
+            item = self.queue_list.topLevelItem(i)
+            raw = item.data(0, QtCore.Qt.ItemDataRole.UserRole)
+            if not raw:
+                continue
+
+            path = Path(str(raw))
+            # The active file is already accounted for via current_remaining.
+            if current_path is not None and path == current_path:
+                continue
+
+            status = item.text(1)
+            if status in {"Completed", "Failed"}:
+                continue
+
+            duration_s = float(self._queue_duration_cache.get(str(path), 0.0))
+            if duration_s <= 0:
+                continue
+
+            try:
+                eta_for_file = float(
+                    self._eta_memory.estimate(self._eta_mode_gpu, duration_s)
+                )
+            except Exception:
+                # If for some reason the estimator fails, assume 1x real time.
+                eta_for_file = duration_s
+
+            remaining += max(0.0, eta_for_file)
+
+        return remaining
+
     def _tick_eta(self) -> None:
         if self._eta_deadline is None or self._eta_total <= 0:
             if hasattr(self, "eta_label"):
@@ -3048,31 +3146,36 @@ class MainWindow(QtWidgets.QMainWindow):
             return
 
         now = time.monotonic()
-        remaining = max(0.0, self._eta_deadline - now)
-        elapsed = self._eta_total - remaining
-        progress = max(0.0, min(1.0, elapsed / self._eta_total))
-        percent = int(progress * 100)
+        # Per-file numbers
+        remaining_file = max(0.0, self._eta_deadline - now)
+        elapsed_file = self._eta_total - remaining_file
+        progress_file = max(0.0, min(1.0, elapsed_file / self._eta_total))
+        percent_file = int(progress_file * 100)
 
-        minutes, secs = divmod(int(round(remaining)), 60)
+        # Whole-queue ETA: current file + all queued files.
+        queue_remaining = self._estimate_queue_remaining(remaining_file)
+        queue_remaining = max(0.0, queue_remaining)
+
         if self._eta_media:
             basename = _elide_filename(Path(self._eta_media).name, max_chars=40)
         else:
-            basename = "current file"
+            basename = "queue"
 
         if hasattr(self, "eta_label"):
+            queue_eta_str = _format_hms(queue_remaining)
             self.eta_label.setText(
-                f"Processing {basename} ({percent:3d}%) – ETA ~ {minutes:02d}:{secs:02d}"
+                f"Processing {basename} ({percent_file:3d}%) – Queue ETA ~ {queue_eta_str}"
             )
 
-        # Update the row progress bar and ETA cell for the current file
+        # Update the row progress bar and ETA cell for the current file (per-file ETA).
         if self._eta_media:
-            self._set_queue_item_progress(self._eta_media, percent)
-            self._set_queue_item_eta(self._eta_media, remaining)
+            self._set_queue_item_progress(self._eta_media, percent_file)
+            self._set_queue_item_eta(self._eta_media, remaining_file)
 
-        # And update the whole-queue bar in the footer
-        self._update_queue_progress_bar(progress)
+        # Footer progress bar tracks whole-queue completion (files done + current fraction).
+        self._update_queue_progress_bar(progress_file)
 
-        if remaining <= 0:
+        if remaining_file <= 0:
             self._eta_timer.stop()
 
     def _on_eta_measured(self, media: str, runtime_s: float, duration_s: float, prefer_gpu: bool) -> None:
@@ -3214,15 +3317,32 @@ class _EtaMemory:
 
     def __init__(self) -> None:
         self.path = LOGS_DIR / "eta_memory.json"
-        self.data = {"gpu": {"factor": 1.0, "samples": 0}, "cpu": {"factor": 1.0, "samples": 0}}
+        self.data = self._defaults()
         self._load()
+
+    def _defaults(self) -> dict:
+        return {
+            "gpu": {"factor": 1.0, "samples": 0},
+            "cpu": {"factor": 1.0, "samples": 0},
+        }
 
     def _load(self) -> None:
         try:
             if self.path.exists():
                 self.data = json.loads(self.path.read_text(encoding="utf-8"))
         except Exception:
-            self.data = {"gpu": {"factor": 1.0, "samples": 0}, "cpu": {"factor": 1.0, "samples": 0}}
+            self.data = self._defaults()
+
+    def reset(self) -> None:
+        """Clear persisted ETA history so future runs retrain from scratch."""
+        self.data = self._defaults()
+        try:
+            if self.path.exists():
+                self.path.unlink()
+        except Exception:
+            # If deletion fails (permissions, etc.), just overwrite with defaults.
+            pass
+        self._save()
 
     def _save(self) -> None:
         try:
