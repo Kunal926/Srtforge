@@ -2793,7 +2793,7 @@ class MainWindow(QtWidgets.QMainWindow):
             # the latest on-disk state (e.g. diagnostics written after the SRT).
             menu.aboutToShow.connect(lambda k=key, m=menu: self._populate_outputs_menu(k, m))
 
-            # Attach the button to the "Open" column for this row
+            # Attach the button to the Output column
             if hasattr(self, "_outputs_column"):
                 self.queue_list.setItemWidget(item, self._outputs_column, open_button)
 
