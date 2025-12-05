@@ -2560,13 +2560,12 @@ class MainWindow(QtWidgets.QMainWindow):
             self.queue_list.addTopLevelItem(item)
             existing.add(path)
 
-            # Per-file progress bar in the "Progress" column
+            # Per-file progress bar we will attach ONLY while this file is processing
             progress = QtWidgets.QProgressBar()
             progress.setObjectName("QueueProgressBar")
             progress.setRange(0, 100)
             progress.setValue(0)
             progress.setTextVisible(False)
-            # Don't let it stretch vertically with the row
             progress.setSizePolicy(
                 QtWidgets.QSizePolicy.Fixed,
                 QtWidgets.QSizePolicy.Fixed,
@@ -2585,9 +2584,8 @@ class MainWindow(QtWidgets.QMainWindow):
             progress.setFixedWidth(footer_width)
             progress.setFixedHeight(footer_height)
 
-            # Attach to the row first…
-            self.queue_list.setItemWidget(item, 2, progress)
-            # …then hide it so queued items don’t show a bar
+            # IMPORTANT: do NOT attach it to the tree yet; we only do that when the
+            # file actually starts processing.
             progress.setVisible(False)
 
             self._item_progress[str(path)] = progress
@@ -2674,22 +2672,60 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _set_queue_item_status(self, media: str, status: str) -> None:
         path = Path(media)
+        target_item: Optional[QtWidgets.QTreeWidgetItem] = None
+
+        # First, locate the target item and clear any existing row bars
         for i in range(self.queue_list.topLevelItemCount()):
             item = self.queue_list.topLevelItem(i)
             raw = item.data(0, QtCore.Qt.ItemDataRole.UserRole)
             if not raw:
                 continue
+
+            # Update status text for the matching row
             if Path(str(raw)) == path:
-                # Column 1 holds the status text
+                target_item = item
                 item.setText(1, status)
 
-                # Column 2: show progress bar only while processing
-                widget = self.queue_list.itemWidget(item, 2)
-                if isinstance(widget, QtWidgets.QProgressBar):
-                    show = status.lower().startswith("processing")
-                    widget.setVisible(show)
+            # Hide any bar currently attached to this row
+            widget = self.queue_list.itemWidget(item, self._progress_column)
+            if isinstance(widget, QtWidgets.QProgressBar):
+                widget.setVisible(False)
 
-                break
+        if target_item is None:
+            return
+
+        # Only the currently processing file gets a visible progress bar
+        if status.lower().startswith("processing"):
+            key = str(path)
+            bar = self._item_progress.get(key)
+
+            # Defensive: if for some reason there isn't a cached bar, create one now
+            if bar is None:
+                bar = QtWidgets.QProgressBar()
+                bar.setObjectName("QueueProgressBar")
+                bar.setRange(0, 100)
+                bar.setValue(0)
+                bar.setTextVisible(False)
+                bar.setSizePolicy(
+                    QtWidgets.QSizePolicy.Fixed,
+                    QtWidgets.QSizePolicy.Fixed,
+                )
+                footer_width = 0
+                footer_height = 0
+                if hasattr(self, "progress_bar") and self.progress_bar is not None:
+                    footer_width = self.progress_bar.maximumWidth()
+                    footer_height = self.progress_bar.sizeHint().height()
+                if footer_width <= 0:
+                    footer_width = 180
+                if footer_height <= 0:
+                    footer_height = bar.sizeHint().height()
+                bar.setFixedWidth(footer_width)
+                bar.setFixedHeight(footer_height)
+                self._item_progress[key] = bar
+
+            # Attach the bar to the Progress column for this row and show it
+            self.queue_list.setItemWidget(target_item, self._progress_column, bar)
+            bar.setVisible(True)
 
     def _set_queue_item_progress(self, media: str, percent: int) -> None:
         """Update the per-file progress bar in the queue list, if present."""
@@ -2741,9 +2777,13 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _hide_all_row_progress_bars(self) -> None:
         """Hide every per-file progress bar in the queue list."""
-        for bar in self._item_progress.values():
-            if isinstance(bar, QtWidgets.QProgressBar):
-                bar.setVisible(False)
+        if not hasattr(self, "queue_list"):
+            return
+        for i in range(self.queue_list.topLevelItemCount()):
+            item = self.queue_list.topLevelItem(i)
+            widget = self.queue_list.itemWidget(item, self._progress_column)
+            if isinstance(widget, QtWidgets.QProgressBar):
+                widget.setVisible(False)
 
     # (embed panel handling removed — lives in OptionsDialog now)
 
