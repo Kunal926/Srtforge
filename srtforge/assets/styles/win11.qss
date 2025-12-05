@@ -102,3 +102,18 @@ QScrollBar::add-line:vertical,
 QScrollBar::sub-line:vertical {
     height: 0;
 }
+
+QToolButton#QueueOpenButton {
+    border: none;
+    padding: 2px 8px;
+    border-radius: 999px;
+    color: #2563EB;
+}
+
+QToolButton#QueueOpenButton:disabled {
+    color: #9CA3AF;
+}
+
+QToolButton#QueueOpenButton:hover:!disabled {
+    background-color: rgba(37, 99, 235, 0.08);
+}

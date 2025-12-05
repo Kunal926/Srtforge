@@ -1472,6 +1472,13 @@ class MainWindow(QtWidgets.QMainWindow):
         self._queue_duration_cache: dict[str, float] = {}
         # Per-row progress widgets (queue list column)
         self._item_progress: dict[str, QtWidgets.QProgressBar] = {}
+        # NEW: per-row "Open…" buttons
+        self._open_buttons: dict[str, QtWidgets.QToolButton] = {}
+        # NEW: per-file output artifacts (SRT, diagnostics, log)
+        # keys: media path string; values: {"srt": str, "diag_csv": str, "diag_json": str, "run_id": str, "log": str}
+        self._item_outputs: dict[str, dict[str, str]] = {}
+        # NEW: map media path -> run_id for opening logs
+        self._file_run_ids: dict[str, str] = {}
         # Queue-level progress (for the footer progress bar)
         self._queue_total_count: int = 0
         self._queue_completed_count: int = 0
@@ -1665,8 +1672,15 @@ class MainWindow(QtWidgets.QMainWindow):
         self.queue_list.setRootIsDecorated(False)
         self.queue_list.setItemsExpandable(False)
         self.queue_list.setIndentation(0)
-        # Name, Status, Duration, ETA, Progress
-        self.queue_list.setHeaderLabels(["Name", "Status", "Duration", "ETA", "Progress"])
+        # Name, Status, Duration, ETA, Progress, Open
+        self.queue_list.setHeaderLabels([
+            "Name",
+            "Status",
+            "Duration",
+            "ETA",
+            "Progress",
+            "Open",
+        ])
         # width‑based truncation (Explorer‑style)
         self.queue_list.setTextElideMode(QtCore.Qt.TextElideMode.ElideRight)
         self.queue_list.setMinimumHeight(160)
@@ -1681,6 +1695,7 @@ class MainWindow(QtWidgets.QMainWindow):
         header.setSectionResizeMode(2, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)    # Duration
         header.setSectionResizeMode(3, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)    # ETA
         header.setSectionResizeMode(4, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)    # Progress
+        header.setSectionResizeMode(5, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)    # Open
         header.setMinimumSectionSize(80)
 
         # Make the Name column wide enough for roughly ~50 characters
@@ -1693,9 +1708,12 @@ class MainWindow(QtWidgets.QMainWindow):
         header.resizeSection(2, 90)
         header.resizeSection(3, 120)
         header.resizeSection(4, 120)
+        header.resizeSection(5, 90)
 
         # 🔧 Track the progress column index (progress bar widgets are attached per-row)
         self._progress_column = 4
+        # 🔧 Track the outputs column index (per-row "Open…" button)
+        self._outputs_column = 5
 
         # 🔧 Remove inner focus border (fixes 'double boxing')
         self.queue_list.setItemDelegate(QueueItemDelegate(self.queue_list))
@@ -2654,7 +2672,35 @@ class MainWindow(QtWidgets.QMainWindow):
             # file actually starts processing.
             progress.setVisible(False)
 
-            self._item_progress[str(path)] = progress
+            key = str(path)
+
+            self._item_progress[key] = progress
+
+            # NEW: per-row "Open…" button (starts disabled; enabled when outputs/logs exist)
+            open_button = QtWidgets.QToolButton()
+            open_button.setObjectName("QueueOpenButton")
+            open_button.setText("Open…")
+            open_button.setCursor(QtGui.QCursor(QtCore.Qt.CursorShape.PointingHandCursor))
+            open_button.setAutoRaise(True)
+            open_button.setToolButtonStyle(QtCore.Qt.ToolButtonStyle.ToolButtonTextOnly)
+            open_button.setFocusPolicy(QtCore.Qt.FocusPolicy.NoFocus)
+            open_button.setEnabled(False)
+
+            menu = QtWidgets.QMenu(open_button)
+            open_button.setMenu(menu)
+            open_button.setPopupMode(QtWidgets.QToolButton.ToolButtonPopupMode.InstantPopup)
+
+            # Track the button + empty artifact dict
+            self._open_buttons[key] = open_button
+            self._item_outputs.setdefault(key, {})
+
+            # Populate menu lazily right before it is shown, so we always reflect
+            # the latest on-disk state (e.g. diagnostics written after the SRT).
+            menu.aboutToShow.connect(lambda k=key, m=menu: self._populate_outputs_menu(k, m))
+
+            # Attach the button to the "Open" column for this row
+            if hasattr(self, "_outputs_column"):
+                self.queue_list.setItemWidget(item, self._outputs_column, open_button)
 
             # Cache duration for total in card footer and populate the Duration column
             try:
@@ -2677,12 +2723,20 @@ class MainWindow(QtWidgets.QMainWindow):
                 key = str(path)
                 self._queue_duration_cache.pop(key, None)
                 self._item_progress.pop(key, None)
+                # NEW: clear outputs + buttons + run id mapping
+                self._open_buttons.pop(key, None)
+                self._item_outputs.pop(key, None)
+                self._file_run_ids.pop(key, None)
         self._update_start_state()
 
     def _clear_queue(self) -> None:
         self.queue_list.clear()
         self._queue_duration_cache.clear()
         self._item_progress.clear()
+        # NEW: clear outputs + buttons + run id mapping
+        self._open_buttons.clear()
+        self._item_outputs.clear()
+        self._file_run_ids.clear()
         self._update_start_state()
 
     def _update_start_state(self) -> None:
@@ -2875,6 +2929,78 @@ class MainWindow(QtWidgets.QMainWindow):
             if isinstance(widget, QtWidgets.QProgressBar):
                 widget.setVisible(False)
 
+    def _populate_outputs_menu(self, key: str, menu: QtWidgets.QMenu) -> None:
+        """
+        Rebuild the per-row 'Open…' menu for the given media key.
+
+        Called on QMenu.aboutToShow so we can discover diagnostics/logs lazily.
+        """
+        menu.clear()
+        artifacts = self._item_outputs.get(key) or {}
+
+        # Convert stored strings to Path objects where applicable
+        srt_path = Path(artifacts["srt"]) if artifacts.get("srt") else None
+        diag_csv = Path(artifacts["diag_csv"]) if artifacts.get("diag_csv") else None
+        diag_json = Path(artifacts["diag_json"]) if artifacts.get("diag_json") else None
+        log_path = Path(artifacts["log"]) if artifacts.get("log") else None
+
+        # Lazily discover diagnostics sidecars next to the SRT if we didn't record them yet
+        if srt_path and srt_path.exists():
+            if diag_csv is None:
+                candidate = srt_path.with_suffix(srt_path.suffix + ".diag.csv")
+                if candidate.exists():
+                    diag_csv = candidate
+                    artifacts["diag_csv"] = str(candidate)
+            if diag_json is None:
+                candidate = srt_path.with_suffix(srt_path.suffix + ".diag.json")
+                if candidate.exists():
+                    diag_json = candidate
+                    artifacts["diag_json"] = str(candidate)
+
+        # Lazily derive log path from run_id, if necessary
+        run_id = artifacts.get("run_id") or self._file_run_ids.get(key)
+        if run_id and (log_path is None or not log_path.exists()):
+            candidate = LOGS_DIR / f"{run_id}.log"
+            if candidate.exists():
+                log_path = candidate
+                artifacts["log"] = str(candidate)
+
+        # Persist any new discoveries
+        self._item_outputs[key] = artifacts
+
+        has_actions = False
+
+        def _add_action(label: str, path: Optional[Path], *, open_folder: bool = False) -> None:
+            nonlocal has_actions
+            if not path or not path.exists():
+                return
+            has_actions = True
+            action = menu.addAction(label)
+
+            def _open() -> None:
+                target = path
+                if open_folder:
+                    target = path if path.is_dir() else path.parent
+                QtGui.QDesktopServices.openUrl(QtCore.QUrl.fromLocalFile(str(target)))
+
+            action.triggered.connect(_open)
+
+        # Primary entry: open the SRT in the default app
+        _add_action("SRT file", srt_path)
+        # Your "open csv" – named "Diagnostics CSV"
+        _add_action("Diagnostics CSV", diag_csv)
+        # Optional JSON diagnostic sidecar
+        _add_action("Diagnostics JSON", diag_json)
+        # Per-run log from RunLogger
+        _add_action("Run log", log_path)
+        # Convenience: open the SRT folder in Explorer/Finder
+        if srt_path and srt_path.exists():
+            _add_action("Containing folder", srt_path, open_folder=True)
+
+        if not has_actions:
+            placeholder = menu.addAction("No outputs available yet")
+            placeholder.setEnabled(False)
+
     # (embed panel handling removed — lives in OptionsDialog now)
 
     def _start_processing(self) -> None:
@@ -2993,6 +3119,54 @@ class MainWindow(QtWidgets.QMainWindow):
         self._set_queue_item_status(media, "Completed")
         self._set_queue_item_progress(media, 100)
 
+        # NEW: capture SRT + diagnostics sidecars for this row
+        key = str(media)
+        artifacts = self._item_outputs.get(key, {})
+
+        srt_path: Optional[Path] = None
+
+        # 1) Try to parse the SRT path from the summary (first segment before ';')
+        try:
+            first_part = summary.split(";", 1)[0].strip()
+        except Exception:
+            first_part = ""
+        if first_part:
+            candidate = Path(first_part).expanduser()
+            if candidate.exists():
+                srt_path = candidate
+
+        # 2) Fallback to the expected SRT location if parsing fails
+        if srt_path is None:
+            expected = _expected_srt_path(Path(media))
+            if expected.exists():
+                srt_path = expected
+
+        if srt_path is not None and srt_path.exists():
+            artifacts["srt"] = str(srt_path)
+
+            # Diagnostics are written next to the SRT by default
+            csv_candidate = srt_path.with_suffix(srt_path.suffix + ".diag.csv")
+            if csv_candidate.exists():
+                artifacts["diag_csv"] = str(csv_candidate)
+            json_candidate = srt_path.with_suffix(srt_path.suffix + ".diag.json")
+            if json_candidate.exists():
+                artifacts["diag_json"] = str(json_candidate)
+
+        # If we already know the run_id, capture the log path here too
+        run_id = self._file_run_ids.get(key)
+        if run_id:
+            artifacts["run_id"] = run_id
+            log_candidate = LOGS_DIR / f"{run_id}.log"
+            if log_candidate.exists():
+                artifacts["log"] = str(log_candidate)
+
+        self._item_outputs[key] = artifacts
+
+        # Enable the "Open…" button now that we have something to open
+        button = self._open_buttons.get(key)
+        if button and artifacts:
+            button.setEnabled(True)
+
         if self._queue_total_count:
             self._queue_completed_count = min(
                 self._queue_total_count, self._queue_completed_count + 1
@@ -3021,6 +3195,26 @@ class MainWindow(QtWidgets.QMainWindow):
     def _handle_run_log_ready(self, run_id: str) -> None:
         if self._log_tailer:
             self._log_tailer.set_run_id(run_id)
+
+        # NEW: associate this run_id with the currently active media file
+        media = self._eta_media
+        if not media:
+            return
+
+        key = str(media)
+        self._file_run_ids[key] = run_id
+
+        artifacts = self._item_outputs.get(key, {})
+        artifacts["run_id"] = run_id
+        log_candidate = LOGS_DIR / f"{run_id}.log"
+        if log_candidate.exists():
+            artifacts["log"] = str(log_candidate)
+        self._item_outputs[key] = artifacts
+
+        # As soon as we have a log, the "Open…" button is already useful
+        button = self._open_buttons.get(key)
+        if button:
+            button.setEnabled(True)
 
     def _on_queue_finished(self, stopped: bool) -> None:
         self._append_log("Queue cancelled" if stopped else "All files processed")
