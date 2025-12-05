@@ -1241,19 +1241,22 @@ class OptionsDialog(QtWidgets.QDialog):
         grid.addWidget(self.burn_cb, row, 0, 1, 2)
         row += 1
 
-        # Reset ETA training data (clears eta_memory.json)
-        self.reset_eta_button = QtWidgets.QPushButton("Reset ETA training data")
-        self.reset_eta_button.setObjectName("ResetEtaButton")
-        self.reset_eta_button.setToolTip(
-            "Forget previously measured ETAs so future runs can retrain from scratch."
-        )
-        self.reset_eta_button.clicked.connect(self._on_reset_eta_clicked)
-        grid.addWidget(self.reset_eta_button, row, 0, 1, 2)
-        row += 1
-
         self.cleanup_cb = QtWidgets.QCheckBox("Free GPU memory when stopping")
         self.cleanup_cb.setChecked(bool(initial_basic.get("cleanup_gpu", False)))
         grid.addWidget(self.cleanup_cb, row, 0, 1, 2)
+        row += 1
+
+        # Compact "Clear ETA" action (aligned like dialog buttons)
+        self.reset_eta_button = QtWidgets.QPushButton("Clear ETA history")
+        self.reset_eta_button.setObjectName("ResetEtaButton")
+        self.reset_eta_button.setToolTip(
+            "Clear stored ETA measurements so future runs can retrain from scratch."
+        )
+        self.reset_eta_button.clicked.connect(self._on_reset_eta_clicked)
+        eta_row = QtWidgets.QHBoxLayout()
+        eta_row.addStretch()
+        eta_row.addWidget(self.reset_eta_button)
+        grid.addLayout(eta_row, row, 0, 1, 2)
         row += 1
 
         # Push any extra vertical space below the controls
@@ -1647,6 +1650,14 @@ class MainWindow(QtWidgets.QMainWindow):
         self.queue_list.setSelectionMode(
             QtWidgets.QAbstractItemView.SelectionMode.ExtendedSelection
         )
+        # Row-based selection with no in-cell text editing; avoids the
+        # "double highlight" effect when clicking a cell.
+        self.queue_list.setSelectionBehavior(
+            QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows
+        )
+        self.queue_list.setEditTriggers(
+            QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers
+        )
         self.queue_list.setVerticalScrollMode(
             QtWidgets.QAbstractItemView.ScrollPerPixel
         )
@@ -1683,9 +1694,8 @@ class MainWindow(QtWidgets.QMainWindow):
         header.resizeSection(3, 120)
         header.resizeSection(4, 120)
 
-        # 🔧 Track the progress column index and hide it by default
+        # 🔧 Track the progress column index (progress bar widgets are attached per-row)
         self._progress_column = 4
-        header.setSectionHidden(self._progress_column, True)
 
         # 🔧 Remove inner focus border (fixes 'double boxing')
         self.queue_list.setItemDelegate(QueueItemDelegate(self.queue_list))
@@ -2607,6 +2617,11 @@ class MainWindow(QtWidgets.QMainWindow):
             item.setData(0, QtCore.Qt.ItemDataRole.UserRole, str(path))
             # tooltip showing the full path
             item.setToolTip(0, str(path))
+            # Do not allow in-place editing; clicking anywhere should just
+            # select the whole row.
+            flags = item.flags()
+            flags &= ~QtCore.Qt.ItemFlag.ItemIsEditable
+            item.setFlags(flags)
 
             self.queue_list.addTopLevelItem(item)
             existing.add(path)
@@ -2937,12 +2952,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.queue_list.setEnabled(not running)
         self.options_button.setEnabled(not running)
 
-        # Show the Progress column only while a job is running
-        if hasattr(self, "queue_list"):
-            header = self.queue_list.header()
-            if header and hasattr(self, "_progress_column"):
-                header.setSectionHidden(self._progress_column, not running)
-
+        # The Progress column stays visible; we only attach a bar to the
+        # row that is currently processing.
         # When a run starts, make sure all row bars are hidden until the
         # specific file's handler shows its own bar.
         if running:
