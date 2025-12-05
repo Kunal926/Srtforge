@@ -1736,11 +1736,14 @@ class MainWindow(QtWidgets.QMainWindow):
         # 🔧 Track the outputs column index (per-row "Open…" button)
         self._outputs_column = 5
 
-        # 🔧 Remove inner focus border (fixes 'double boxing')
+        # 🔧 Remove inner focus border (fixes 'double boxing') without changing
+        #     the widget's global QStyle. On some PySide6/Qt builds, wrapping
+        #     the view in a QProxyStyle (NoFocusFrameStyle) and then inserting
+        #     rows causes a native crash when the item view repaints. The
+        #     delegate alone is enough to get rid of the inner focus rectangle.
         self.queue_list.setItemDelegate(QueueItemDelegate(self.queue_list))
-
-        # 🔧 Also remove the global focus frame that adds a second rectangle
-        self.queue_list.setStyle(NoFocusFrameStyle(self.queue_list.style()))
+        # NOTE: NoFocusFrameStyle is intentionally *not* applied to
+        #       self.queue_list to avoid the crash when files are added.
 
         self.queue_stack.addWidget(self.queue_list)
 
