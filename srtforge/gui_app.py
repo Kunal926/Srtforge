@@ -77,10 +77,11 @@ def add_shadow(widget: QtWidgets.QWidget) -> None:
 
 class QueueItemDelegate(QtWidgets.QStyledItemDelegate):
     """
-    Custom delegate for the queue list that removes the inner focus rectangle.
+    Custom delegate for the queue list.
 
-    This gets rid of the 'double box' effect where you see a second
-    thinner rectangle inside the selected row.
+    It draws a single pastel highlight for the whole row and removes the
+    inner focus rectangle / darker first cell, so a row looks selected
+    only once.
     """
 
     def paint(
@@ -89,14 +90,37 @@ class QueueItemDelegate(QtWidgets.QStyledItemDelegate):
         option: QtWidgets.QStyleOptionViewItem,
         index: QtCore.QModelIndex,
     ) -> None:  # type: ignore[override]
+        # Copy + initialise the standard style option
         opt = QtWidgets.QStyleOptionViewItem(option)
         self.initStyleOption(opt, index)
 
-        # Remove the focus state so the style doesn't draw a focus rect
-        opt.state &= ~QtWidgets.QStyle.StateFlag.State_HasFocus
-
         style = opt.widget.style() if opt.widget else QtWidgets.QApplication.style()
-        style.drawControl(QtWidgets.QStyle.ControlElement.CE_ItemViewItem, opt, painter, opt.widget)
+
+        painter.save()
+
+        # Remember if this cell is selected
+        is_selected = bool(opt.state & QtWidgets.QStyle.StateFlag.State_Selected)
+
+        if is_selected:
+            # Use the app's accent colour but make it pastel, similar to the .qss
+            highlight = opt.palette.color(QtGui.QPalette.ColorRole.Highlight)
+            bg = QtGui.QColor(highlight)
+            bg.setAlpha(40)  # ≈ 15% opacity, like rgba(..., 0.14)
+            painter.fillRect(opt.rect, bg)
+
+        # Remove focus + selection before letting Qt draw the cell contents.
+        # This prevents the second, darker "inner" selection on the first column.
+        opt.state &= ~QtWidgets.QStyle.StateFlag.State_HasFocus
+        opt.state &= ~QtWidgets.QStyle.StateFlag.State_Selected
+
+        style.drawControl(
+            QtWidgets.QStyle.ControlElement.CE_ItemViewItem,
+            opt,
+            painter,
+            opt.widget,
+        )
+
+        painter.restore()
 
 
 class NoFocusFrameStyle(QtWidgets.QProxyStyle):
