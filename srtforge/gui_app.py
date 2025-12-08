@@ -1718,7 +1718,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.queue_list.setRootIsDecorated(False)
         self.queue_list.setItemsExpandable(False)
         self.queue_list.setIndentation(0)
-        # Name, Status, Duration, ETA, Progress, Open
+        # Name, Status, Duration, ETA, Progress, Output
         self.queue_list.setHeaderLabels([
             "Name",
             "Status",
@@ -1740,8 +1740,11 @@ class MainWindow(QtWidgets.QMainWindow):
         header.setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)    # Status
         header.setSectionResizeMode(2, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)    # Duration
         header.setSectionResizeMode(3, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)    # ETA
-        header.setSectionResizeMode(4, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)    # Progress
-        header.setSectionResizeMode(5, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)    # Open
+
+        # Progress + Output: interactive columns with explicit initial widths so
+        # the progress bar and "Open…" text both fit without overlapping/clipping.
+        header.setSectionResizeMode(4, QtWidgets.QHeaderView.ResizeMode.Interactive)         # Progress
+        header.setSectionResizeMode(5, QtWidgets.QHeaderView.ResizeMode.Interactive)         # Output
         header.setMinimumSectionSize(80)
 
         # Make the Name column wide enough for roughly ~50 characters
@@ -1753,13 +1756,28 @@ class MainWindow(QtWidgets.QMainWindow):
         header.resizeSection(1, 140)
         header.resizeSection(2, 90)
         header.resizeSection(3, 120)
-        header.resizeSection(4, 120)
-        header.resizeSection(5, 90)
+        # Progress column ≈ footer progress bar width
+        header.resizeSection(4, 180)
 
-        # 🔧 Track the progress column index (progress bar widgets are attached per-row)
-        self._progress_column = 4
-        # 🔧 Track the outputs column index (per-row "Open…" button)
-        self._outputs_column = 5
+        # Output column wide enough to show "Open…" fully
+        header.resizeSection(5, 110)
+
+        # 🔧 Determine column indices from header labels so they stay correct even if
+        #     the column order changes in the future.
+        header_item = self.queue_list.headerItem()
+        progress_col = None
+        output_col = None
+        if header_item is not None:
+            for col in range(header_item.columnCount()):
+                label = header_item.text(col).strip().lower()
+                if label == "progress":
+                    progress_col = col
+                elif label == "output":
+                    output_col = col
+
+        # Fall back to the expected positions if, for some reason, the labels are missing.
+        self._progress_column = progress_col if progress_col is not None else 4
+        self._outputs_column = output_col if output_col is not None else 5
 
         # 🔧 Remove inner focus border (fixes 'double boxing') without changing
         #     the widget's global QStyle. On some PySide6/Qt builds, wrapping
