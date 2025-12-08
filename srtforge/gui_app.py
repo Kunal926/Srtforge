@@ -102,17 +102,18 @@ class QueueItemDelegate(QtWidgets.QStyledItemDelegate):
         is_selected = bool(opt.state & QtWidgets.QStyle.StateFlag.State_Selected)
 
         if is_selected:
-            # Use the app's accent colour but make it pastel, similar to the .qss
+            # Use the app's accent colour as a soft background so it works
+            # in both light and dark themes.
             highlight = opt.palette.color(QtGui.QPalette.ColorRole.Highlight)
             bg = QtGui.QColor(highlight)
-            bg.setAlpha(40)  # ≈ 15% opacity, like rgba(..., 0.14)
+            bg.setAlpha(40)  # ≈ 15–20% opacity → Win11‑style pastel
             painter.fillRect(opt.rect, bg)
 
-        # Remove focus + selection before letting Qt draw the cell contents.
-        # This prevents the second, darker "inner" selection on the first column.
+        # Prevent Qt / the stylesheet from drawing *another* selection/focus box
         opt.state &= ~QtWidgets.QStyle.StateFlag.State_HasFocus
         opt.state &= ~QtWidgets.QStyle.StateFlag.State_Selected
 
+        # Let Qt draw text, icon, etc. as if the cell was unselected
         style.drawControl(
             QtWidgets.QStyle.ControlElement.CE_ItemViewItem,
             opt,
