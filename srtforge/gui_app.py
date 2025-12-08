@@ -2151,12 +2151,12 @@ class MainWindow(QtWidgets.QMainWindow):
                 background-color: transparent;
                 color: #9CA3AF;
                 border: none;
-                border-right: 1px solid rgba(148, 163, 184, 0.35);  /* column separator */
+                border-right: 1px solid rgba(148, 163, 184, 0.35);
                 padding: 4px 8px;
                 font-weight: 500;
             }}
             #QueueList QHeaderView::section:last {{
-                border-right: none;  /* no extra line after the last column */
+                border-right: none;
             }}
             #QueueList::item {{
                 padding: 6px 8px;
@@ -2168,10 +2168,15 @@ class MainWindow(QtWidgets.QMainWindow):
             }}
             #QueueList::item:selected,
             #QueueList::item:selected:active,
-            #QueueList::item:selected:!active,
-            #QueueList::item:focus {{
+            #QueueList::item:selected:!active {{
                 background-color: rgba(59, 130, 246, 0.35);
                 color: #E5E7EB;
+                border: none;
+                outline: none;
+            }}
+            /* Don't draw a second darker box just for keyboard focus */
+            #QueueList::item:focus {{
+                background-color: transparent;
                 border: none;
                 outline: none;
             }}
@@ -2394,7 +2399,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 background: #F8FAFC;
                 color: #475569;
                 border: none;
-                border-right: 1px solid #E2E8F0;  /* column separator */
+                border-right: 1px solid #E2E8F0;
                 padding: 4px 8px;
                 font-weight: 500;
             }}
@@ -2414,10 +2419,16 @@ class MainWindow(QtWidgets.QMainWindow):
 
             #QueueList::item:selected,
             #QueueList::item:selected:active,
-            #QueueList::item:selected:!active,
-            #QueueList::item:focus {{
+            #QueueList::item:selected:!active {{
                 background: rgba(59,130,246,0.14);
                 color: #111827;
+                border: none;
+                outline: none;
+            }}
+
+            /* Keep focus from adding a second box on top of selection */
+            #QueueList::item:focus {{
+                background: transparent;
                 border: none;
                 outline: none;
             }}
