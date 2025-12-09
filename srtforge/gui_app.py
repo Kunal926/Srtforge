@@ -109,6 +109,9 @@ class QueueItemDelegate(QtWidgets.QStyledItemDelegate):
             bg.setAlpha(40)  # ≈ 15–20% opacity → Win11‑style pastel
             painter.fillRect(opt.rect, bg)
 
+            # Don't let Qt apply hover styling on top of our selection
+            opt.state &= ~QtWidgets.QStyle.StateFlag.State_MouseOver
+
         # Prevent Qt / the stylesheet from drawing *another* selection/focus box
         opt.state &= ~QtWidgets.QStyle.StateFlag.State_HasFocus
         opt.state &= ~QtWidgets.QStyle.StateFlag.State_Selected
