@@ -1661,16 +1661,18 @@ class MainWindow(QtWidgets.QMainWindow):
         self.add_button.clicked.connect(self._open_file_dialog)
         action_bar.addWidget(self.add_button)
 
-        self.remove_button = QtWidgets.QPushButton("Remove")
+        self.remove_button = QtWidgets.QPushButton("Remove selected")
         self.remove_button.setObjectName("SecondaryButton")
         self.remove_button.setCursor(pointer_cursor)
+        self.remove_button.setToolTip("Remove the selected items from the queue")
         self.remove_button.clicked.connect(self._remove_selected_items)
         action_bar.addWidget(self.remove_button)
 
-        self.clear_button = QtWidgets.QPushButton("Clear")
+        self.clear_button = QtWidgets.QPushButton("Clear queue")
         self.clear_button.setObjectName("SecondaryButton")
         self.clear_button.setCursor(pointer_cursor)
         self.clear_button.setFlat(True)  # secondary / ghost-style
+        self.clear_button.setToolTip("Remove all items from the queue")
         self.clear_button.clicked.connect(self._clear_queue)
         action_bar.addWidget(self.clear_button)
 
@@ -1764,7 +1766,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # Output column wide enough to show "Open…" fully (incl. pill padding)
         fm_btn = self.queue_list.fontMetrics()
-        open_text_width = fm_btn.horizontalAdvance("Open…")
+        open_text_width = fm_btn.horizontalAdvance("View…")
         # 32px for pill padding + some breathing room
         output_width = max(110, open_text_width + 32)
         header.resizeSection(5, output_width)
@@ -1772,17 +1774,21 @@ class MainWindow(QtWidgets.QMainWindow):
         # 🔧 Determine column indices from header labels so they stay correct even if
         #     the column order changes in the future.
         header_item = self.queue_list.headerItem()
+        status_col = None
         progress_col = None
         output_col = None
         if header_item is not None:
             for col in range(header_item.columnCount()):
                 label = header_item.text(col).strip().lower()
-                if label == "progress":
+                if label == "status":
+                    status_col = col
+                elif label == "progress":
                     progress_col = col
                 elif label == "output":
                     output_col = col
 
         # Fall back to the expected positions if, for some reason, the labels are missing.
+        self._status_column = status_col if status_col is not None else 1
         self._progress_column = progress_col if progress_col is not None else 4
         self._outputs_column = output_col if output_col is not None else 5
 
@@ -2782,8 +2788,6 @@ class MainWindow(QtWidgets.QMainWindow):
             item = QtWidgets.QTreeWidgetItem()
             # Full filename; truncation handled by view + header width
             item.setText(0, path.name)
-            # Status
-            item.setText(1, "Queued")
             # Duration (filled below once we know it)
             # ETA (column 3) will be filled during processing
             # store the full path on column 0
@@ -2798,6 +2802,9 @@ class MainWindow(QtWidgets.QMainWindow):
 
             self.queue_list.addTopLevelItem(item)
             existing.add(path)
+
+            # Initial queue state (with icon + tooltip)
+            self._apply_status_icon_and_tooltip(item, "Queued")
 
             # Per-file progress bar we will attach ONLY while this file is processing.
             # IMPORTANT: let the view drive the width so the bar never spills into the
@@ -2831,16 +2838,22 @@ class MainWindow(QtWidgets.QMainWindow):
             # NEW: per-row "Open…" button (starts disabled; enabled when outputs/logs exist)
             open_button = QtWidgets.QToolButton()
             open_button.setObjectName("QueueOpenButton")
-            open_button.setText("Open…")
+            open_button.setText("View…")
             open_button.setCursor(QtGui.QCursor(QtCore.Qt.CursorShape.PointingHandCursor))
             open_button.setAutoRaise(True)
-            open_button.setToolButtonStyle(QtCore.Qt.ToolButtonStyle.ToolButtonTextOnly)
+            open_button.setToolButtonStyle(QtCore.Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
             open_button.setFocusPolicy(QtCore.Qt.FocusPolicy.NoFocus)
             open_button.setEnabled(False)
             open_button.setSizePolicy(
                 QtWidgets.QSizePolicy.Expanding,
                 QtWidgets.QSizePolicy.Fixed,
             )
+
+            # Folder-style icon to reinforce that this opens outputs/logs
+            open_button.setIcon(
+                self.style().standardIcon(QtWidgets.QStyle.StandardPixmap.SP_DirOpenIcon)
+            )
+            open_button.setToolTip("View outputs for this file (SRT, diagnostics, log)")
 
             menu = QtWidgets.QMenu(open_button)
             menu.setObjectName("QueueOpenMenu")  # for styling
@@ -2943,6 +2956,61 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.queue_summary_label.setText(summary)
 
+    def _status_icon_and_tooltip(
+        self,
+        status: str,
+    ) -> tuple[Optional[QtGui.QIcon], str]:
+        """
+        Map a logical status string to an icon + accessible tooltip.
+
+        The raw status text ("Queued", "Processing…", "Completed", "Failed")
+        stays unchanged so existing logic that compares the text still works.
+        """
+        try:
+            style = self.queue_list.style()
+        except Exception:
+            style = self.style()
+
+        icon: Optional[QtGui.QIcon] = None
+        tooltip = ""
+
+        s = status.lower()
+
+        if s.startswith("queued"):
+            tooltip = "Queued – waiting for its turn in the queue."
+        elif s.startswith("processing"):
+            icon = style.standardIcon(QtWidgets.QStyle.StandardPixmap.SP_BrowserReload)
+            tooltip = "Processing – subtitles are being generated."
+        elif s.startswith("completed"):
+            icon = style.standardIcon(QtWidgets.QStyle.StandardPixmap.SP_DialogApplyButton)
+            tooltip = "Completed – subtitles were generated successfully."
+        elif s.startswith("failed"):
+            icon = style.standardIcon(QtWidgets.QStyle.StandardPixmap.SP_MessageBoxWarning)
+            tooltip = (
+                "Failed – open the console (>_ Console) or choose 'Run log' from the "
+                "Output menu to see details and possible fixes."
+            )
+
+        return icon, tooltip
+
+    def _apply_status_icon_and_tooltip(
+        self,
+        item: QtWidgets.QTreeWidgetItem,
+        status: str,
+    ) -> None:
+        """Update the Status cell text, icon and tooltip for a given row."""
+        col = getattr(self, "_status_column", 1)
+        item.setText(col, status)
+
+        icon, tooltip = self._status_icon_and_tooltip(status)
+        if icon is not None:
+            item.setIcon(col, icon)
+        else:
+            # Clear any previous icon
+            item.setIcon(col, QtGui.QIcon())
+
+        item.setToolTip(col, tooltip or "")
+
     def _set_queue_item_status(self, media: str, status: str) -> None:
         path = Path(media)
         target_item: Optional[QtWidgets.QTreeWidgetItem] = None
@@ -2954,10 +3022,10 @@ class MainWindow(QtWidgets.QMainWindow):
             if not raw:
                 continue
 
-            # Update status text for the matching row
+            # Update the logical status + icon/tooltip for this row
             if Path(str(raw)) == path:
                 target_item = item
-                item.setText(1, status)
+                self._apply_status_icon_and_tooltip(item, status)
 
             # Hide any bar currently attached to this row
             widget = self.queue_list.itemWidget(item, self._progress_column)
@@ -3146,7 +3214,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # Optional JSON diagnostic sidecar
         _add_action("Diagnostics JSON", diag_json)
         # Per-run log from RunLogger
-        _add_action("Run log", log_path)
+        _add_action("Run log (details)", log_path)
         # Convenience: open the SRT folder in Explorer/Finder
         if srt_path and srt_path.exists():
             _add_action("Containing folder", srt_path, open_folder=True)
@@ -3174,7 +3242,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # Fresh run: reset per-file status + progress
         for i in range(self.queue_list.topLevelItemCount()):
             item = self.queue_list.topLevelItem(i)
-            item.setText(1, "Queued")
+            self._apply_status_icon_and_tooltip(item, "Queued")
             widget = self.queue_list.itemWidget(item, self._progress_column)
             if isinstance(widget, QtWidgets.QProgressBar):
                 widget.setValue(0)
@@ -3261,8 +3329,10 @@ class MainWindow(QtWidgets.QMainWindow):
             self._set_eta(estimate)
             self._set_queue_item_eta(path, estimate)
         else:
-            short = _elide_filename(Path(path).name, max_chars=40)
-            self.eta_label.setText(f"Processing {short}")
+            total = self._queue_total_count or self.queue_list.topLevelItemCount() or 1
+            current_index = min(total, max(1, self._queue_completed_count + 1))
+            # No ETA training yet – show position in queue with an unknown ETA marker
+            self.eta_label.setText(f"Transcribing {current_index} of {total} – ETA –")
             # We still show queue-level progress (discrete per file)
             self._update_queue_progress_bar(0.0)
 
@@ -3477,7 +3547,7 @@ class MainWindow(QtWidgets.QMainWindow):
             if current_path is not None and path == current_path:
                 continue
 
-            status = item.text(1)
+            status = item.text(getattr(self, "_status_column", 1))
             if status in {"Completed", "Failed"}:
                 continue
 
@@ -3515,15 +3585,18 @@ class MainWindow(QtWidgets.QMainWindow):
         queue_remaining = self._estimate_queue_remaining(remaining_file)
         queue_remaining = max(0.0, queue_remaining)
 
-        if self._eta_media:
-            basename = _elide_filename(Path(self._eta_media).name, max_chars=40)
-        else:
-            basename = "queue"
+        # Queue position: completed files + the current one
+        total_files = self._queue_total_count or (
+            self.queue_list.topLevelItemCount() if hasattr(self, "queue_list") else 0
+        )
+        if total_files <= 0:
+            total_files = 1
+        current_index = min(total_files, max(1, self._queue_completed_count + 1))
 
         if hasattr(self, "eta_label"):
             queue_eta_str = _format_hms(queue_remaining)
             self.eta_label.setText(
-                f"Processing {basename} ({percent_file:3d}%) – Queue ETA ~ {queue_eta_str}"
+                f"Transcribing {current_index} of {total_files} – ETA {queue_eta_str}"
             )
 
         # Update the row progress bar and ETA cell for the current file (per-file ETA).
