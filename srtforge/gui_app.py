@@ -2188,7 +2188,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 border: none;
                 outline: none;
             }}
-            #QueueList::item:hover {{
+            #QueueList::item:hover:!selected {{
                 background-color: rgba(148, 163, 184, 0.18);
             }}
             #QueueList::item:selected,
@@ -2438,7 +2438,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 outline: none;
             }}
 
-            #QueueList::item:hover {{
+            #QueueList::item:hover:!selected {{
                 background: rgba(0,0,0,0.03);
             }}
 
