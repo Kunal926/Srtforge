@@ -127,6 +127,45 @@ class QueueItemDelegate(QtWidgets.QStyledItemDelegate):
         painter.restore()
 
 
+STATUS_SORT_ORDER = {
+    "Queued": 0,
+    "Processing…": 1,
+    "Completed": 2,
+    "Failed": 3,
+}
+
+
+class QueueTreeWidgetItem(QtWidgets.QTreeWidgetItem):
+    """Custom item so Duration/Status sort sanely."""
+
+    def __lt__(self, other: "QtWidgets.QTreeWidgetItem") -> bool:  # type: ignore[override]
+        tree = self.treeWidget()
+        if tree is None:
+            return QtWidgets.QTreeWidgetItem.__lt__(self, other)
+
+        column = tree.sortColumn()
+
+        # Duration column (index 2) – sort by numeric seconds stored in UserRole.
+        if column == 2:
+            self_val = self.data(column, QtCore.Qt.ItemDataRole.UserRole)
+            other_val = other.data(column, QtCore.Qt.ItemDataRole.UserRole)
+            try:
+                return float(self_val or 0.0) < float(other_val or 0.0)
+            except (TypeError, ValueError):
+                return QtWidgets.QTreeWidgetItem.__lt__(self, other)
+
+        # Status column (index 1) – use STATUS_SORT_ORDER, then fall back to name.
+        if column == 1:
+            self_rank = STATUS_SORT_ORDER.get(self.text(column), 99)
+            other_rank = STATUS_SORT_ORDER.get(other.text(column), 99)
+            if self_rank != other_rank:
+                return self_rank < other_rank
+            return self.text(0).lower() < other.text(0).lower()
+
+        # Everything else: default behaviour (string compare on display text)
+        return QtWidgets.QTreeWidgetItem.__lt__(self, other)
+
+
 class NoFocusFrameStyle(QtWidgets.QProxyStyle):
     """
     Proxy style that disables the dotted focus rectangle around item views.
@@ -1766,7 +1805,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # Output column wide enough to show "Open…" fully (incl. pill padding)
         fm_btn = self.queue_list.fontMetrics()
-        open_text_width = fm_btn.horizontalAdvance("View…")
+        open_text_width = fm_btn.horizontalAdvance("View ▾")
         # 32px for pill padding + some breathing room
         output_width = max(110, open_text_width + 32)
         header.resizeSection(5, output_width)
@@ -1791,6 +1830,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self._status_column = status_col if status_col is not None else 1
         self._progress_column = progress_col if progress_col is not None else 4
         self._outputs_column = output_col if output_col is not None else 5
+
+        # Enable click-to-sort; default to Name ascending.
+        self.queue_list.setSortingEnabled(True)
+        self.queue_list.sortByColumn(0, QtCore.Qt.SortOrder.AscendingOrder)
 
         # 🔧 Remove inner focus border (fixes 'double boxing') without changing
         #     the widget's global QStyle. On some PySide6/Qt builds, wrapping
@@ -2190,7 +2233,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 border-right: none;
             }}
             #QueueList::item {{
-                padding: 6px 8px;
+                padding: 8px 8px;  /* was 6px 8px – slightly taller rows */
                 border: none;
                 outline: none;
             }}
@@ -2439,7 +2482,7 @@ class MainWindow(QtWidgets.QMainWindow):
             }}
 
             #QueueList::item {{
-                padding: 6px 8px;
+                padding: 8px 8px;  /* was 6px 8px – slightly taller rows */
                 border: none;
                 outline: none;
             }}
@@ -2781,11 +2824,12 @@ class MainWindow(QtWidgets.QMainWindow):
             for i in range(self.queue_list.topLevelItemCount())
         }
         ffprobe = self.ffmpeg_paths.ffprobe if self.ffmpeg_paths else None
+        pointer_cursor = QtGui.QCursor(QtCore.Qt.CursorShape.PointingHandCursor)
 
         for path in _normalize_paths(files):
             if path in existing:
                 continue
-            item = QtWidgets.QTreeWidgetItem()
+            item = QueueTreeWidgetItem()
             # Full filename; truncation handled by view + header width
             item.setText(0, path.name)
             # Duration (filled below once we know it)
@@ -2806,48 +2850,29 @@ class MainWindow(QtWidgets.QMainWindow):
             # Initial queue state (with icon + tooltip)
             self._apply_status_icon_and_tooltip(item, "Queued")
 
+            # Show a placeholder in the ETA column until we have a real ETA.
+            item.setText(3, ETA_PLACEHOLDER)
+
             # Per-file progress bar we will attach ONLY while this file is processing.
-            # IMPORTANT: let the view drive the width so the bar never spills into the
-            # Output column; we only lock the height to match the footer bar.
             progress = QtWidgets.QProgressBar()
-            progress.setObjectName("QueueProgressBar")
             progress.setRange(0, 100)
             progress.setValue(0)
             progress.setTextVisible(False)
-            progress.setSizePolicy(
-                QtWidgets.QSizePolicy.Expanding,   # fill the Progress column
-                QtWidgets.QSizePolicy.Fixed,
-            )
-
-            # Match the footer progress bar HEIGHT (fallback to its own height)
-            footer_height = 0
-            if hasattr(self, "progress_bar") and self.progress_bar is not None:
-                footer_height = self.progress_bar.sizeHint().height()
-            if footer_height <= 0:
-                footer_height = progress.sizeHint().height()
-            progress.setFixedHeight(footer_height)
-
-            # IMPORTANT: do NOT attach it to the tree yet; we only do that when the
-            # file actually starts processing.
-            progress.setVisible(False)
+            progress.setObjectName("RowProgress")
+            progress.setFixedHeight(self.progress_bar.height())
+            self.queue_list.setItemWidget(item, self._progress_column, progress)
 
             key = str(path)
-
             self._item_progress[key] = progress
 
-            # NEW: per-row "Open…" button (starts disabled; enabled when outputs/logs exist)
+            # Per-row “View” button for outputs/logs
             open_button = QtWidgets.QToolButton()
             open_button.setObjectName("QueueOpenButton")
-            open_button.setText("View…")
-            open_button.setCursor(QtGui.QCursor(QtCore.Qt.CursorShape.PointingHandCursor))
-            open_button.setAutoRaise(True)
-            open_button.setToolButtonStyle(QtCore.Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-            open_button.setFocusPolicy(QtCore.Qt.FocusPolicy.NoFocus)
+            open_button.setCursor(pointer_cursor)
             open_button.setEnabled(False)
-            open_button.setSizePolicy(
-                QtWidgets.QSizePolicy.Expanding,
-                QtWidgets.QSizePolicy.Fixed,
-            )
+            # Split‑button-ish: label + arrow glyph
+            open_button.setText("View ▾")
+            open_button.setToolButtonStyle(QtCore.Qt.ToolButtonTextBesideIcon)
 
             # Folder-style icon to reinforce that this opens outputs/logs
             open_button.setIcon(
@@ -2864,9 +2889,17 @@ class MainWindow(QtWidgets.QMainWindow):
             self._open_buttons[key] = open_button
             self._item_outputs.setdefault(key, {})
 
-            # Populate menu lazily right before it is shown, so we always reflect
-            # the latest on-disk state (e.g. diagnostics written after the SRT).
-            menu.aboutToShow.connect(lambda k=key, m=menu: self._populate_outputs_menu(k, m))
+            # Populate menu lazily and flip the arrow while it is open
+            def _rebuild_menu(k: str = key, m: QtWidgets.QMenu = menu,
+                              btn: QtWidgets.QToolButton = open_button) -> None:
+                btn.setText("View ▴")
+                self._populate_outputs_menu(k, m)
+
+            def _reset_arrow(btn: QtWidgets.QToolButton = open_button) -> None:
+                btn.setText("View ▾")
+
+            menu.aboutToShow.connect(_rebuild_menu)
+            menu.aboutToHide.connect(_reset_arrow)
 
             # Attach the button to the Output column
             if hasattr(self, "_outputs_column"):
@@ -2880,23 +2913,44 @@ class MainWindow(QtWidgets.QMainWindow):
             duration_s = float(duration_s or 0.0)
             self._queue_duration_cache[str(path)] = duration_s
             item.setText(2, _format_hms(duration_s))
+            item.setData(2, QtCore.Qt.ItemDataRole.UserRole, duration_s)
 
         self._update_start_state()
 
     def _remove_selected_items(self) -> None:
-        for item in self.queue_list.selectedItems():
-            path = item.data(0, QtCore.Qt.ItemDataRole.UserRole)
+        items = self.queue_list.selectedItems()
+        if not items:
+            return
+
+        rows_and_keys: list[tuple[int, Optional[str]]] = []
+
+        for item in items:
             row = self.queue_list.indexOfTopLevelItem(item)
+            path = item.data(0, QtCore.Qt.ItemDataRole.UserRole)
+            key = str(path) if path else None
+            rows_and_keys.append((row, key))
+
+        # Remove rows from bottom to top so indices don't shift under us.
+        rows_and_keys.sort(key=lambda rk: rk[0], reverse=True)
+
+        for row, key in rows_and_keys:
             if row >= 0:
                 self.queue_list.takeTopLevelItem(row)
-            if path:
-                key = str(path)
+            if key:
+                # Clean all per-file caches + widgets
                 self._queue_duration_cache.pop(key, None)
-                self._item_progress.pop(key, None)
-                # NEW: clear outputs + buttons + run id mapping
-                self._open_buttons.pop(key, None)
+
+                progress = self._item_progress.pop(key, None)
+                if progress is not None:
+                    progress.deleteLater()
+
+                button = self._open_buttons.pop(key, None)
+                if button is not None:
+                    button.deleteLater()
+
                 self._item_outputs.pop(key, None)
                 self._file_run_ids.pop(key, None)
+
         self._update_start_state()
 
     def _clear_queue(self) -> None:
@@ -3087,33 +3141,31 @@ class MainWindow(QtWidgets.QMainWindow):
             value = max(0, min(100, int(percent)))
             bar.setValue(value)
 
-    def _set_queue_item_eta(self, media: str, remaining_s: float | None) -> None:
-        """Update the ETA column (3) for the given media row."""
-
+    def _set_queue_item_eta(self, path: str, remaining_s: float) -> None:
         if not hasattr(self, "queue_list"):
             return
 
-        target = Path(media)
-        text = ""
-        if remaining_s is not None and remaining_s > 0:
-            total = int(round(remaining_s))
-            minutes, secs = divmod(total, 60)
-            text = f"{minutes:02d}:{secs:02d}"
+        key = str(path)
+        # Default: placeholder (no ETA / unknown)
+        text = ETA_PLACEHOLDER
+        if remaining_s > 1:
+            # Round to the nearest second and format as MM:SS / H:MM:SS
+            text = _format_hms(remaining_s)
 
         for i in range(self.queue_list.topLevelItemCount()):
             item = self.queue_list.topLevelItem(i)
             raw = item.data(0, QtCore.Qt.ItemDataRole.UserRole)
-            if raw and Path(str(raw)) == target:
+            if raw and str(raw) == key:
                 item.setText(3, text)
-                break
+                return
 
     def _clear_all_eta_cells(self) -> None:
+        """Reset ETA column for all rows back to the placeholder."""
         if not hasattr(self, "queue_list"):
             return
-
         for i in range(self.queue_list.topLevelItemCount()):
             item = self.queue_list.topLevelItem(i)
-            item.setText(3, "")
+            item.setText(3, ETA_PLACEHOLDER)
 
     def _update_queue_progress_bar(self, current_file_fraction: float) -> None:
         """Update the footer progress bar to reflect whole-queue progress."""
@@ -3339,9 +3391,9 @@ class MainWindow(QtWidgets.QMainWindow):
                 overall_fraction = 0.0
             percent_total = int(round(max(0.0, min(1.0, overall_fraction)) * 100))
 
-            # New footer format: Transcribing X of Y (a%) - Queue ETA ~ –
+            # New footer format: Transcribing X of Y (a%) – Queue ETA ~ –
             self.eta_label.setText(
-                f"Transcribing {current_index} of {total} ({percent_total}%) - Queue ETA ~ –"
+                f"Transcribing {current_index} of {total} ({percent_total}%) – Queue ETA ~ –"
             )
 
             # We still show queue-level progress (discrete per file)
@@ -3613,9 +3665,9 @@ class MainWindow(QtWidgets.QMainWindow):
         if hasattr(self, "eta_label"):
             queue_eta_str = _format_hms(queue_remaining)
             # New footer format:
-            # Transcribing X of Y (a%) - Queue ETA ~ HH:MM:SS
+            # Transcribing X of Y (a%) – Queue ETA ~ HH:MM:SS
             self.eta_label.setText(
-                f"Transcribing {current_index} of {total_files} ({percent_queue}%) - Queue ETA ~ {queue_eta_str}"
+                f"Transcribing {current_index} of {total_files} ({percent_queue}%) – Queue ETA ~ {queue_eta_str}"
             )
 
         # Update the row progress bar and ETA cell for the current file (per-file ETA).
@@ -3761,6 +3813,9 @@ def _format_hms(seconds: float) -> str:
     if hours:
         return f"{hours:d}:{minutes:02d}:{secs:02d}"
     return f"{minutes:02d}:{secs:02d}"
+
+
+ETA_PLACEHOLDER = "–"
 
 
 class _EtaMemory:
