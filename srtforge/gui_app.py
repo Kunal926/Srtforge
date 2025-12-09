@@ -1759,8 +1759,12 @@ class MainWindow(QtWidgets.QMainWindow):
         # Progress column ≈ footer progress bar width
         header.resizeSection(4, 180)
 
-        # Output column wide enough to show "Open…" fully
-        header.resizeSection(5, 110)
+        # Output column wide enough to show "Open…" fully (incl. pill padding)
+        fm_btn = self.queue_list.fontMetrics()
+        open_text_width = fm_btn.horizontalAdvance("Open…")
+        # 32px for pill padding + some breathing room
+        output_width = max(110, open_text_width + 32)
+        header.resizeSection(5, output_width)
 
         # 🔧 Determine column indices from header labels so they stay correct even if
         #     the column order changes in the future.
@@ -2792,28 +2796,25 @@ class MainWindow(QtWidgets.QMainWindow):
             self.queue_list.addTopLevelItem(item)
             existing.add(path)
 
-            # Per-file progress bar we will attach ONLY while this file is processing
+            # Per-file progress bar we will attach ONLY while this file is processing.
+            # IMPORTANT: let the view drive the width so the bar never spills into the
+            # Output column; we only lock the height to match the footer bar.
             progress = QtWidgets.QProgressBar()
             progress.setObjectName("QueueProgressBar")
             progress.setRange(0, 100)
             progress.setValue(0)
             progress.setTextVisible(False)
             progress.setSizePolicy(
-                QtWidgets.QSizePolicy.Fixed,
+                QtWidgets.QSizePolicy.Expanding,   # fill the Progress column
                 QtWidgets.QSizePolicy.Fixed,
             )
 
-            # Match the footer progress bar width/height (fallback to 180px)
-            footer_width = 0
+            # Match the footer progress bar HEIGHT (fallback to its own height)
             footer_height = 0
             if hasattr(self, "progress_bar") and self.progress_bar is not None:
-                footer_width = self.progress_bar.maximumWidth()
                 footer_height = self.progress_bar.sizeHint().height()
-            if footer_width <= 0:
-                footer_width = 180
             if footer_height <= 0:
                 footer_height = progress.sizeHint().height()
-            progress.setFixedWidth(footer_width)
             progress.setFixedHeight(footer_height)
 
             # IMPORTANT: do NOT attach it to the tree yet; we only do that when the
@@ -2833,6 +2834,10 @@ class MainWindow(QtWidgets.QMainWindow):
             open_button.setToolButtonStyle(QtCore.Qt.ToolButtonStyle.ToolButtonTextOnly)
             open_button.setFocusPolicy(QtCore.Qt.FocusPolicy.NoFocus)
             open_button.setEnabled(False)
+            open_button.setSizePolicy(
+                QtWidgets.QSizePolicy.Expanding,
+                QtWidgets.QSizePolicy.Fixed,
+            )
 
             menu = QtWidgets.QMenu(open_button)
             menu.setObjectName("QueueOpenMenu")  # for styling
@@ -2972,19 +2977,16 @@ class MainWindow(QtWidgets.QMainWindow):
                 bar.setValue(0)
                 bar.setTextVisible(False)
                 bar.setSizePolicy(
-                    QtWidgets.QSizePolicy.Fixed,
+                    QtWidgets.QSizePolicy.Expanding,
                     QtWidgets.QSizePolicy.Fixed,
                 )
-                footer_width = 0
+
+                # Same height logic as in _add_files_to_queue: width is column‑driven.
                 footer_height = 0
                 if hasattr(self, "progress_bar") and self.progress_bar is not None:
-                    footer_width = self.progress_bar.maximumWidth()
                     footer_height = self.progress_bar.sizeHint().height()
-                if footer_width <= 0:
-                    footer_width = 180
                 if footer_height <= 0:
                     footer_height = bar.sizeHint().height()
-                bar.setFixedWidth(footer_width)
                 bar.setFixedHeight(footer_height)
                 self._item_progress[key] = bar
 
