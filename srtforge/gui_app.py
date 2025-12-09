@@ -136,12 +136,13 @@ STATUS_SORT_ORDER = {
 
 
 class QueueTreeWidgetItem(QtWidgets.QTreeWidgetItem):
-    """Custom item so Duration/Status sort sanely."""
+    """Custom item so Name / Duration / Status sort sanely."""
 
     def __lt__(self, other: "QtWidgets.QTreeWidgetItem") -> bool:  # type: ignore[override]
         tree = self.treeWidget()
+        # If we're not attached to a tree yet, just fall back to name text.
         if tree is None:
-            return QtWidgets.QTreeWidgetItem.__lt__(self, other)
+            return (self.text(0) or "") < (other.text(0) or "")
 
         column = tree.sortColumn()
 
@@ -152,18 +153,24 @@ class QueueTreeWidgetItem(QtWidgets.QTreeWidgetItem):
             try:
                 return float(self_val or 0.0) < float(other_val or 0.0)
             except (TypeError, ValueError):
-                return QtWidgets.QTreeWidgetItem.__lt__(self, other)
+                # If anything weird happens, fall back to text comparison below.
+                pass
 
         # Status column (index 1) – use STATUS_SORT_ORDER, then fall back to name.
         if column == 1:
-            self_rank = STATUS_SORT_ORDER.get(self.text(column), 99)
-            other_rank = STATUS_SORT_ORDER.get(other.text(column), 99)
+            self_status = self.text(column)
+            other_status = other.text(column)
+            self_rank = STATUS_SORT_ORDER.get(self_status, 999)
+            other_rank = STATUS_SORT_ORDER.get(other_status, 999)
             if self_rank != other_rank:
                 return self_rank < other_rank
-            return self.text(0).lower() < other.text(0).lower()
+            # Tie‑breaker: file name.
+            return (self.text(0) or "") < (other.text(0) or "")
 
-        # Everything else: default behaviour (string compare on display text)
-        return QtWidgets.QTreeWidgetItem.__lt__(self, other)
+        # Any other column (Name, ETA, etc.): case‑insensitive text compare.
+        self_text = (self.text(column) or "").lower()
+        other_text = (other.text(column) or "").lower()
+        return self_text < other_text
 
 
 class NoFocusFrameStyle(QtWidgets.QProxyStyle):
@@ -2233,7 +2240,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 border-right: none;
             }}
             #QueueList::item {{
-                padding: 8px 8px;  /* was 6px 8px – slightly taller rows */
+                padding: 4px 8px;  /* slightly taller than old, but not huge */
                 border: none;
                 outline: none;
             }}
@@ -2482,7 +2489,7 @@ class MainWindow(QtWidgets.QMainWindow):
             }}
 
             #QueueList::item {{
-                padding: 8px 8px;  /* was 6px 8px – slightly taller rows */
+                padding: 4px 8px;  /* slightly taller than old, but not huge */
                 border: none;
                 outline: none;
             }}
@@ -2853,14 +2860,27 @@ class MainWindow(QtWidgets.QMainWindow):
             # Show a placeholder in the ETA column until we have a real ETA.
             item.setText(3, ETA_PLACEHOLDER)
 
-            # Per-file progress bar we will attach ONLY while this file is processing.
+            # Per-file progress bar; only attached while processing.
             progress = QtWidgets.QProgressBar()
+            progress.setObjectName("QueueProgressBar")
             progress.setRange(0, 100)
             progress.setValue(0)
             progress.setTextVisible(False)
-            progress.setObjectName("RowProgress")
-            progress.setFixedHeight(self.progress_bar.height())
-            self.queue_list.setItemWidget(item, self._progress_column, progress)
+            progress.setSizePolicy(
+                QtWidgets.QSizePolicy.Expanding,   # fill Progress column horizontally
+                QtWidgets.QSizePolicy.Fixed,
+            )
+
+            # Keep height modest so rows aren't gigantic.
+            bar_height = 0
+            if hasattr(self, "progress_bar") and self.progress_bar is not None:
+                bar_height = self.progress_bar.sizeHint().height()
+            if bar_height <= 0:
+                bar_height = progress.sizeHint().height()
+            progress.setFixedHeight(bar_height)
+
+            # Start hidden; we only show while file is actually processing.
+            progress.setVisible(False)
 
             key = str(path)
             self._item_progress[key] = progress
@@ -2869,6 +2889,8 @@ class MainWindow(QtWidgets.QMainWindow):
             open_button = QtWidgets.QToolButton()
             open_button.setObjectName("QueueOpenButton")
             open_button.setCursor(pointer_cursor)
+            open_button.setAutoRaise(True)
+            open_button.setFocusPolicy(QtCore.Qt.FocusPolicy.NoFocus)
             open_button.setEnabled(False)
             # Split‑button-ish: label + arrow glyph
             open_button.setText("View ▾")
@@ -3065,6 +3087,18 @@ class MainWindow(QtWidgets.QMainWindow):
 
         item.setToolTip(col, tooltip or "")
 
+    def _find_queue_item(self, media: str) -> Optional[QtWidgets.QTreeWidgetItem]:
+        if not hasattr(self, "queue_list"):
+            return None
+
+        path = Path(media)
+        for i in range(self.queue_list.topLevelItemCount()):
+            item = self.queue_list.topLevelItem(i)
+            raw = item.data(0, QtCore.Qt.ItemDataRole.UserRole)
+            if raw and Path(str(raw)) == path:
+                return item
+        return None
+
     def _set_queue_item_status(self, media: str, status: str) -> None:
         path = Path(media)
         target_item: Optional[QtWidgets.QTreeWidgetItem] = None
@@ -3124,22 +3158,42 @@ class MainWindow(QtWidgets.QMainWindow):
         key = str(media)
         bar = self._item_progress.get(key)
 
+        # Lazily attach/create the bar the first time we see this file.
         if bar is None:
-            # Fallback: locate the item lazily and cache its widget
-            path = Path(media)
-            for i in range(self.queue_list.topLevelItemCount()):
-                item = self.queue_list.topLevelItem(i)
-                raw = item.data(0, QtCore.Qt.ItemDataRole.UserRole)
-                if raw and Path(str(raw)) == path:
-                    widget = self.queue_list.itemWidget(item, self._progress_column)
-                    if isinstance(widget, QtWidgets.QProgressBar):
-                        bar = widget
-                        self._item_progress[key] = bar
-                    break
+            bar = QtWidgets.QProgressBar()
+            bar.setObjectName("QueueProgressBar")
+            bar.setRange(0, 100)
+            bar.setValue(0)
+            bar.setTextVisible(False)
+            bar.setSizePolicy(
+                QtWidgets.QSizePolicy.Expanding,
+                QtWidgets.QSizePolicy.Fixed,
+            )
 
-        if bar is not None:
-            value = max(0, min(100, int(percent)))
-            bar.setValue(value)
+            bar_height = 0
+            if hasattr(self, "progress_bar") and self.progress_bar is not None:
+                bar_height = self.progress_bar.sizeHint().height()
+            if bar_height <= 0:
+                bar_height = bar.sizeHint().height()
+            bar.setFixedHeight(bar_height)
+
+            self._item_progress[key] = bar
+
+        # Attach to the right row if not already
+        current_item = self._find_queue_item(media)
+        current_widget = (
+            self.queue_list.itemWidget(current_item, self._progress_column)
+            if current_item is not None
+            else None
+        )
+        if current_item is None:
+            return
+        if bar.parent() is None or bar is not current_widget:
+            self.queue_list.setItemWidget(current_item, self._progress_column, bar)
+
+        value = max(0, min(100, int(percent)))
+        bar.setVisible(True)
+        bar.setValue(value)
 
     def _set_queue_item_eta(self, path: str, remaining_s: float) -> None:
         if not hasattr(self, "queue_list"):
