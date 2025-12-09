@@ -3331,8 +3331,19 @@ class MainWindow(QtWidgets.QMainWindow):
         else:
             total = self._queue_total_count or self.queue_list.topLevelItemCount() or 1
             current_index = min(total, max(1, self._queue_completed_count + 1))
-            # No ETA training yet – show position in queue with an unknown ETA marker
-            self.eta_label.setText(f"Transcribing {current_index} of {total} – ETA –")
+
+            # Overall queue % when we don't have ETA training yet
+            if total > 0:
+                overall_fraction = float(self._queue_completed_count) / float(total)
+            else:
+                overall_fraction = 0.0
+            percent_total = int(round(max(0.0, min(1.0, overall_fraction)) * 100))
+
+            # New footer format: Transcribing X of Y (a%) - Queue ETA ~ –
+            self.eta_label.setText(
+                f"Transcribing {current_index} of {total} ({percent_total}%) - Queue ETA ~ –"
+            )
+
             # We still show queue-level progress (discrete per file)
             self._update_queue_progress_bar(0.0)
 
@@ -3593,10 +3604,18 @@ class MainWindow(QtWidgets.QMainWindow):
             total_files = 1
         current_index = min(total_files, max(1, self._queue_completed_count + 1))
 
+        # Queue‑level completion %: completed files + current file fraction
+        done_files = max(0, min(total_files, self._queue_completed_count))
+        overall = (done_files + progress_file) / float(total_files)
+        overall = max(0.0, min(1.0, overall))
+        percent_queue = int(round(overall * 100))
+
         if hasattr(self, "eta_label"):
             queue_eta_str = _format_hms(queue_remaining)
+            # New footer format:
+            # Transcribing X of Y (a%) - Queue ETA ~ HH:MM:SS
             self.eta_label.setText(
-                f"Transcribing {current_index} of {total_files} – ETA {queue_eta_str}"
+                f"Transcribing {current_index} of {total_files} ({percent_queue}%) - Queue ETA ~ {queue_eta_str}"
             )
 
         # Update the row progress bar and ETA cell for the current file (per-file ETA).
