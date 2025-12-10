@@ -1581,8 +1581,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self._eta_total: float = 0.0
         # NEW: animated folder GIFs for "View" buttons (keyed by media path)
         self._folder_movies: dict[str, QtGui.QMovie] = {}
-        # NEW: animated command prompt GIF for the footer console toggle
-        self._console_movie: Optional[QtGui.QMovie] = None
         self._build_ui()  # builds a page widget; we wrap it in a scroll area below
         self._log_tailer = LogTailer(self._append_log, self)
         self._load_persistent_options()
@@ -1946,7 +1944,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.log_toggle_button.setCheckable(True)
         self.log_toggle_button.setToolTip("Show console")
         self.log_toggle_button.setCursor(pointer_cursor)
-        # Icon wired up below via the Command Prompt GIF
+        # Icon wired up below via the Command Prompt PNG
         self.log_toggle_button.setAutoRaise(True)
         self.log_toggle_button.setFocusPolicy(QtCore.Qt.FocusPolicy.NoFocus)
         self.log_toggle_button.setIconSize(QtCore.QSize(24, 24))
@@ -1980,37 +1978,13 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.log_toggle_button.toggled.connect(_sync_console_pill)
 
-        # Replace the default computer icon + text with just the Command Prompt GIF logo
-        movie = _load_asset_movie("Command Prompt.gif")
-        if movie is not None:
-            self._console_movie = movie
-            movie.setParent(self.log_toggle_button)
-            movie.setCacheMode(QtGui.QMovie.CacheMode.CacheAll)
-            # In PySide6 QMovie.loopCount() is read-only. Some bindings expose
-            # setLoopCount(), so call it only when available and otherwise emulate
-            # an infinite loop by restarting when the movie finishes.
-            set_loop = getattr(movie, "setLoopCount", None)
-            if callable(set_loop):
-                # QAbstractAnimation semantics: 0 == infinite looping
-                set_loop(0)
-            else:
-                # If the GIF is finite, restart it whenever it finishes so it
-                # appears to loop forever.
-                if movie.loopCount() != -1:
-                    movie.finished.connect(movie.start)
-
-            def _console_frame_changed(_frame: int) -> None:
-                pix = movie.currentPixmap()
-                if not pix.isNull():
-                    self.log_toggle_button.setIcon(QtGui.QIcon(pix))
-
-            movie.frameChanged.connect(_console_frame_changed)
-            movie.start()
-        else:
-            # Fallback: system computer icon if the GIF is missing
-            self.log_toggle_button.setIcon(
-                self.style().standardIcon(QtWidgets.QStyle.StandardPixmap.SP_ComputerIcon)
-            )
+        # Use the static Command_Prompt.png icon for the console toggle
+        cmd_icon = _load_asset_icon(
+            "Command_Prompt.png",
+            QtWidgets.QStyle.StandardPixmap.SP_ComputerIcon,
+            self.style(),
+        )
+        self.log_toggle_button.setIcon(cmd_icon)
 
         # Text label removed – we want just the Command Prompt logo in the pill
         log_label = QtWidgets.QLabel("", console_trigger)
@@ -2928,9 +2902,9 @@ class MainWindow(QtWidgets.QMainWindow):
             open_button.setText("View ▾")
             open_button.setToolButtonStyle(QtCore.Qt.ToolButtonTextBesideIcon)
 
-            # Use the custom folder icon so the output menu matches your artwork
+            # Use the custom folder GIF for the View button itself
             folder_icon = _load_asset_icon(
-                "folder.png",
+                "folder.gif",
                 QtWidgets.QStyle.StandardPixmap.SP_DirOpenIcon,
                 self.style(),
             )
@@ -3313,9 +3287,6 @@ class MainWindow(QtWidgets.QMainWindow):
         """
         menu.clear()
 
-        # Make the icons a little bigger than the text so the new artwork stands out
-        menu.setIconSize(QtCore.QSize(22, 22))
-
         artifacts = self._item_outputs.get(key) or {}
 
         # Convert stored strings to Path objects where applicable
@@ -3440,9 +3411,9 @@ class MainWindow(QtWidgets.QMainWindow):
             if finished:
                 return
             finished = True
-            # After the animation, revert to the static folder icon
+            # After the animation, revert to the static folder GIF icon
             static_icon = _load_asset_icon(
-                "folder.png",
+                "folder.gif",
                 QtWidgets.QStyle.StandardPixmap.SP_DirOpenIcon,
                 self.style(),
             )
