@@ -1860,6 +1860,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # Bottom bar: total duration (left) + Start / Stop (right)
         bottom_bar = QtWidgets.QHBoxLayout()
         self.queue_summary_label = QtWidgets.QLabel("")
+        self.queue_summary_label.setObjectName("QueueSummaryLabel")
         bottom_bar.addWidget(self.queue_summary_label)
         bottom_bar.addStretch()
 
@@ -2162,6 +2163,12 @@ class MainWindow(QtWidgets.QMainWindow):
             QLabel#EtaLabel {{
                 color: #94A3B8;
                 padding: 6px 10px;
+            }}
+            QLabel#QueueSummaryLabel {{
+                background-color: transparent;
+                border: none;
+                padding: 0px;
+                margin: 0px;
             }}
 
             #QueueCard {{
@@ -2567,6 +2574,12 @@ class MainWindow(QtWidgets.QMainWindow):
             #EtaLabel {{
                 color: #64748B;
                 padding: 6px 10px;
+            }}
+            #QueueSummaryLabel {{
+                background-color: transparent;
+                border: none;
+                padding: 0px;
+                margin: 0px;
             }}
 
             QPushButton, QToolButton {{
@@ -3201,50 +3214,23 @@ class MainWindow(QtWidgets.QMainWindow):
                 target_item = item
                 self._apply_status_icon_and_tooltip(item, status)
 
-            # Hide any bar currently attached to this row
+            # Hide any progress widget currently attached to this row
             widget = self.queue_list.itemWidget(item, self._progress_column)
-            if isinstance(widget, QtWidgets.QProgressBar):
+            if widget is not None:
                 widget.setVisible(False)
 
         if target_item is None:
             return
 
-        # Only the currently processing file gets a visible progress bar
-        if status.lower().startswith("processing"):
-            key = str(path)
-            bar = self._item_progress.get(key)
-
-            # Defensive: if for some reason there isn't a cached bar, create one now
-            if bar is None:
-                bar = QtWidgets.QProgressBar()
-                bar.setObjectName("QueueProgressBar")
-                bar.setRange(0, 100)
-                bar.setValue(0)
-                bar.setTextVisible(False)
-                bar.setSizePolicy(
-                    QtWidgets.QSizePolicy.Expanding,
-                    QtWidgets.QSizePolicy.Fixed,
-                )
-
-                # Same height logic as in _add_files_to_queue: width is column‑driven.
-                footer_height = 0
-                if hasattr(self, "progress_bar") and self.progress_bar is not None:
-                    footer_height = self.progress_bar.sizeHint().height()
-                if footer_height <= 0:
-                    footer_height = bar.sizeHint().height()
-                bar.setFixedHeight(footer_height)
-                self._item_progress[key] = bar
-
-            # Attach the bar to the Progress column for this row and show it
-            self.queue_list.setItemWidget(target_item, self._progress_column, bar)
-            bar.setVisible(True)
+        # Progress bar centring / visibility is handled by
+        # ``_set_queue_item_progress``; this helper only updates text + icon.
 
     def _set_queue_item_progress(self, media: str, percent: int) -> None:
         """Update the per-file progress bar in the queue list, if present."""
         key = str(media)
         bar = self._item_progress.get(key)
 
-        # Lazily attach/create the bar the first time we see this file.
+        # Lazily create the bar the first time we see this file.
         if bar is None:
             bar = QtWidgets.QProgressBar()
             bar.setObjectName("QueueProgressBar")
@@ -3265,19 +3251,26 @@ class MainWindow(QtWidgets.QMainWindow):
 
             self._item_progress[key] = bar
 
-        # Attach to the right row if not already
+        # Attach the bar to a tiny wrapper widget so it can be centred inside
+        # the cell, both horizontally and vertically.
         current_item = self._find_queue_item(media)
-        current_widget = (
-            self.queue_list.itemWidget(current_item, self._progress_column)
-            if current_item is not None
-            else None
-        )
         if current_item is None:
             return
-        if bar.parent() is None or bar is not current_widget:
-            self.queue_list.setItemWidget(current_item, self._progress_column, bar)
+
+        existing_container = self.queue_list.itemWidget(current_item, self._progress_column)
+        container = bar.parent() if isinstance(bar.parent(), QtWidgets.QWidget) else None
+
+        if container is None or container is not existing_container:
+            container = QtWidgets.QWidget()
+            layout = QtWidgets.QHBoxLayout(container)
+            layout.setContentsMargins(0, 0, 0, 0)
+            layout.setSpacing(0)
+            layout.addWidget(bar)
+            layout.setAlignment(bar, QtCore.Qt.AlignCenter)
+            self.queue_list.setItemWidget(current_item, self._progress_column, container)
 
         value = max(0, min(100, int(percent)))
+        container.setVisible(True)
         bar.setVisible(True)
         bar.setValue(value)
 
@@ -3340,7 +3333,9 @@ class MainWindow(QtWidgets.QMainWindow):
         for i in range(self.queue_list.topLevelItemCount()):
             item = self.queue_list.topLevelItem(i)
             widget = self.queue_list.itemWidget(item, self._progress_column)
-            if isinstance(widget, QtWidgets.QProgressBar):
+            # ``itemWidget`` now returns a small wrapper widget that contains
+            # the actual QProgressBar, so we just hide whatever is there.
+            if widget is not None:
                 widget.setVisible(False)
 
     def _populate_outputs_menu(self, key: str, menu: QtWidgets.QMenu) -> None:
