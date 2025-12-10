@@ -22,4 +22,4 @@ include = ["srtforge*"]
 
 [tool.setuptools.package-data]
 "srtforge.assets.styles" = ["win11.qss"]
-"srtforge.assets.images" = ["*.png"]
+"srtforge.assets.images" = ["*.png", "*.gif"]

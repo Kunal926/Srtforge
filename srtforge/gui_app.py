@@ -1579,6 +1579,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self._queue_completed_count: int = 0
         # Track the current ETA window so we can compute % progress
         self._eta_total: float = 0.0
+        # NEW: animated folder GIFs for "View" buttons (keyed by media path)
+        self._folder_movies: dict[str, QtGui.QMovie] = {}
+        # NEW: animated command prompt GIF for the footer console toggle
+        self._console_movie: Optional[QtGui.QMovie] = None
         self._build_ui()  # builds a page widget; we wrap it in a scroll area below
         self._log_tailer = LogTailer(self._append_log, self)
         self._load_persistent_options()
@@ -1942,14 +1946,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.log_toggle_button.setCheckable(True)
         self.log_toggle_button.setToolTip("Show console")
         self.log_toggle_button.setCursor(pointer_cursor)
-        self.log_toggle_button.setIcon(
-            self.style().standardIcon(QtWidgets.QStyle.StandardPixmap.SP_ComputerIcon)
-        )
-        # make it look like a flat icon inside the pill, not its own button box
+        # Icon wired up below via the Command Prompt GIF
         self.log_toggle_button.setAutoRaise(True)
         self.log_toggle_button.setFocusPolicy(QtCore.Qt.FocusPolicy.NoFocus)
-        self.log_toggle_button.setIconSize(QtCore.QSize(16, 16))
-        # icon-only; text lives in a separate label for cleaner alignment
+        self.log_toggle_button.setIconSize(QtCore.QSize(24, 24))
         self.log_toggle_button.setText("")
         self.log_toggle_button.toggled.connect(self._toggle_log_panel)
 
@@ -1980,8 +1980,29 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.log_toggle_button.toggled.connect(_sync_console_pill)
 
-        # Text label >_ Console
-        log_label = QtWidgets.QLabel(">_ Console", console_trigger)
+        # Replace the default computer icon + text with just the Command Prompt GIF logo
+        movie = _load_asset_movie("Command Prompt.gif")
+        if movie is not None:
+            self._console_movie = movie
+            movie.setParent(self.log_toggle_button)
+            movie.setCacheMode(QtGui.QMovie.CacheMode.CacheAll)
+            movie.setLoopCount(0)  # loop indefinitely
+
+            def _console_frame_changed(_frame: int) -> None:
+                pix = movie.currentPixmap()
+                if not pix.isNull():
+                    self.log_toggle_button.setIcon(QtGui.QIcon(pix))
+
+            movie.frameChanged.connect(_console_frame_changed)
+            movie.start()
+        else:
+            # Fallback: system computer icon if the GIF is missing
+            self.log_toggle_button.setIcon(
+                self.style().standardIcon(QtWidgets.QStyle.StandardPixmap.SP_ComputerIcon)
+            )
+
+        # Text label removed – we want just the Command Prompt logo in the pill
+        log_label = QtWidgets.QLabel("", console_trigger)
         log_label.setObjectName("LogToggleLabel")
         log_label.setCursor(pointer_cursor)
 
@@ -2896,10 +2917,14 @@ class MainWindow(QtWidgets.QMainWindow):
             open_button.setText("View ▾")
             open_button.setToolButtonStyle(QtCore.Qt.ToolButtonTextBesideIcon)
 
-            # Folder-style icon to reinforce that this opens outputs/logs
-            open_button.setIcon(
-                self.style().standardIcon(QtWidgets.QStyle.StandardPixmap.SP_DirOpenIcon)
+            # Use the custom folder icon so the output menu matches your artwork
+            folder_icon = _load_asset_icon(
+                "folder.png",
+                QtWidgets.QStyle.StandardPixmap.SP_DirOpenIcon,
+                self.style(),
             )
+            open_button.setIcon(folder_icon)
+            open_button.setIconSize(QtCore.QSize(20, 20))
             open_button.setToolTip("View outputs for this file (SRT, diagnostics, log)")
 
             menu = QtWidgets.QMenu(open_button)
@@ -2973,6 +2998,11 @@ class MainWindow(QtWidgets.QMainWindow):
                 self._item_outputs.pop(key, None)
                 self._file_run_ids.pop(key, None)
 
+                movie = self._folder_movies.pop(key, None)
+                if movie is not None:
+                    movie.stop()
+                    movie.deleteLater()
+
         self._update_start_state()
 
     def _clear_queue(self) -> None:
@@ -2983,6 +3013,13 @@ class MainWindow(QtWidgets.QMainWindow):
         self._open_buttons.clear()
         self._item_outputs.clear()
         self._file_run_ids.clear()
+        for movie in self._folder_movies.values():
+            try:
+                movie.stop()
+                movie.deleteLater()
+            except Exception:
+                pass
+        self._folder_movies.clear()
         self._update_start_state()
 
     def _update_start_state(self) -> None:
@@ -3265,7 +3302,8 @@ class MainWindow(QtWidgets.QMainWindow):
         """
         menu.clear()
 
-        # QMenu in PySide6 doesn’t expose setIconSize; icons follow the style’s default.
+        # Make the icons a little bigger than the text so the new artwork stands out
+        menu.setIconSize(QtCore.QSize(22, 22))
 
         artifacts = self._item_outputs.get(key) or {}
 
@@ -3301,21 +3339,22 @@ class MainWindow(QtWidgets.QMainWindow):
 
         has_actions = False
 
-        # --- Icons: outline‑style document / CSV / JSON / log / folder ----------
+        # --- Icons: custom PNGs for SRT / CSV / JSON / log / folder -------------
 
         style = self.style()
-
-        def themed(name: str, fallback: QtWidgets.QStyle.StandardPixmap) -> QtGui.QIcon:
-            icon = QtGui.QIcon.fromTheme(name)
-            if icon.isNull():
-                icon = style.standardIcon(fallback)
-            return icon
-
-        srt_icon = themed("text-x-generic", QtWidgets.QStyle.StandardPixmap.SP_FileIcon)
-        csv_icon = themed("x-office-spreadsheet", QtWidgets.QStyle.StandardPixmap.SP_FileIcon)
-        json_icon = themed("application-json", QtWidgets.QStyle.StandardPixmap.SP_FileIcon)
-        log_icon = themed("text-x-log", QtWidgets.QStyle.StandardPixmap.SP_FileDialogDetailedView)
-        folder_icon = themed("folder-open", QtWidgets.QStyle.StandardPixmap.SP_DirOpenIcon)
+        srt_icon = _load_asset_icon("srt.png", QtWidgets.QStyle.StandardPixmap.SP_FileIcon, style)
+        csv_icon = _load_asset_icon("csv.png", QtWidgets.QStyle.StandardPixmap.SP_FileIcon, style)
+        json_icon = _load_asset_icon("json.png", QtWidgets.QStyle.StandardPixmap.SP_FileIcon, style)
+        log_icon = _load_asset_icon(
+            "log.png",
+            QtWidgets.QStyle.StandardPixmap.SP_FileDialogDetailedView,
+            style,
+        )
+        folder_icon = _load_asset_icon(
+            "folder.png",
+            QtWidgets.QStyle.StandardPixmap.SP_DirOpenIcon,
+            style,
+        )
 
         # -----------------------------------------------------------------------
 
@@ -3354,6 +3393,46 @@ class MainWindow(QtWidgets.QMainWindow):
         if not has_actions:
             placeholder = menu.addAction("No outputs available yet")
             placeholder.setEnabled(False)
+
+    def _play_folder_gif_once(self, key: str) -> None:
+        """
+        Animate the per-row 'View' button with folder.gif once when a file completes.
+
+        ``key`` is the media path string used in our caches.
+        """
+        button = self._open_buttons.get(key)
+        if not button:
+            return
+
+        movie = _load_asset_movie("folder.gif")
+        if movie is None:
+            return
+
+        # Keep the movie alive for the duration of the animation
+        self._folder_movies[key] = movie
+        movie.setParent(button)
+        movie.setCacheMode(QtGui.QMovie.CacheMode.CacheAll)
+        movie.setLoopCount(1)
+
+        def _on_frame_changed(_frame: int) -> None:
+            pix = movie.currentPixmap()
+            if not pix.isNull():
+                button.setIcon(QtGui.QIcon(pix))
+
+        def _on_finished() -> None:
+            # After the animation, revert to the static folder icon
+            static_icon = _load_asset_icon(
+                "folder.png",
+                QtWidgets.QStyle.StandardPixmap.SP_DirOpenIcon,
+                self.style(),
+            )
+            button.setIcon(static_icon)
+            movie.deleteLater()
+            self._folder_movies.pop(key, None)
+
+        movie.frameChanged.connect(_on_frame_changed)
+        movie.finished.connect(_on_finished)
+        movie.start()
 
     # (embed panel handling removed — lives in OptionsDialog now)
 
@@ -3529,10 +3608,12 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self._item_outputs[key] = artifacts
 
-        # Enable the "Open…" button now that we have something to open
+        # Enable the "View ▾" button now that we have something to open
         button = self._open_buttons.get(key)
         if button and artifacts:
             button.setEnabled(True)
+            # Run the folder.gif animation once to indicate new files in the folder
+            self._play_folder_gif_once(key)
 
         if self._queue_total_count:
             self._queue_completed_count = min(
@@ -3763,6 +3844,75 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _on_eta_measured(self, media: str, runtime_s: float, duration_s: float, prefer_gpu: bool) -> None:
         self._eta_memory.update(prefer_gpu, duration_s, runtime_s)
+
+
+def _asset_candidates(filename: str) -> list[Path]:
+    """Return likely locations for an image asset."""
+    candidates: list[Path] = []
+
+    # Packaged resource
+    try:
+        res = resources.files("srtforge.assets.images").joinpath(filename)
+        candidates.append(Path(str(res)))
+    except Exception:
+        pass
+
+    here = Path(__file__).resolve().parent
+    candidates.append(here / "assets" / "images" / filename)
+    candidates.append(here / "assets" / filename)
+    candidates.append(here / filename)
+
+    # Developer checkout path you mentioned
+    if os.name == "nt":
+        candidates.append(Path(r"C:\Srtforge\srtforge\assets\images") / filename)
+
+    # Deduplicate and normalise
+    seen: set[Path] = set()
+    unique: list[Path] = []
+    for path in candidates:
+        try:
+            norm = path.resolve()
+        except Exception:
+            continue
+        if norm in seen:
+            continue
+        seen.add(norm)
+        unique.append(norm)
+    return unique
+
+
+def _load_asset_pixmap(filename: str) -> Optional[QtGui.QPixmap]:
+    """Load a pixmap for ``filename`` from our assets folder, if available."""
+    for path in _asset_candidates(filename):
+        if path.exists():
+            pixmap = QtGui.QPixmap(str(path))
+            if not pixmap.isNull():
+                return pixmap
+    return None
+
+
+def _load_asset_icon(
+    filename: str,
+    fallback: QtWidgets.QStyle.StandardPixmap,
+    style: Optional[QtWidgets.QStyle] = None,
+) -> QtGui.QIcon:
+    """Return an icon for ``filename`` or fall back to a standard icon."""
+    pixmap = _load_asset_pixmap(filename)
+    if pixmap is not None:
+        return QtGui.QIcon(pixmap)
+    if style is None:
+        style = QtWidgets.QApplication.style()
+    return style.standardIcon(fallback)
+
+
+def _load_asset_movie(filename: str) -> Optional[QtGui.QMovie]:
+    """Return a QMovie for an animated asset if it exists."""
+    for path in _asset_candidates(filename):
+        if path.exists():
+            movie = QtGui.QMovie(str(path))
+            if movie.isValid():
+                return movie
+    return None
 
 
 def _load_app_icon() -> QtGui.QIcon:
