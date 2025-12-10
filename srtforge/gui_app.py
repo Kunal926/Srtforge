@@ -3265,8 +3265,7 @@ class MainWindow(QtWidgets.QMainWindow):
         """
         menu.clear()
 
-        # Make the icons + text spacing feel like the Win11 Photos menu
-        menu.setIconSize(QtCore.QSize(20, 20))
+        # QMenu in PySide6 doesn’t expose setIconSize; icons follow the style’s default.
 
         artifacts = self._item_outputs.get(key) or {}
 
