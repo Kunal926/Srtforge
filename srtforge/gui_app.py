@@ -1986,7 +1986,18 @@ class MainWindow(QtWidgets.QMainWindow):
             self._console_movie = movie
             movie.setParent(self.log_toggle_button)
             movie.setCacheMode(QtGui.QMovie.CacheMode.CacheAll)
-            movie.setLoopCount(0)  # loop indefinitely
+            # In PySide6 QMovie.loopCount() is read-only. Some bindings expose
+            # setLoopCount(), so call it only when available and otherwise emulate
+            # an infinite loop by restarting when the movie finishes.
+            set_loop = getattr(movie, "setLoopCount", None)
+            if callable(set_loop):
+                # QAbstractAnimation semantics: 0 == infinite looping
+                set_loop(0)
+            else:
+                # If the GIF is finite, restart it whenever it finishes so it
+                # appears to loop forever.
+                if movie.loopCount() != -1:
+                    movie.finished.connect(movie.start)
 
             def _console_frame_changed(_frame: int) -> None:
                 pix = movie.currentPixmap()
@@ -3412,14 +3423,23 @@ class MainWindow(QtWidgets.QMainWindow):
         self._folder_movies[key] = movie
         movie.setParent(button)
         movie.setCacheMode(QtGui.QMovie.CacheMode.CacheAll)
-        movie.setLoopCount(1)
 
-        def _on_frame_changed(_frame: int) -> None:
-            pix = movie.currentPixmap()
-            if not pix.isNull():
-                button.setIcon(QtGui.QIcon(pix))
+        # Prefer the native setLoopCount API when it exists (PyQt etc.),
+        # but also enforce a single visible pass even when QMovie only
+        # exposes a read-only loopCount() as in PySide6.
+        set_loop = getattr(movie, "setLoopCount", None)
+        if callable(set_loop):
+            set_loop(1)
+
+        loops_done = 0
+        target_loops = 1
+        finished = False
 
         def _on_finished() -> None:
+            nonlocal finished
+            if finished:
+                return
+            finished = True
             # After the animation, revert to the static folder icon
             static_icon = _load_asset_icon(
                 "folder.png",
@@ -3429,6 +3449,23 @@ class MainWindow(QtWidgets.QMainWindow):
             button.setIcon(static_icon)
             movie.deleteLater()
             self._folder_movies.pop(key, None)
+
+        def _on_frame_changed(frame: int) -> None:
+            nonlocal loops_done
+            if finished:
+                return
+            pix = movie.currentPixmap()
+            if not pix.isNull():
+                button.setIcon(QtGui.QIcon(pix))
+
+            # If the underlying movie loops (including "loop forever"),
+            # stop after the first pass through all frames.
+            total = movie.frameCount()
+            if total > 0 and frame >= total - 1:
+                loops_done += 1
+                if loops_done >= target_loops:
+                    movie.stop()
+                    _on_finished()
 
         movie.frameChanged.connect(_on_frame_changed)
         movie.finished.connect(_on_finished)
