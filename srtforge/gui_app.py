@@ -1772,7 +1772,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self.queue_list.setItemsExpandable(False)
         self.queue_list.setIndentation(0)
         self.queue_list.setIconSize(QtCore.QSize(22, 22))
-        self.queue_list.setStyleSheet("QTreeWidget::item { min-height: 34px; }")
         # Name, Status, Duration, ETA, Progress, Output
         self.queue_list.setHeaderLabels([
             "Name",
@@ -1948,7 +1947,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # Icon wired up below via the Command Prompt PNG
         self.log_toggle_button.setAutoRaise(True)
         self.log_toggle_button.setFocusPolicy(QtCore.Qt.FocusPolicy.NoFocus)
-        self.log_toggle_button.setIconSize(QtCore.QSize(28, 28))
+        self.log_toggle_button.setIconSize(QtCore.QSize(30, 30))
         self.log_toggle_button.setText("")
         self.log_toggle_button.toggled.connect(self._toggle_log_panel)
 
@@ -2193,16 +2192,16 @@ class MainWindow(QtWidgets.QMainWindow):
             }}
 
             /* Global removal of dotted focus rectangles */
-            *:focus {
+            *:focus {{
                 outline: none;
-            }
+            }}
             QTreeWidget::focus,
             QToolButton::focus,
             QPushButton::focus,
-            QLineEdit::focus {
+            QLineEdit::focus {{
                 outline: none;
                 border: none;
-            }
+            }}
 
             #EmbedHeader {{
                 border-radius: 8px;
@@ -2259,9 +2258,10 @@ class MainWindow(QtWidgets.QMainWindow):
                 border-right: none;
             }}
             #QueueList::item {{
-                padding: 4px 8px;  /* slightly taller than old, but not huge */
+                padding: 4px 8px;
                 border: none;
                 outline: none;
+                min-height: 38px;  /* tall enough for the progress bar */
             }}
             #QueueList::item:hover:!selected {{
                 background-color: rgba(148, 163, 184, 0.18);
@@ -2359,10 +2359,10 @@ class MainWindow(QtWidgets.QMainWindow):
             QToolButton#LogToggle,
             QToolButton#LogToggle:hover,
             QToolButton#LogToggle:pressed,
-            QToolButton#LogToggle:checked {
+            QToolButton#LogToggle:checked {{
                 background: transparent;
                 border: none;
-            }
+            }}
 
             #FooterConsoleTrigger {{
                 border-radius: 999px;
@@ -2381,10 +2381,10 @@ class MainWindow(QtWidgets.QMainWindow):
             #FooterConsoleTrigger,
             #FooterConsoleTrigger:hover,
             #FooterConsoleTrigger:pressed,
-            #FooterConsoleTrigger[checked="true"] {
+            #FooterConsoleTrigger[checked="true"] {{
                 background-color: transparent;
                 border: none;
-            }
+            }}
 
             QLabel#LogToggleLabel {{
                 color: #94A3B8;
@@ -2465,16 +2465,16 @@ class MainWindow(QtWidgets.QMainWindow):
             }}
 
             /* Global removal of dotted focus rectangles */
-            *:focus {
+            *:focus {{
                 outline: none;
-            }
+            }}
             QTreeWidget::focus,
             QToolButton::focus,
             QPushButton::focus,
-            QLineEdit::focus {
+            QLineEdit::focus {{
                 outline: none;
                 border: none;
-            }
+            }}
 
             #EmbedHeader {{
                 border-radius: 8px;
@@ -2538,9 +2538,10 @@ class MainWindow(QtWidgets.QMainWindow):
             }}
 
             #QueueList::item {{
-                padding: 4px 8px;  /* slightly taller than old, but not huge */
+                padding: 4px 8px;
                 border: none;
                 outline: none;
+                min-height: 38px;
             }}
 
             #QueueList::item:hover:!selected {{
@@ -2646,10 +2647,10 @@ class MainWindow(QtWidgets.QMainWindow):
             QToolButton#LogToggle,
             QToolButton#LogToggle:hover,
             QToolButton#LogToggle:pressed,
-            QToolButton#LogToggle:checked {
+            QToolButton#LogToggle:checked {{
                 background: transparent;
                 border: none;
-            }
+            }}
 
             #FooterConsoleTrigger {{
                 border-radius: 999px;
@@ -2667,10 +2668,10 @@ class MainWindow(QtWidgets.QMainWindow):
             #FooterConsoleTrigger,
             #FooterConsoleTrigger:hover,
             #FooterConsoleTrigger:pressed,
-            #FooterConsoleTrigger[checked="true"] {
+            #FooterConsoleTrigger[checked="true"] {{
                 background-color: transparent;
                 border: none;
-            }
+            }}
 
             QLabel#LogToggleLabel {{
                 color: #64748B;
