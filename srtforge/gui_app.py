@@ -1812,11 +1812,10 @@ class MainWindow(QtWidgets.QMainWindow):
         # Progress column ≈ footer progress bar width
         header.resizeSection(4, 180)
 
-        # Output column wide enough to show "Open…" fully (incl. pill padding)
+        # Output column sized for an icon-only button
         fm_btn = self.queue_list.fontMetrics()
-        open_text_width = fm_btn.horizontalAdvance("View ▾")
-        # 32px for pill padding + some breathing room
-        output_width = max(110, open_text_width + 32)
+        # Just enough for a ~22px icon with some padding
+        output_width = max(40, fm_btn.height() * 2)
         header.resizeSection(5, output_width)
 
         # 🔧 Determine column indices from header labels so they stay correct even if
@@ -2662,39 +2661,42 @@ class MainWindow(QtWidgets.QMainWindow):
             menu_item_hover = "rgba(59, 130, 246, 0.12)"
 
         custom += f"""
+        /* Output column: icon‑only GIF, no pill/rectangle */
         QToolButton#QueueOpenButton {{
-            background-color: {open_bg};
-            border-radius: 999px;
-            border: 1px solid {open_border};
-            padding: 3px 14px;
-            color: {open_text};
+            background-color: transparent;
+            border: none;
+            padding: 0px;
+            margin: 0px;
         }}
         QToolButton#QueueOpenButton:disabled {{
             background-color: transparent;
-            border-color: {open_disabled};
-            color: {open_disabled};
+            border: none;
         }}
-        QToolButton#QueueOpenButton:hover {{
-            background-color: {open_hover};
-        }}
+        QToolButton#QueueOpenButton:hover,
         QToolButton#QueueOpenButton:pressed {{
-            background-color: {darker.name()};
+            background-color: transparent;
         }}
-        /* Hide the tiny default menu arrow; the ellipsis already communicates a menu */
+        /* Hide the tiny default menu indicator so we truly only see the GIF */
         QToolButton#QueueOpenButton::menu-indicator {{
             image: none;
             width: 0px;
         }}
 
+        /* View menu styling: tighter icon/text gap & slightly larger icons */
         QMenu#QueueOpenMenu {{
             background-color: {menu_bg};
             border: 1px solid {menu_border};
             border-radius: 10px;
-            padding: 4px 0;
+            padding: 2px 0;
+            icon-size: 18px;
         }}
         QMenu#QueueOpenMenu::item {{
-            padding: 6px 18px;
+            padding: 4px 10px;
             color: {menu_item};
+        }}
+        QMenu#QueueOpenMenu::icon {{
+            padding-left: 6px;   /* small indent for icon */
+            padding-right: 4px;  /* minimal gap between icon and text */
         }}
         QMenu#QueueOpenMenu::item:selected {{
             background-color: {menu_item_hover};
@@ -2702,7 +2704,7 @@ class MainWindow(QtWidgets.QMainWindow):
         QMenu#QueueOpenMenu::separator {{
             height: 1px;
             background: rgba(148, 163, 184, 0.40);
-            margin: 4px 12px;
+            margin: 4px 10px;
         }}
         """
 
@@ -2898,18 +2900,18 @@ class MainWindow(QtWidgets.QMainWindow):
             open_button.setAutoRaise(True)
             open_button.setFocusPolicy(QtCore.Qt.FocusPolicy.NoFocus)
             open_button.setEnabled(False)
-            # Split‑button-ish: label + arrow glyph
-            open_button.setText("View ▾")
-            open_button.setToolButtonStyle(QtCore.Qt.ToolButtonTextBesideIcon)
 
-            # Use the custom folder GIF for the View button itself
+            # Icon‑only button: just the folder GIF, no pill/background or text
+            open_button.setToolButtonStyle(QtCore.Qt.ToolButtonIconOnly)
+
             folder_icon = _load_asset_icon(
                 "folder.gif",
                 QtWidgets.QStyle.StandardPixmap.SP_DirOpenIcon,
                 self.style(),
             )
             open_button.setIcon(folder_icon)
-            open_button.setIconSize(QtCore.QSize(20, 20))
+            # Slightly larger than the row text
+            open_button.setIconSize(QtCore.QSize(22, 22))
             open_button.setToolTip("View outputs for this file (SRT, diagnostics, log)")
 
             menu = QtWidgets.QMenu(open_button)
@@ -2922,13 +2924,12 @@ class MainWindow(QtWidgets.QMainWindow):
             self._item_outputs.setdefault(key, {})
 
             # Populate menu lazily and flip the arrow while it is open
-            def _rebuild_menu(k: str = key, m: QtWidgets.QMenu = menu,
-                              btn: QtWidgets.QToolButton = open_button) -> None:
-                btn.setText("View ▴")
+            def _rebuild_menu(k: str = key, m: QtWidgets.QMenu = menu) -> None:
                 self._populate_outputs_menu(k, m)
 
-            def _reset_arrow(btn: QtWidgets.QToolButton = open_button) -> None:
-                btn.setText("View ▾")
+            def _reset_arrow() -> None:
+                # No-op; we no longer show arrow text on the button
+                pass
 
             menu.aboutToShow.connect(_rebuild_menu)
             menu.aboutToHide.connect(_reset_arrow)
