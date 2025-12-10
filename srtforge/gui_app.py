@@ -3264,6 +3264,10 @@ class MainWindow(QtWidgets.QMainWindow):
         Called on QMenu.aboutToShow so we can discover diagnostics/logs lazily.
         """
         menu.clear()
+
+        # Make the icons + text spacing feel like the Win11 Photos menu
+        menu.setIconSize(QtCore.QSize(20, 20))
+
         artifacts = self._item_outputs.get(key) or {}
 
         # Convert stored strings to Path objects where applicable
@@ -3298,12 +3302,36 @@ class MainWindow(QtWidgets.QMainWindow):
 
         has_actions = False
 
-        def _add_action(label: str, path: Optional[Path], *, open_folder: bool = False) -> None:
+        # --- Icons: outline‑style document / CSV / JSON / log / folder ----------
+
+        style = self.style()
+
+        def themed(name: str, fallback: QtWidgets.QStyle.StandardPixmap) -> QtGui.QIcon:
+            icon = QtGui.QIcon.fromTheme(name)
+            if icon.isNull():
+                icon = style.standardIcon(fallback)
+            return icon
+
+        srt_icon = themed("text-x-generic", QtWidgets.QStyle.StandardPixmap.SP_FileIcon)
+        csv_icon = themed("x-office-spreadsheet", QtWidgets.QStyle.StandardPixmap.SP_FileIcon)
+        json_icon = themed("application-json", QtWidgets.QStyle.StandardPixmap.SP_FileIcon)
+        log_icon = themed("text-x-log", QtWidgets.QStyle.StandardPixmap.SP_FileDialogDetailedView)
+        folder_icon = themed("folder-open", QtWidgets.QStyle.StandardPixmap.SP_DirOpenIcon)
+
+        # -----------------------------------------------------------------------
+
+        def _add_action(
+            label: str,
+            icon: QtGui.QIcon,
+            path: Optional[Path],
+            *,
+            open_folder: bool = False,
+        ) -> None:
             nonlocal has_actions
             if not path or not path.exists():
                 return
             has_actions = True
-            action = menu.addAction(label)
+            action = menu.addAction(icon, label)
 
             def _open() -> None:
                 target = path
@@ -3314,16 +3342,15 @@ class MainWindow(QtWidgets.QMainWindow):
             action.triggered.connect(_open)
 
         # Primary entry: open the SRT in the default app
-        _add_action("SRT file", srt_path)
-        # Your "open csv" – named "Diagnostics CSV"
-        _add_action("Diagnostics CSV", diag_csv)
-        # Optional JSON diagnostic sidecar
-        _add_action("Diagnostics JSON", diag_json)
-        # Per-run log from RunLogger
-        _add_action("Run log (details)", log_path)
+        _add_action("SRT file", srt_icon, srt_path)
+        # File‑type “photos” for diagnostics + log
+        _add_action("Diagnostics CSV", csv_icon, diag_csv)
+        _add_action("Diagnostics JSON", json_icon, diag_json)
+        _add_action("Run log (details)", log_icon, log_path)
+
         # Convenience: open the SRT folder in Explorer/Finder
         if srt_path and srt_path.exists():
-            _add_action("Containing folder", srt_path, open_folder=True)
+            _add_action("Containing folder", folder_icon, srt_path, open_folder=True)
 
         if not has_actions:
             placeholder = menu.addAction("No outputs available yet")
