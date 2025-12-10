@@ -1767,10 +1767,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self.queue_list.setVerticalScrollMode(
             QtWidgets.QAbstractItemView.ScrollPerPixel
         )
-        self.queue_list.setUniformRowHeights(True)
+        self.queue_list.setUniformRowHeights(False)
         self.queue_list.setRootIsDecorated(False)
         self.queue_list.setItemsExpandable(False)
         self.queue_list.setIndentation(0)
+        self.queue_list.setIconSize(QtCore.QSize(22, 22))
+        self.queue_list.setStyleSheet("QTreeWidget::item { min-height: 34px; }")
         # Name, Status, Duration, ETA, Progress, Output
         self.queue_list.setHeaderLabels([
             "Name",
@@ -1946,7 +1948,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # Icon wired up below via the Command Prompt PNG
         self.log_toggle_button.setAutoRaise(True)
         self.log_toggle_button.setFocusPolicy(QtCore.Qt.FocusPolicy.NoFocus)
-        self.log_toggle_button.setIconSize(QtCore.QSize(24, 24))
+        self.log_toggle_button.setIconSize(QtCore.QSize(28, 28))
         self.log_toggle_button.setText("")
         self.log_toggle_button.toggled.connect(self._toggle_log_panel)
 
@@ -2190,6 +2192,18 @@ class MainWindow(QtWidgets.QMainWindow):
                 font-weight: 500;
             }}
 
+            /* Global removal of dotted focus rectangles */
+            *:focus {
+                outline: none;
+            }
+            QTreeWidget::focus,
+            QToolButton::focus,
+            QPushButton::focus,
+            QLineEdit::focus {
+                outline: none;
+                border: none;
+            }
+
             #EmbedHeader {{
                 border-radius: 8px;
                 padding: 2px 8px;
@@ -2341,6 +2355,15 @@ class MainWindow(QtWidgets.QMainWindow):
                 background-color: transparent;   /* pill handles hover/active */
             }}
 
+            /* Remove highlight from the icon button inside the pill */
+            QToolButton#LogToggle,
+            QToolButton#LogToggle:hover,
+            QToolButton#LogToggle:pressed,
+            QToolButton#LogToggle:checked {
+                background: transparent;
+                border: none;
+            }
+
             #FooterConsoleTrigger {{
                 border-radius: 999px;
                 padding: 2px 10px;              /* pill height + horizontal breathing room */
@@ -2353,6 +2376,15 @@ class MainWindow(QtWidgets.QMainWindow):
             #FooterConsoleTrigger[checked="true"] {{
                 background-color: rgba(15, 23, 42, 0.80);
             }}
+
+            /* --- Remove light-blue highlight box from footer console pill --- */
+            #FooterConsoleTrigger,
+            #FooterConsoleTrigger:hover,
+            #FooterConsoleTrigger:pressed,
+            #FooterConsoleTrigger[checked="true"] {
+                background-color: transparent;
+                border: none;
+            }
 
             QLabel#LogToggleLabel {{
                 color: #94A3B8;
@@ -2431,6 +2463,18 @@ class MainWindow(QtWidgets.QMainWindow):
                 left: 16px;
                 padding: 4px 8px 4px 8px;
             }}
+
+            /* Global removal of dotted focus rectangles */
+            *:focus {
+                outline: none;
+            }
+            QTreeWidget::focus,
+            QToolButton::focus,
+            QPushButton::focus,
+            QLineEdit::focus {
+                outline: none;
+                border: none;
+            }
 
             #EmbedHeader {{
                 border-radius: 8px;
@@ -2598,6 +2642,15 @@ class MainWindow(QtWidgets.QMainWindow):
                 background-color: transparent;   /* no extra box on hover */
             }}
 
+            /* Remove highlight from the icon button inside the pill */
+            QToolButton#LogToggle,
+            QToolButton#LogToggle:hover,
+            QToolButton#LogToggle:pressed,
+            QToolButton#LogToggle:checked {
+                background: transparent;
+                border: none;
+            }
+
             #FooterConsoleTrigger {{
                 border-radius: 999px;
                 padding: 2px 10px;
@@ -2609,6 +2662,15 @@ class MainWindow(QtWidgets.QMainWindow):
             #FooterConsoleTrigger[checked="true"] {{
                 background-color: rgba(59, 130, 246, 0.08);
             }}
+
+            /* --- Remove light-blue highlight box from footer console pill --- */
+            #FooterConsoleTrigger,
+            #FooterConsoleTrigger:hover,
+            #FooterConsoleTrigger:pressed,
+            #FooterConsoleTrigger[checked="true"] {
+                background-color: transparent;
+                border: none;
+            }
 
             QLabel#LogToggleLabel {{
                 color: #64748B;
@@ -2911,7 +2973,7 @@ class MainWindow(QtWidgets.QMainWindow):
             )
             open_button.setIcon(folder_icon)
             # Slightly larger than the row text
-            open_button.setIconSize(QtCore.QSize(22, 22))
+            open_button.setIconSize(QtCore.QSize(26, 26))
             open_button.setToolTip("View outputs for this file (SRT, diagnostics, log)")
 
             menu = QtWidgets.QMenu(open_button)
