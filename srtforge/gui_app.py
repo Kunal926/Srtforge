@@ -1811,7 +1811,7 @@ class MainWindow(QtWidgets.QMainWindow):
         header.resizeSection(2, 90)
         header.resizeSection(3, 120)
         # Progress column ≈ footer progress bar width
-        header.resizeSection(4, 180)
+        header.resizeSection(4, QUEUE_PROGRESS_WIDTH)
 
         # Output column sized for an icon-only button
         fm_btn = self.queue_list.fontMetrics()
@@ -1926,7 +1926,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.progress_bar.setValue(0)
         self.progress_bar.setTextVisible(False)
         # comfortable width for "in queue" progress; stays sane if window shrinks
-        self.progress_bar.setMinimumWidth(220)
+        self.progress_bar.setMinimumWidth(QUEUE_PROGRESS_WIDTH)
         self.progress_bar.setMaximumWidth(320)
         self.progress_bar.setSizePolicy(
             QtWidgets.QSizePolicy.Preferred,
@@ -3293,26 +3293,17 @@ class MainWindow(QtWidgets.QMainWindow):
 
             self._item_progress[key] = bar
 
-        # Attach the bar to a tiny wrapper widget so it can be centred inside
-        # the cell, both horizontally and vertically.
         current_item = self._find_queue_item(media)
         if current_item is None:
             return
 
-        existing_container = self.queue_list.itemWidget(current_item, self._progress_column)
-        container = bar.parent() if isinstance(bar.parent(), QtWidgets.QWidget) else None
-
-        if container is None or container is not existing_container:
-            container = QtWidgets.QWidget()
-            layout = QtWidgets.QHBoxLayout(container)
-            layout.setContentsMargins(0, 0, 0, 0)
-            layout.setSpacing(0)
-            layout.addWidget(bar)
-            layout.setAlignment(bar, QtCore.Qt.AlignCenter)
-            self.queue_list.setItemWidget(current_item, self._progress_column, container)
+        # Attach the progress bar directly to the Progress column cell so it
+        # shares the same background as the rest of the row (no extra white box).
+        existing_widget = self.queue_list.itemWidget(current_item, self._progress_column)
+        if existing_widget is not bar:
+            self.queue_list.setItemWidget(current_item, self._progress_column, bar)
 
         value = max(0, min(100, int(percent)))
-        container.setVisible(True)
         bar.setVisible(True)
         bar.setValue(value)
 
@@ -4154,6 +4145,7 @@ def _format_hms(seconds: float) -> str:
     return f"{minutes:02d}:{secs:02d}"
 
 
+QUEUE_PROGRESS_WIDTH = 220
 ETA_PLACEHOLDER = "–"
 
 
