@@ -1815,8 +1815,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # Output column sized for an icon-only button
         fm_btn = self.queue_list.fontMetrics()
-        # Just enough for a ~22px icon with some padding
-        output_width = max(40, fm_btn.height() * 2)
+        # a little wider so the 30×30 GIF isn’t cramped
+        output_width = max(52, fm_btn.height() * 2 + 8)
         header.resizeSection(5, output_width)
 
         # 🔧 Determine column indices from header labels so they stay correct even if
@@ -1922,10 +1922,16 @@ class MainWindow(QtWidgets.QMainWindow):
         # Sleek progress bar, only visible while processing
         self.progress_bar = QtWidgets.QProgressBar()
         self.progress_bar.setObjectName("FooterProgressBar")
-        self.progress_bar.setMaximumWidth(180)
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(0)
         self.progress_bar.setTextVisible(False)
+        # comfortable width for "in queue" progress; stays sane if window shrinks
+        self.progress_bar.setMinimumWidth(220)
+        self.progress_bar.setMaximumWidth(320)
+        self.progress_bar.setSizePolicy(
+            QtWidgets.QSizePolicy.Preferred,
+            QtWidgets.QSizePolicy.Fixed,
+        )
         self.progress_bar.setVisible(False)
         status_bar.addPermanentWidget(self.progress_bar)
 
@@ -2182,6 +2188,22 @@ class MainWindow(QtWidgets.QMainWindow):
                 color: #E5E7EB;
                 border-radius: 12px;
                 border: 1px solid #020617;
+            }}
+
+            /* Progress bars: queue footer + per-row */
+            QProgressBar#FooterProgressBar,
+            QProgressBar#QueueProgressBar {{
+                border-radius: 999px;
+                background-color: rgba(15, 23, 42, 0.9);
+                border: 1px solid rgba(148, 163, 184, 0.6);
+                height: 10px;
+                padding: 0px;
+                text-align: center;
+            }}
+            QProgressBar#FooterProgressBar::chunk,
+            QProgressBar#QueueProgressBar::chunk {{
+                border-radius: 999px;
+                background-color: {accent.name()};
             }}
 
             QGroupBox {{
@@ -2712,6 +2734,22 @@ class MainWindow(QtWidgets.QMainWindow):
                 selection-background-color: {accent.name()};
                 selection-color: #FFFFFF;
             }}
+
+            /* Progress bars: queue footer + per-row */
+            QProgressBar#FooterProgressBar,
+            QProgressBar#QueueProgressBar {{
+                border-radius: 999px;
+                background-color: #E5E7EB;
+                border: 1px solid #CBD5E1;
+                height: 10px;
+                padding: 0px;
+                text-align: center;
+            }}
+            QProgressBar#FooterProgressBar::chunk,
+            QProgressBar#QueueProgressBar::chunk {{
+                border-radius: 999px;
+                background-color: {accent.name()};
+            }}
             """
 
         # ---- Per-row "Open…" button + its menu --------------------------------
@@ -2744,13 +2782,16 @@ class MainWindow(QtWidgets.QMainWindow):
             padding: 0px;
             margin: 0px;
         }}
-        QToolButton#QueueOpenButton:disabled {{
+        QToolButton#QueueOpenButton:hover,
+        QToolButton#QueueOpenButton:pressed,
+        QToolButton#QueueOpenButton:checked,
+        QToolButton#QueueOpenButton:focus {{
             background-color: transparent;
             border: none;
         }}
-        QToolButton#QueueOpenButton:hover,
-        QToolButton#QueueOpenButton:pressed {{
+        QToolButton#QueueOpenButton:disabled {{
             background-color: transparent;
+            border: none;
         }}
         /* Hide the tiny default menu indicator so we truly only see the GIF */
         QToolButton#QueueOpenButton::menu-indicator {{
@@ -2763,12 +2804,13 @@ class MainWindow(QtWidgets.QMainWindow):
             background-color: {menu_bg};
             border: 1px solid {menu_border};
             border-radius: 10px;
-            padding: 2px 0;
-            icon-size: 18px;
+            padding: 4px 0;
+            icon-size: 20px;
         }}
         QMenu#QueueOpenMenu::item {{
-            padding: 4px 10px;
+            padding: 6px 12px;
             color: {menu_item};
+            font-size: 13px;
         }}
         QMenu#QueueOpenMenu::icon {{
             padding-left: 6px;   /* small indent for icon */
@@ -2987,7 +3029,7 @@ class MainWindow(QtWidgets.QMainWindow):
             )
             open_button.setIcon(folder_icon)
             # Slightly larger than the row text
-            open_button.setIconSize(QtCore.QSize(26, 26))
+            open_button.setIconSize(QtCore.QSize(30, 30))
             open_button.setToolTip("View outputs for this file (SRT, diagnostics, log)")
 
             menu = QtWidgets.QMenu(open_button)
