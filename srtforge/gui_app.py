@@ -1810,8 +1810,9 @@ class MainWindow(QtWidgets.QMainWindow):
         header.resizeSection(1, 140)
         header.resizeSection(2, 90)
         header.resizeSection(3, 120)
-        # Progress column ≈ footer progress bar width
-        header.resizeSection(4, QUEUE_PROGRESS_WIDTH)
+        # Make the column slightly wider than the footer bar so the bar can
+        # sit centered with a bit of breathing room on each side.
+        header.resizeSection(4, 260)
 
         # Output column sized for an icon-only button
         fm_btn = self.queue_list.fontMetrics()
@@ -2992,12 +2993,14 @@ class MainWindow(QtWidgets.QMainWindow):
             progress.setRange(0, 100)
             progress.setValue(0)
             progress.setTextVisible(False)
+            # We want a pill that has a fixed size like the footer bar,
+            # not something that stretches to fill the entire cell.
             progress.setSizePolicy(
-                QtWidgets.QSizePolicy.Expanding,   # fill Progress column horizontally
+                QtWidgets.QSizePolicy.Fixed,
                 QtWidgets.QSizePolicy.Fixed,
             )
 
-            # Keep height modest so rows aren't gigantic.
+            # Match thickness to the footer bar (or fall back to its own hint).
             bar_height = 0
             if hasattr(self, "progress_bar") and self.progress_bar is not None:
                 bar_height = self.progress_bar.sizeHint().height()
@@ -3005,7 +3008,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 bar_height = progress.sizeHint().height()
             progress.setFixedHeight(bar_height)
 
-            # Start hidden; we only show while file is actually processing.
+            # Width will be matched to the footer bar the first time we show it
+            # in _set_queue_item_progress.
             progress.setVisible(False)
 
             key = str(path)
@@ -3280,30 +3284,43 @@ class MainWindow(QtWidgets.QMainWindow):
             bar.setValue(0)
             bar.setTextVisible(False)
             bar.setSizePolicy(
-                QtWidgets.QSizePolicy.Expanding,
+                QtWidgets.QSizePolicy.Fixed,
                 QtWidgets.QSizePolicy.Fixed,
             )
-
-            bar_height = 0
-            if hasattr(self, "progress_bar") and self.progress_bar is not None:
-                bar_height = self.progress_bar.sizeHint().height()
-            if bar_height <= 0:
-                bar_height = bar.sizeHint().height()
-            bar.setFixedHeight(bar_height)
-
             self._item_progress[key] = bar
+
+        # Match size to the footer progress bar so they look identical.
+        if hasattr(self, "progress_bar") and self.progress_bar is not None:
+            footer = self.progress_bar
+            # Thickness
+            h = footer.sizeHint().height()
+            if h > 0 and bar.height() != h:
+                bar.setFixedHeight(h)
+            # Length (use actual width if laid out, otherwise min/sizeHint)
+            footer_width = footer.width() or footer.minimumWidth() or footer.sizeHint().width()
+            if footer_width > 0 and bar.width() != footer_width:
+                bar.setFixedWidth(footer_width)
 
         current_item = self._find_queue_item(media)
         if current_item is None:
             return
 
-        # Attach the progress bar directly to the Progress column cell so it
-        # shares the same background as the rest of the row (no extra white box).
-        existing_widget = self.queue_list.itemWidget(current_item, self._progress_column)
-        if existing_widget is not bar:
-            self.queue_list.setItemWidget(current_item, self._progress_column, bar)
+        # Attach the bar to a tiny wrapper widget so it can be centred inside
+        # the cell, both horizontally and vertically.
+        existing_container = self.queue_list.itemWidget(current_item, self._progress_column)
+        container = bar.parent() if isinstance(bar.parent(), QtWidgets.QWidget) else None
+
+        if container is None or container is not existing_container:
+            container = QtWidgets.QWidget()
+            layout = QtWidgets.QHBoxLayout(container)
+            layout.setContentsMargins(0, 0, 0, 0)
+            layout.setSpacing(0)
+            layout.addWidget(bar)
+            layout.setAlignment(bar, QtCore.Qt.AlignCenter)
+            self.queue_list.setItemWidget(current_item, self._progress_column, container)
 
         value = max(0, min(100, int(percent)))
+        container.setVisible(True)
         bar.setVisible(True)
         bar.setValue(value)
 
