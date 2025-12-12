@@ -3000,14 +3000,6 @@ class MainWindow(QtWidgets.QMainWindow):
                 QtWidgets.QSizePolicy.Fixed,
             )
 
-            # Match thickness to the footer bar (or fall back to its own hint).
-            bar_height = 0
-            if hasattr(self, "progress_bar") and self.progress_bar is not None:
-                bar_height = self.progress_bar.sizeHint().height()
-            if bar_height <= 0:
-                bar_height = progress.sizeHint().height()
-            progress.setFixedHeight(bar_height)
-
             # Width will be matched to the footer bar the first time we show it
             # in _set_queue_item_progress.
             progress.setVisible(False)
@@ -3292,14 +3284,17 @@ class MainWindow(QtWidgets.QMainWindow):
         # Match size to the footer progress bar so they look identical.
         if hasattr(self, "progress_bar") and self.progress_bar is not None:
             footer = self.progress_bar
-            # Thickness
-            h = footer.sizeHint().height()
-            if h > 0 and bar.height() != h:
-                bar.setFixedHeight(h)
-            # Length (use actual width if laid out, otherwise min/sizeHint)
-            footer_width = footer.width() or footer.minimumWidth() or footer.sizeHint().width()
-            if footer_width > 0 and bar.width() != footer_width:
-                bar.setFixedWidth(footer_width)
+
+            # NOTE: The footer bar lives in a QStatusBar, so its *rendered* size can
+            # differ from sizeHint(). Use the live geometry first so the row bar
+            # matches pixel-perfectly.
+            footer_h = int(footer.height() or footer.sizeHint().height() or 0)
+            footer_w = int(footer.width() or footer.minimumWidth() or footer.sizeHint().width() or 0)
+
+            if footer_h > 0 and bar.height() != footer_h:
+                bar.setFixedHeight(footer_h)
+            if footer_w > 0 and bar.width() != footer_w:
+                bar.setFixedWidth(footer_w)
 
         current_item = self._find_queue_item(media)
         if current_item is None:
@@ -3312,6 +3307,16 @@ class MainWindow(QtWidgets.QMainWindow):
 
         if container is None or container is not existing_container:
             container = QtWidgets.QWidget()
+            container.setObjectName("QueueProgressContainer")
+
+            # Critical: make the wrapper *transparent* so there is no white box.
+            container.setAutoFillBackground(False)
+            container.setStyleSheet("QWidget#QueueProgressContainer { background: transparent; }")
+            try:
+                container.setAttribute(QtCore.Qt.WidgetAttribute.WA_TranslucentBackground, True)
+            except Exception:
+                pass
+
             layout = QtWidgets.QHBoxLayout(container)
             layout.setContentsMargins(0, 0, 0, 0)
             layout.setSpacing(0)
