@@ -2777,22 +2777,28 @@ class MainWindow(QtWidgets.QMainWindow):
 
         custom += f"""
         /* Output column: icon‑only GIF, no pill/rectangle */
-        QToolButton#QueueOpenButton {{
-            background-color: transparent;
-            border: none;
-            padding: 0px;
-            margin: 0px;
-        }}
+        QToolButton#QueueOpenButton,
         QToolButton#QueueOpenButton:hover,
+        QToolButton#QueueOpenButton:hover:!disabled,
         QToolButton#QueueOpenButton:pressed,
         QToolButton#QueueOpenButton:checked,
         QToolButton#QueueOpenButton:focus {{
+            background: transparent;
             background-color: transparent;
             border: none;
+            border-radius: 0px;
+            padding: 0px;
+            margin: 0px;
+            outline: none;
         }}
         QToolButton#QueueOpenButton:disabled {{
+            background: transparent;
             background-color: transparent;
             border: none;
+            border-radius: 0px;
+            padding: 0px;
+            margin: 0px;
+            outline: none;
         }}
         /* Hide the tiny default menu indicator so we truly only see the GIF */
         QToolButton#QueueOpenButton::menu-indicator {{
@@ -3011,9 +3017,13 @@ class MainWindow(QtWidgets.QMainWindow):
             open_button = QtWidgets.QToolButton()
             open_button.setObjectName("QueueOpenButton")
             open_button.setCursor(pointer_cursor)
-            open_button.setAutoRaise(True)
+            open_button.setAutoRaise(False)
             open_button.setFocusPolicy(QtCore.Qt.FocusPolicy.NoFocus)
             open_button.setEnabled(False)
+
+            # Used by eventFilter() to trigger a single GIF play per hover.
+            open_button.setProperty("srtforge_media_key", key)
+            open_button.installEventFilter(self)
 
             # Icon‑only button: just the folder GIF, no pill/background or text
             open_button.setToolButtonStyle(QtCore.Qt.ToolButtonIconOnly)
@@ -3490,28 +3500,57 @@ class MainWindow(QtWidgets.QMainWindow):
             placeholder = menu.addAction("No outputs available yet")
             placeholder.setEnabled(False)
 
-    def _play_folder_gif_once(self, key: str) -> None:
-        """
-        Animate the per-row 'View' button with folder.gif once when a file completes.
+    def _outputs_ready_for_hover_animation(self, key: str) -> bool:
+        """Return True when we have a generated SRT output for this queue item."""
+        artifacts = self._item_outputs.get(key) or {}
+        srt_path = artifacts.get("srt")
+        if not srt_path:
+            return False
+        try:
+            return Path(srt_path).exists()
+        except Exception:
+            return False
 
-        ``key`` is the media path string used in our caches.
+    def eventFilter(self, watched: QtCore.QObject, event: QtCore.QEvent) -> bool:  # noqa: N802
+        """Play the folder GIF once per hover (only after outputs exist) and stop on unhover."""
+        try:
+            if (
+                isinstance(watched, QtWidgets.QToolButton)
+                and watched.objectName() == "QueueOpenButton"
+            ):
+                key = watched.property("srtforge_media_key")
+                if isinstance(key, str) and key:
+                    if event.type() == QtCore.QEvent.Type.Enter:
+                        if self._outputs_ready_for_hover_animation(key):
+                            self._play_folder_gif_once(key)
+                    elif event.type() == QtCore.QEvent.Type.Leave:
+                        self._stop_folder_gif_animation(key)
+        except Exception:
+            # Never let hover animation logic break the rest of the UI.
+            pass
+        return super().eventFilter(watched, event)
+
+    def _play_folder_gif_once(self, key: str) -> None:
+        """Play the folder.gif animation a single time for this row's Output button.
+
+        This is used for the "play once per hover" behaviour (mouseenter triggers
+        a single pass, mouseleave cancels/reset).
         """
         button = self._open_buttons.get(key)
         if not button:
             return
 
+        # Restart cleanly if a previous hover animation is still alive.
+        self._stop_folder_gif_animation(key)
+
         movie = _load_asset_movie("folder.gif")
         if movie is None:
             return
 
-        # Keep the movie alive for the duration of the animation
         self._folder_movies[key] = movie
         movie.setParent(button)
         movie.setCacheMode(QtGui.QMovie.CacheMode.CacheAll)
 
-        # Prefer the native setLoopCount API when it exists (PyQt etc.),
-        # but also enforce a single visible pass even when QMovie only
-        # exposes a read-only loopCount() as in PySide6.
         set_loop = getattr(movie, "setLoopCount", None)
         if callable(set_loop):
             set_loop(1)
@@ -3525,7 +3564,6 @@ class MainWindow(QtWidgets.QMainWindow):
             if finished:
                 return
             finished = True
-            # After the animation, revert to the static folder GIF icon
             static_icon = _load_asset_icon(
                 "folder.gif",
                 QtWidgets.QStyle.StandardPixmap.SP_DirOpenIcon,
@@ -3543,8 +3581,6 @@ class MainWindow(QtWidgets.QMainWindow):
             if not pix.isNull():
                 button.setIcon(QtGui.QIcon(pix))
 
-            # If the underlying movie loops (including "loop forever"),
-            # stop after the first pass through all frames.
             total = movie.frameCount()
             if total > 0 and frame >= total - 1:
                 loops_done += 1
@@ -3555,6 +3591,28 @@ class MainWindow(QtWidgets.QMainWindow):
         movie.frameChanged.connect(_on_frame_changed)
         movie.finished.connect(_on_finished)
         movie.start()
+
+    def _stop_folder_gif_animation(self, key: str) -> None:
+        """Stop any in-flight folder.gif animation for this row and restore the static icon."""
+        button = self._open_buttons.get(key)
+        movie = self._folder_movies.pop(key, None)
+        if movie is not None:
+            try:
+                movie.stop()
+            except Exception:
+                pass
+            try:
+                movie.deleteLater()
+            except Exception:
+                pass
+
+        if button is not None:
+            static_icon = _load_asset_icon(
+                "folder.gif",
+                QtWidgets.QStyle.StandardPixmap.SP_DirOpenIcon,
+                self.style(),
+            )
+            button.setIcon(static_icon)
 
     # (embed panel handling removed — lives in OptionsDialog now)
 
