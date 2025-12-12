@@ -17,6 +17,8 @@ from pathlib import Path
 from shutil import which
 from typing import Callable, Iterable, List, Optional, TextIO
 
+from collections import deque
+
 import yaml
 
 from PySide6 import QtCore, QtGui, QtWidgets
@@ -221,6 +223,35 @@ def _ffmpeg_directory_from_options(options: WorkerOptions) -> Optional[Path]:
 
 class StopRequested(Exception):
     """Raised when the user cancels the current operation."""
+
+
+class _DurationProbeEmitter(QtCore.QObject):
+    """Thread-safe signal bridge for async media probing."""
+
+    durationReady = QtCore.Signal(str, float)
+
+
+class _DurationProbeTask(QtCore.QRunnable):
+    """Background task that probes media duration without blocking the UI."""
+
+    def __init__(
+        self,
+        media_path: Path,
+        ffprobe_bin: Optional[Path],
+        emitter: _DurationProbeEmitter,
+    ) -> None:
+        super().__init__()
+        self._media_path = media_path
+        self._ffprobe_bin = ffprobe_bin
+        self._emitter = emitter
+
+    def run(self) -> None:  # noqa: D401 - QRunnable override
+        try:
+            duration_s = float(_probe_media_duration_ffprobe_cmd(self._ffprobe_bin, self._media_path) or 0.0)
+        except Exception:
+            duration_s = 0.0
+        # Emitting across threads is safe; Qt will queue-deliver to the UI thread.
+        self._emitter.durationReady.emit(str(self._media_path), duration_s)
 
 
 class TranscriptionWorker(QtCore.QThread):
@@ -601,8 +632,10 @@ class TranscriptionWorker(QtCore.QThread):
         process.setArguments(command[1:])
         process.setProcessChannelMode(QtCore.QProcess.ProcessChannelMode.SeparateChannels)
 
-        stdout_parts: list[str] = []
-        stderr_parts: list[str] = []
+        # Keep only a bounded tail of output to avoid unbounded memory growth
+        # when ffmpeg/NeMo emits lots of logs.
+        stdout_parts = deque(maxlen=250)  # type: ignore[var-annotated]
+        stderr_parts = deque(maxlen=250)  # type: ignore[var-annotated]
         stdout_buffer = ""
         stderr_buffer = ""
 
@@ -673,8 +706,8 @@ class TranscriptionWorker(QtCore.QThread):
                 self._process_cli_line(text)
                 self.logMessage.emit(text)
 
-        stdout = "".join(stdout_parts)
-        stderr = "".join(stderr_parts)
+        stdout = "".join(list(stdout_parts))
+        stderr = "".join(list(stderr_parts))
         return process.exitCode(), stdout, stderr
 
     def _run_pipeline_subprocess(self, media: Path) -> Path:
@@ -1579,8 +1612,22 @@ class MainWindow(QtWidgets.QMainWindow):
         self._queue_completed_count: int = 0
         # Track the current ETA window so we can compute % progress
         self._eta_total: float = 0.0
-        # NEW: animated folder GIFs for "View" buttons (keyed by media path)
+        # Animated folder GIFs for per-row Output buttons (keyed by media path).
+        # Keep one QMovie per row so hover playback is instant (avoid reloading/decoding
+        # the GIF on every mouse-enter).
         self._folder_movies: dict[str, QtGui.QMovie] = {}
+        # Monotonic hover generation per row so stale signals can't clobber newer hovers.
+        self._folder_hover_gen: dict[str, int] = {}
+
+        # Buffered log appender so chatty subprocesses don't freeze the UI.
+        self._log_buffer: list[str] = []
+        self._log_flush_timer = QtCore.QTimer(self)
+        self._log_flush_timer.setInterval(50)
+        self._log_flush_timer.timeout.connect(self._flush_log_buffer)
+
+        # Async duration probing avoids blocking the main thread when adding files.
+        self._duration_probe = _DurationProbeEmitter(self)
+        self._duration_probe.durationReady.connect(self._on_duration_probed)
         self._build_ui()  # builds a page widget; we wrap it in a scroll area below
         self._log_tailer = LogTailer(self._append_log, self)
         self._load_persistent_options()
@@ -3025,6 +3072,10 @@ class MainWindow(QtWidgets.QMainWindow):
             open_button.setProperty("srtforge_media_key", key)
             open_button.installEventFilter(self)
 
+            # Ensure hover events fire instantly inside the QTreeWidget cell.
+            open_button.setMouseTracking(True)
+            open_button.setAttribute(QtCore.Qt.WidgetAttribute.WA_Hover, True)
+
             # Icon‑only button: just the folder GIF, no pill/background or text
             open_button.setToolButtonStyle(QtCore.Qt.ToolButtonIconOnly)
 
@@ -3037,6 +3088,23 @@ class MainWindow(QtWidgets.QMainWindow):
             # Slightly larger than the row text
             open_button.setIconSize(QtCore.QSize(30, 30))
             open_button.setToolTip("View outputs for this file (SRT, diagnostics, log)")
+
+            # Preload the GIF decoder so hover playback feels instant.
+            try:
+                movie = _load_asset_movie("folder.gif")
+            except Exception:
+                movie = None
+            if movie is not None:
+                movie.setParent(open_button)
+                movie.setCacheMode(QtGui.QMovie.CacheMode.CacheAll)
+                set_loop = getattr(movie, "setLoopCount", None)
+                if callable(set_loop):
+                    set_loop(1)
+                try:
+                    movie.jumpToFrame(0)
+                except Exception:
+                    pass
+                self._folder_movies[key] = movie
 
             menu = QtWidgets.QMenu(open_button)
             menu.setObjectName("QueueOpenMenu")  # for styling
@@ -3062,15 +3130,18 @@ class MainWindow(QtWidgets.QMainWindow):
             if hasattr(self, "_outputs_column"):
                 self.queue_list.setItemWidget(item, self._outputs_column, open_button)
 
-            # Cache duration for total in card footer and populate the Duration column
+            # Populate Duration asynchronously so adding many files doesn't freeze the UI.
+            self._queue_duration_cache[str(path)] = 0.0
+            item.setText(2, "…")
+            item.setData(2, QtCore.Qt.ItemDataRole.UserRole, 0.0)
+
             try:
-                duration_s = _probe_media_duration_ffprobe(path, ffprobe)
+                QtCore.QThreadPool.globalInstance().start(
+                    _DurationProbeTask(path, ffprobe, self._duration_probe)
+                )
             except Exception:
-                duration_s = 0.0
-            duration_s = float(duration_s or 0.0)
-            self._queue_duration_cache[str(path)] = duration_s
-            item.setText(2, _format_hms(duration_s))
-            item.setData(2, QtCore.Qt.ItemDataRole.UserRole, duration_s)
+                # Best-effort; duration is nice-to-have.
+                pass
 
         self._update_start_state()
 
@@ -3116,10 +3187,22 @@ class MainWindow(QtWidgets.QMainWindow):
         self._update_start_state()
 
     def _clear_queue(self) -> None:
+        # Delete per-row widgets explicitly to avoid leaking QWidget instances.
+        for bar in list(self._item_progress.values()):
+            try:
+                bar.deleteLater()
+            except Exception:
+                pass
+        for btn in list(self._open_buttons.values()):
+            try:
+                btn.deleteLater()
+            except Exception:
+                pass
+
         self.queue_list.clear()
         self._queue_duration_cache.clear()
         self._item_progress.clear()
-        # NEW: clear outputs + buttons + run id mapping
+        # Clear outputs + buttons + run id mapping
         self._open_buttons.clear()
         self._item_outputs.clear()
         self._file_run_ids.clear()
@@ -3130,6 +3213,7 @@ class MainWindow(QtWidgets.QMainWindow):
             except Exception:
                 pass
         self._folder_movies.clear()
+        self._folder_hover_gen.clear()
         self._update_start_state()
 
     def _update_start_state(self) -> None:
@@ -3178,6 +3262,26 @@ class MainWindow(QtWidgets.QMainWindow):
             )
 
         self.queue_summary_label.setText(summary)
+
+    @QtCore.Slot(str, float)
+    def _on_duration_probed(self, media: str, duration_s: float) -> None:
+        """Update the queued row once ffprobe duration is available."""
+
+        try:
+            key = str(Path(media).resolve())
+        except Exception:
+            key = str(media)
+
+        # If the item has been removed from the queue, ignore the update.
+        item = self._find_queue_item(key)
+        if item is None:
+            return
+
+        duration_s = float(duration_s or 0.0)
+        self._queue_duration_cache[key] = duration_s
+        item.setText(2, _format_hms(duration_s))
+        item.setData(2, QtCore.Qt.ItemDataRole.UserRole, duration_s)
+        self._update_queue_summary()
 
     def _status_icon_and_tooltip(
         self,
@@ -3501,15 +3605,29 @@ class MainWindow(QtWidgets.QMainWindow):
             placeholder.setEnabled(False)
 
     def _outputs_ready_for_hover_animation(self, key: str) -> bool:
-        """Return True when we have a generated SRT output for this queue item."""
+        """Return True when the Output button has *anything* meaningful to open.
+
+        We treat a run log as an output too (useful even for failed/cancelled runs),
+        so the hover animation should work as soon as the button is enabled.
+        """
         artifacts = self._item_outputs.get(key) or {}
-        srt_path = artifacts.get("srt")
-        if not srt_path:
-            return False
-        try:
-            return Path(srt_path).exists()
-        except Exception:
-            return False
+
+        # If the button is enabled, we already consider it "ready" for hover animation.
+        btn = self._open_buttons.get(key)
+        if btn is not None and btn.isEnabled():
+            return True
+
+        # Otherwise, fall back to checking for any on-disk artifact.
+        for field in ("srt", "log", "diag_csv", "diag_json"):
+            raw = artifacts.get(field)
+            if not raw:
+                continue
+            try:
+                if Path(str(raw)).exists():
+                    return True
+            except Exception:
+                continue
+        return False
 
     def eventFilter(self, watched: QtCore.QObject, event: QtCore.QEvent) -> bool:  # noqa: N802
         """Play the folder GIF once per hover (only after outputs exist) and stop on unhover."""
@@ -3540,79 +3658,80 @@ class MainWindow(QtWidgets.QMainWindow):
         if not button:
             return
 
-        # Restart cleanly if a previous hover animation is still alive.
-        self._stop_folder_gif_animation(key)
+        # Bump the hover generation so any stale signals from an older run
+        # can't restore the static icon mid-animation.
+        gen = int(self._folder_hover_gen.get(key, 0)) + 1
+        self._folder_hover_gen[key] = gen
 
-        movie = _load_asset_movie("folder.gif")
+        movie = self._folder_movies.get(key)
         if movie is None:
-            return
-
-        self._folder_movies[key] = movie
-        movie.setParent(button)
-        movie.setCacheMode(QtGui.QMovie.CacheMode.CacheAll)
-
-        set_loop = getattr(movie, "setLoopCount", None)
-        if callable(set_loop):
-            set_loop(1)
-
-        loops_done = 0
-        target_loops = 1
-        finished = False
-
-        def _on_finished() -> None:
-            nonlocal finished
-            if finished:
+            movie = _load_asset_movie("folder.gif")
+            if movie is None:
                 return
-            finished = True
-            static_icon = _load_asset_icon(
-                "folder.gif",
-                QtWidgets.QStyle.StandardPixmap.SP_DirOpenIcon,
-                self.style(),
-            )
-            button.setIcon(static_icon)
-            movie.deleteLater()
-            self._folder_movies.pop(key, None)
+            movie.setParent(button)
+            movie.setCacheMode(QtGui.QMovie.CacheMode.CacheAll)
+            self._folder_movies[key] = movie
 
-        def _on_frame_changed(frame: int) -> None:
-            nonlocal loops_done
-            if finished:
-                return
-            pix = movie.currentPixmap()
-            if not pix.isNull():
-                button.setIcon(QtGui.QIcon(pix))
+        # Ensure we only connect signals once per movie instance.
+        if not bool(movie.property("srtforge_connected")):
+            def _on_frame_changed(_frame: int, *, k: str = key, m: QtGui.QMovie = movie, b: QtWidgets.QToolButton = button) -> None:
+                if int(self._folder_hover_gen.get(k, 0)) != int(m.property("srtforge_gen") or 0):
+                    return
+                pix = m.currentPixmap()
+                if not pix.isNull():
+                    b.setIcon(QtGui.QIcon(pix))
 
-            total = movie.frameCount()
-            if total > 0 and frame >= total - 1:
-                loops_done += 1
-                if loops_done >= target_loops:
-                    movie.stop()
-                    _on_finished()
+            def _on_finished(*, k: str = key, m: QtGui.QMovie = movie) -> None:
+                if int(self._folder_hover_gen.get(k, 0)) != int(m.property("srtforge_gen") or 0):
+                    return
+                self._restore_folder_static_icon(k)
 
-        movie.frameChanged.connect(_on_frame_changed)
-        movie.finished.connect(_on_finished)
+            movie.frameChanged.connect(_on_frame_changed)
+            movie.finished.connect(_on_finished)
+            movie.setProperty("srtforge_connected", True)
+
+        movie.setProperty("srtforge_gen", gen)
+
+        # Force the first frame immediately (no waiting for the first frameChanged).
+        try:
+            movie.stop()
+            set_loop = getattr(movie, "setLoopCount", None)
+            if callable(set_loop):
+                set_loop(1)
+            movie.jumpToFrame(0)
+        except Exception:
+            pass
+
+        pix = movie.currentPixmap()
+        if not pix.isNull():
+            button.setIcon(QtGui.QIcon(pix))
+
         movie.start()
 
     def _stop_folder_gif_animation(self, key: str) -> None:
         """Stop any in-flight folder.gif animation for this row and restore the static icon."""
-        button = self._open_buttons.get(key)
-        movie = self._folder_movies.pop(key, None)
+        # Advance generation token to invalidate any pending "finished" callbacks.
+        self._folder_hover_gen[key] = int(self._folder_hover_gen.get(key, 0)) + 1
+        movie = self._folder_movies.get(key)
         if movie is not None:
             try:
                 movie.stop()
+                movie.jumpToFrame(0)
             except Exception:
                 pass
-            try:
-                movie.deleteLater()
-            except Exception:
-                pass
+        self._restore_folder_static_icon(key)
 
-        if button is not None:
-            static_icon = _load_asset_icon(
-                "folder.gif",
-                QtWidgets.QStyle.StandardPixmap.SP_DirOpenIcon,
-                self.style(),
-            )
-            button.setIcon(static_icon)
+    def _restore_folder_static_icon(self, key: str) -> None:
+        """Restore the static folder icon on the row's Output button."""
+        button = self._open_buttons.get(key)
+        if button is None:
+            return
+        static_icon = _load_asset_icon(
+            "folder.gif",
+            QtWidgets.QStyle.StandardPixmap.SP_DirOpenIcon,
+            self.style(),
+        )
+        button.setIcon(static_icon)
 
     # (embed panel handling removed — lives in OptionsDialog now)
 
@@ -3634,10 +3753,17 @@ class MainWindow(QtWidgets.QMainWindow):
         for i in range(self.queue_list.topLevelItemCount()):
             item = self.queue_list.topLevelItem(i)
             self._apply_status_icon_and_tooltip(item, "Queued")
-            widget = self.queue_list.itemWidget(item, self._progress_column)
-            if isinstance(widget, QtWidgets.QProgressBar):
-                widget.setValue(0)
-                widget.setVisible(False)  # hide until we start processing this file
+            # Hide whichever wrapper widget is currently attached to the cell.
+            wrapper = self.queue_list.itemWidget(item, self._progress_column)
+            if wrapper is not None:
+                wrapper.setVisible(False)
+            # Reset the underlying bar (stored per media key).
+            raw = item.data(0, QtCore.Qt.ItemDataRole.UserRole)
+            if raw:
+                bar = self._item_progress.get(str(raw))
+                if bar is not None:
+                    bar.setValue(0)
+                    bar.setVisible(False)
 
         # Queue-level progress for the footer bar
         self._queue_total_count = len(files)
@@ -3699,8 +3825,26 @@ class MainWindow(QtWidgets.QMainWindow):
             self._hide_all_row_progress_bars()
 
     def _append_log(self, message: str) -> None:
-        self.log_view.appendPlainText(message)
-        self.log_view.verticalScrollBar().setValue(self.log_view.verticalScrollBar().maximum())
+        # Buffer rapid-fire logs and flush in batches to keep the UI responsive.
+        if not message:
+            return
+        self._log_buffer.append(str(message))
+        if not self._log_flush_timer.isActive():
+            self._log_flush_timer.start()
+
+    def _flush_log_buffer(self) -> None:
+        if not getattr(self, "_log_buffer", None):
+            self._log_flush_timer.stop()
+            return
+        chunk = "\n".join(self._log_buffer)
+        self._log_buffer.clear()
+        try:
+            self.log_view.appendPlainText(chunk)
+            sb = self.log_view.verticalScrollBar()
+            sb.setValue(sb.maximum())
+        except Exception:
+            # Log output must never crash the UI.
+            pass
 
     def _on_file_started(self, path: str) -> None:
         if self._log_tailer:
@@ -3713,8 +3857,9 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self._eta_mode_gpu = bool(self._basic_options.get("prefer_gpu", True))
         self._eta_media = path
-        ffprobe = self.ffmpeg_paths.ffprobe if self.ffmpeg_paths else None
-        duration_s = _probe_media_duration_ffprobe(Path(path), ffprobe)
+        # Avoid blocking the UI thread with ffprobe; use cached duration (filled
+        # asynchronously when files are queued) and fall back to "unknown".
+        duration_s = float(self._queue_duration_cache.get(str(Path(path)), 0.0) or 0.0)
         estimate = self._eta_memory.estimate(self._eta_mode_gpu, duration_s)
         if estimate > 0:
             self._set_eta(estimate)
