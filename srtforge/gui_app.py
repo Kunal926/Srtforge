@@ -1819,11 +1819,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self.queue_list.setItemsExpandable(False)
         self.queue_list.setIndentation(0)
         self.queue_list.setIconSize(QtCore.QSize(22, 22))
-        # Name, Status, Duration, ETA, Progress, Output
+        # Name, Status, Duration, Metadata, ETA, Progress, Output
         self.queue_list.setHeaderLabels([
             "Name",
             "Status",
             "Duration",
+            "Metadata",
             "ETA",
             "Progress",
             "Output",
@@ -1840,12 +1841,13 @@ class MainWindow(QtWidgets.QMainWindow):
         header.setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeMode.Interactive)          # Name
         header.setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)    # Status
         header.setSectionResizeMode(2, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)    # Duration
-        header.setSectionResizeMode(3, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)    # ETA
+        header.setSectionResizeMode(3, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)    # Metadata
+        header.setSectionResizeMode(4, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)    # ETA
 
         # Progress + Output: interactive columns with explicit initial widths so
         # the progress bar and "Open…" text both fit without overlapping/clipping.
-        header.setSectionResizeMode(4, QtWidgets.QHeaderView.ResizeMode.Interactive)         # Progress
-        header.setSectionResizeMode(5, QtWidgets.QHeaderView.ResizeMode.Interactive)         # Output
+        header.setSectionResizeMode(5, QtWidgets.QHeaderView.ResizeMode.Interactive)         # Progress
+        header.setSectionResizeMode(6, QtWidgets.QHeaderView.ResizeMode.Interactive)         # Output
         header.setMinimumSectionSize(80)
 
         # Make the Name column wide enough for roughly ~50 characters
@@ -1856,37 +1858,34 @@ class MainWindow(QtWidgets.QMainWindow):
 
         header.resizeSection(1, 140)
         header.resizeSection(2, 90)
-        header.resizeSection(3, 120)
+        header.resizeSection(3, 160)
+        header.resizeSection(4, 120)
         # Make the column slightly wider than the footer bar so the bar can
         # sit centered with a bit of breathing room on each side.
-        header.resizeSection(4, 260)
+        header.resizeSection(5, 260)
 
         # Output column sized for an icon-only button
         fm_btn = self.queue_list.fontMetrics()
         # a little wider so the 30×30 GIF isn’t cramped
         output_width = max(52, fm_btn.height() * 2 + 8)
-        header.resizeSection(5, output_width)
+        header.resizeSection(6, output_width)
 
         # 🔧 Determine column indices from header labels so they stay correct even if
         #     the column order changes in the future.
         header_item = self.queue_list.headerItem()
-        status_col = None
-        progress_col = None
-        output_col = None
+        col_map: dict[str, int] = {}
         if header_item is not None:
             for col in range(header_item.columnCount()):
                 label = header_item.text(col).strip().lower()
-                if label == "status":
-                    status_col = col
-                elif label == "progress":
-                    progress_col = col
-                elif label == "output":
-                    output_col = col
+                if label:
+                    col_map[label] = col
 
         # Fall back to the expected positions if, for some reason, the labels are missing.
-        self._status_column = status_col if status_col is not None else 1
-        self._progress_column = progress_col if progress_col is not None else 4
-        self._outputs_column = output_col if output_col is not None else 5
+        self._status_column = col_map.get("status", 1)
+        self._meta_column = col_map.get("metadata", 3)
+        self._eta_column = col_map.get("eta", 4)
+        self._progress_column = col_map.get("progress", 5)
+        self._outputs_column = col_map.get("output", 6)
 
         # Enable click-to-sort; default to Name ascending.
         self.queue_list.setSortingEnabled(True)
@@ -2880,6 +2879,30 @@ class MainWindow(QtWidgets.QMainWindow):
         }}
         """
 
+        # ---- Metadata column chips ---------------------------------------------
+        if self._dark_mode:
+            chip_text = "#E5E7EB"
+            chip_bg = "rgba(148, 163, 184, 0.14)"
+            chip_border = "rgba(148, 163, 184, 0.30)"
+        else:
+            chip_text = "#0F172A"
+            chip_bg = "rgba(148, 163, 184, 0.22)"
+            chip_border = "rgba(148, 163, 184, 0.40)"
+
+        custom += f"""
+        QWidget#MetaContainer {{
+            background: transparent;
+        }}
+        QLabel#MetaChip {{
+            padding: 2px 8px;
+            border-radius: 999px;
+            font-size: 12px;
+            color: {chip_text};
+            background-color: {chip_bg};
+            border: 1px solid {chip_border};
+        }}
+        """
+
         self.setStyleSheet(base_qss + custom)
 
     def _update_theme_toggle_label(self) -> None:
@@ -3020,7 +3043,7 @@ class MainWindow(QtWidgets.QMainWindow):
             # Full filename; truncation handled by view + header width
             item.setText(0, path.name)
             # Duration (filled below once we know it)
-            # ETA (column 3) will be filled during processing
+            # Metadata + ETA will be filled during probing/processing
             # store the full path on column 0
             item.setData(0, QtCore.Qt.ItemDataRole.UserRole, str(path))
             # tooltip showing the full path
@@ -3037,8 +3060,11 @@ class MainWindow(QtWidgets.QMainWindow):
             # Initial queue state (with icon + tooltip)
             self._apply_status_icon_and_tooltip(item, "Queued")
 
-            # Show a placeholder in the ETA column until we have a real ETA.
-            item.setText(3, ETA_PLACEHOLDER)
+            # Show placeholders until media streams/ETA are known.
+            item.setText(self._meta_column, "…")
+            item.setToolTip(self._meta_column, "Probing media info…")
+
+            item.setText(self._eta_column, ETA_PLACEHOLDER)
 
             # Per-file progress bar; only attached while processing.
             progress = QtWidgets.QProgressBar()
@@ -3283,6 +3309,90 @@ class MainWindow(QtWidgets.QMainWindow):
         item.setData(2, QtCore.Qt.ItemDataRole.UserRole, duration_s)
         self._update_queue_summary()
 
+    def _metadata_parts(self, audio_text: str, video_text: str) -> list[tuple[str, str]]:
+        """Split probe results into small 'badge' parts for the Metadata column."""
+        parts: list[tuple[str, str]] = []
+
+        a = (audio_text or "").strip()
+        if a and a not in {ETA_PLACEHOLDER, "…"}:
+            tokens = a.split()
+            # sample rate is formatted like: "48 kHz" or "44.1 kHz"
+            if "kHz" in tokens:
+                idx = tokens.index("kHz")
+                khz = " ".join(tokens[: idx + 1]).strip()
+                if khz:
+                    parts.append(("sr", khz))
+                tokens = tokens[idx + 1 :]
+
+            # remaining tokens are typically channels: "2ch", "6ch", etc.
+            for tok in tokens:
+                tok = tok.strip()
+                if tok:
+                    parts.append(("ch", tok))
+
+        v = (video_text or "").strip()
+        if v and v not in {ETA_PLACEHOLDER, "…"}:
+            parts.append(("fps", v))
+
+        return parts
+
+    def _build_metadata_widget(self, parts: list[tuple[str, str]]) -> QtWidgets.QWidget:
+        """Create a compact chip-row widget for the Metadata column."""
+        container = QtWidgets.QWidget()
+        container.setObjectName("MetaContainer")
+        container.setAutoFillBackground(False)
+        try:
+            container.setAttribute(QtCore.Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        except Exception:
+            pass
+
+        layout = QtWidgets.QHBoxLayout(container)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(6)
+
+        for kind, text in parts:
+            chip = QtWidgets.QLabel(text)
+            chip.setObjectName("MetaChip")
+            chip.setProperty("kind", kind)  # enables QSS selectors if you want
+            chip.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+            chip.setSizePolicy(
+                QtWidgets.QSizePolicy.Policy.Fixed,
+                QtWidgets.QSizePolicy.Policy.Fixed,
+            )
+            layout.addWidget(chip, 0, QtCore.Qt.AlignmentFlag.AlignVCenter)
+
+        layout.addStretch(1)
+        return container
+
+    def _on_stream_probed(self, media: str, audio_text: str, video_text: str) -> None:
+        if not hasattr(self, "queue_list"):
+            return
+
+        item = self._find_queue_item(media)
+        if item is None:
+            return
+
+        meta_col = getattr(self, "_meta_column", 3)
+
+        audio_text = (audio_text or "").strip() or ETA_PLACEHOLDER
+        video_text = (video_text or "").strip() or ETA_PLACEHOLDER
+
+        parts = self._metadata_parts(audio_text, video_text)
+        if not parts:
+            item.setText(meta_col, ETA_PLACEHOLDER)
+            item.setToolTip(meta_col, ETA_PLACEHOLDER)
+            try:
+                self.queue_list.removeItemWidget(item, meta_col)
+            except Exception:
+                pass
+            return
+
+        meta_text = " • ".join([p[1] for p in parts])
+        item.setText(meta_col, meta_text)  # keeps sorting working
+        item.setToolTip(meta_col, meta_text)
+
+        self.queue_list.setItemWidget(item, meta_col, self._build_metadata_widget(parts))
+
     def _status_icon_and_tooltip(
         self,
         status: str,
@@ -3458,7 +3568,7 @@ class MainWindow(QtWidgets.QMainWindow):
             item = self.queue_list.topLevelItem(i)
             raw = item.data(0, QtCore.Qt.ItemDataRole.UserRole)
             if raw and str(raw) == key:
-                item.setText(3, text)
+                item.setText(self._eta_column, text)
                 return
 
     def _clear_all_eta_cells(self) -> None:
@@ -3467,7 +3577,7 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         for i in range(self.queue_list.topLevelItemCount()):
             item = self.queue_list.topLevelItem(i)
-            item.setText(3, ETA_PLACEHOLDER)
+            item.setText(self._eta_column, ETA_PLACEHOLDER)
 
     def _update_queue_progress_bar(self, current_file_fraction: float) -> None:
         """Update the footer progress bar to reflect whole-queue progress."""
