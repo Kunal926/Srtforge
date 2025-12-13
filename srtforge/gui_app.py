@@ -3447,6 +3447,11 @@ class MainWindow(QtWidgets.QMainWindow):
         if not parts:
             item.setText(meta_col, ETA_PLACEHOLDER)
             item.setToolTip(meta_col, ETA_PLACEHOLDER)
+            # ✅ restore normal foreground so placeholder is visible
+            try:
+                item.setData(meta_col, QtCore.Qt.ItemDataRole.ForegroundRole, None)
+            except Exception:
+                pass
             try:
                 self.queue_list.removeItemWidget(item, meta_col)
             except Exception:
@@ -3454,9 +3459,15 @@ class MainWindow(QtWidgets.QMainWindow):
             return
 
         meta_text = " • ".join([p[1] for p in parts])
-        item.setText(meta_col, meta_text)  # keeps sorting working
-        item.setToolTip(meta_col, meta_text)
+        # Keep the raw text for sorting + resize-to-contents,
+        # but hide it so it won't ghost behind the chips.
+        item.setText(meta_col, meta_text)
+        try:
+            item.setForeground(meta_col, QtGui.QBrush(QtGui.QColor(0, 0, 0, 0)))
+        except Exception:
+            pass
 
+        item.setToolTip(meta_col, meta_text)
         self.queue_list.setItemWidget(item, meta_col, self._build_metadata_widget(parts))
 
     def _status_icon_and_tooltip(
