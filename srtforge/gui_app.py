@@ -254,6 +254,40 @@ class _DurationProbeTask(QtCore.QRunnable):
         self._emitter.durationReady.emit(str(self._media_path), duration_s)
 
 
+
+class _StreamProbeEmitter(QtCore.QObject):
+    """Thread-safe signal bridge for async audio/video stream probing."""
+
+    streamReady = QtCore.Signal(str, str, str)
+
+
+class _StreamProbeTask(QtCore.QRunnable):
+    """Background task that probes audio/video stream info without blocking the UI."""
+
+    def __init__(
+        self,
+        media_path: Path,
+        ffprobe_bin: Optional[Path],
+        emitter: _StreamProbeEmitter,
+    ) -> None:
+        super().__init__()
+        self._media_path = media_path
+        self._ffprobe_bin = ffprobe_bin
+        self._emitter = emitter
+
+    def run(self) -> None:  # noqa: D401 - QRunnable override
+        try:
+            audio_text, video_text = _probe_media_streams_ffprobe_cmd(
+                self._ffprobe_bin, self._media_path
+            )
+        except Exception:
+            audio_text, video_text = ETA_PLACEHOLDER, ETA_PLACEHOLDER
+        # Emitting across threads is safe; Qt will queue-deliver to the UI thread.
+        self._emitter.streamReady.emit(
+            str(self._media_path), str(audio_text), str(video_text)
+        )
+
+
 class TranscriptionWorker(QtCore.QThread):
     """Background worker that processes queued media sequentially."""
 
@@ -1628,6 +1662,10 @@ class MainWindow(QtWidgets.QMainWindow):
         # Async duration probing avoids blocking the main thread when adding files.
         self._duration_probe = _DurationProbeEmitter(self)
         self._duration_probe.durationReady.connect(self._on_duration_probed)
+        
+        # Async stream probing fills the Metadata column without blocking the UI.
+        self._stream_probe = _StreamProbeEmitter(self)
+        self._stream_probe.streamReady.connect(self._on_stream_probed)
         self._build_ui()  # builds a page widget; we wrap it in a scroll area below
         self._log_tailer = LogTailer(self._append_log, self)
         self._load_persistent_options()
@@ -1839,7 +1877,7 @@ class MainWindow(QtWidgets.QMainWindow):
         header.setSectionsMovable(False)
         # Allow the user to drag the Name column like in Explorer
         header.setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeMode.Interactive)          # Name
-        header.setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)    # Status
+        header.setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeMode.Fixed)              # Status
         header.setSectionResizeMode(2, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)    # Duration
         header.setSectionResizeMode(3, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)    # Metadata
         header.setSectionResizeMode(4, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)    # ETA
@@ -3169,6 +3207,14 @@ class MainWindow(QtWidgets.QMainWindow):
                 # Best-effort; duration is nice-to-have.
                 pass
 
+            try:
+                QtCore.QThreadPool.globalInstance().start(
+                    _StreamProbeTask(path, ffprobe, self._stream_probe)
+                )
+            except Exception:
+                # Best-effort; stream info is nice-to-have.
+                pass
+
         self._update_start_state()
 
     def _remove_selected_items(self) -> None:
@@ -3342,7 +3388,19 @@ class MainWindow(QtWidgets.QMainWindow):
         container.setObjectName("MetaContainer")
         container.setAutoFillBackground(False)
         try:
-            container.setAttribute(QtCore.Qt.WidgetAttribute.WA_TranslucentBackground, True)
+            container.setAttribute(
+                QtCore.Qt.WidgetAttribute.WA_TranslucentBackground,
+                True,
+            )
+        except Exception:
+            pass
+
+        # Decorative only: allow clicks to select the whole row underneath.
+        try:
+            container.setAttribute(
+                QtCore.Qt.WidgetAttribute.WA_TransparentForMouseEvents,
+                True,
+            )
         except Exception:
             pass
 
@@ -3359,6 +3417,14 @@ class MainWindow(QtWidgets.QMainWindow):
                 QtWidgets.QSizePolicy.Policy.Fixed,
                 QtWidgets.QSizePolicy.Policy.Fixed,
             )
+            try:
+                chip.setAttribute(
+                    QtCore.Qt.WidgetAttribute.WA_TransparentForMouseEvents,
+                    True,
+                )
+            except Exception:
+                pass
+
             layout.addWidget(chip, 0, QtCore.Qt.AlignmentFlag.AlignVCenter)
 
         layout.addStretch(1)
@@ -4461,6 +4527,139 @@ def _probe_media_duration_ffprobe_cmd(ffprobe_bin: Optional[Path], media: Path) 
         return float((out or "0").strip() or 0.0)
     except Exception:
         return 0.0
+
+
+def _parse_ffprobe_ratio(value: str) -> float:
+    """Parse ffprobe ratio strings like '24000/1001' into float."""
+
+    try:
+        value = (value or "").strip()
+        if not value or value == "0/0":
+            return 0.0
+        if "/" in value:
+            num_s, den_s = value.split("/", 1)
+            num = float(num_s)
+            den = float(den_s)
+            if den == 0:
+                return 0.0
+            return num / den
+        return float(value)
+    except Exception:
+        return 0.0
+
+
+def _format_fps(fps: float) -> str:
+    """Format an fps value for the queue metadata."""
+
+    if fps <= 0:
+        return ETA_PLACEHOLDER
+    rounded = round(float(fps))
+    if abs(fps - rounded) < 0.01:
+        return f"{int(rounded)} fps"
+    # Trim trailing zeros while keeping useful precision
+    s = f"{fps:.3f}".rstrip("0").rstrip(".")
+    return f"{s} fps"
+
+
+def _format_khz(sample_rate: object) -> str:
+    """Format an audio sample rate in kHz for the queue metadata."""
+
+    if sample_rate is None:
+        return ETA_PLACEHOLDER
+    try:
+        hz = float(sample_rate)
+    except Exception:
+        return ETA_PLACEHOLDER
+    if hz <= 0:
+        return ETA_PLACEHOLDER
+
+    khz = hz / 1000.0
+    rounded = round(khz)
+    if abs(khz - rounded) < 0.01:
+        return f"{int(rounded)} kHz"
+
+    s = f"{khz:.1f}".rstrip("0").rstrip(".")
+    return f"{s} kHz"
+
+
+def _probe_media_streams_ffprobe_cmd(ffprobe_bin: Optional[Path], media: Path) -> tuple[str, str]:
+    """Return (audio_display, video_display) for the given media file.
+
+    Queue column policy:
+      - Audio: show sample rate (kHz) + channel count (e.g. "48 kHz 2ch").
+      - Video: show frame rate (fps) (e.g. "23.976 fps").
+    """
+
+    exe = str(ffprobe_bin or "ffprobe")
+
+    cmd = [
+        exe,
+        "-v",
+        "error",
+        "-show_entries",
+        "stream=index,codec_type,channels,sample_rate,r_frame_rate,avg_frame_rate:stream_tags=language,LANGUAGE",
+        "-of",
+        "json",
+        str(media),
+    ]
+
+    try:
+        out = subprocess.check_output(cmd, text=True, stderr=subprocess.DEVNULL)
+        data = json.loads(out or "{}")
+    except Exception:
+        return (ETA_PLACEHOLDER, ETA_PLACEHOLDER)
+
+    streams = data.get("streams") or []
+    audio_streams = [s for s in streams if (s or {}).get("codec_type") == "audio"]
+    video_streams = [s for s in streams if (s or {}).get("codec_type") == "video"]
+
+    # ---- audio ----
+    audio_display = ETA_PLACEHOLDER
+    if audio_streams:
+
+        def _lang(s: dict) -> str:
+            tags = (s or {}).get("tags") or {}
+            return str(tags.get("language") or tags.get("LANGUAGE") or "").lower()
+
+        preferred = None
+        for s in audio_streams:
+            lang = _lang(s)
+            if lang in {"eng", "en"} or lang.startswith("en"):
+                preferred = s
+                break
+        if preferred is None:
+            preferred = audio_streams[0]
+
+        sr = _format_khz((preferred or {}).get("sample_rate"))
+        ch_raw = (preferred or {}).get("channels")
+        ch_txt = ""
+        try:
+            ch_i = int(ch_raw)
+            if ch_i > 0:
+                ch_txt = f"{ch_i}ch"
+        except Exception:
+            if ch_raw:
+                ch_txt = f"{ch_raw}ch"
+
+        bits: list[str] = []
+        if sr != ETA_PLACEHOLDER:
+            bits.append(sr)
+        if ch_txt:
+            bits.append(ch_txt)
+        if bits:
+            audio_display = " ".join(bits)
+
+    # ---- video ----
+    video_display = ETA_PLACEHOLDER
+    if video_streams:
+        v0 = video_streams[0] or {}
+        fps = _parse_ffprobe_ratio(str(v0.get("avg_frame_rate") or ""))
+        if fps <= 0:
+            fps = _parse_ffprobe_ratio(str(v0.get("r_frame_rate") or ""))
+        video_display = _format_fps(fps)
+
+    return (audio_display, video_display)
+
 
 
 def _probe_media_duration_ffprobe(media: Path, ffprobe_bin: Optional[Path]) -> float:
