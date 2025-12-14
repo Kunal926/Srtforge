@@ -1892,20 +1892,29 @@ class MainWindow(QtWidgets.QMainWindow):
         # Allow the user to drag the Name column like in Explorer
         header.setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeMode.Interactive)          # Name
         header.setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeMode.Fixed)              # Status
-        header.setSectionResizeMode(2, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)    # Duration
-        header.setSectionResizeMode(3, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)    # Metadata
-        header.setSectionResizeMode(4, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)    # ETA
+        # Duration/Metadata/ETA get filled asynchronously (ffprobe tasks). When using
+        # ResizeToContents, Qt will often lock the width based on the initial placeholder
+        # ("…") and never grow again, which can clip chips like "23.976 fps".
+        # Use explicit sizing so the default 1200px window doesn't gain a horizontal
+        # scrollbar.
+        header.setSectionResizeMode(2, QtWidgets.QHeaderView.ResizeMode.Fixed)              # Duration
+        header.setSectionResizeMode(3, QtWidgets.QHeaderView.ResizeMode.Interactive)        # Metadata
+        header.setSectionResizeMode(4, QtWidgets.QHeaderView.ResizeMode.Fixed)              # ETA
 
         # Progress + Output: interactive columns with explicit initial widths so
         # the progress bar and "Open…" text both fit without overlapping/clipping.
         header.setSectionResizeMode(5, QtWidgets.QHeaderView.ResizeMode.Interactive)         # Progress
         header.setSectionResizeMode(6, QtWidgets.QHeaderView.ResizeMode.Interactive)         # Output
-        header.setMinimumSectionSize(80)
+        # Allow narrower columns (Duration/ETA) so the table can fit without
+        # triggering a horizontal scrollbar.
+        header.setMinimumSectionSize(52)
 
-        # Make the Name column wide enough for roughly ~50 characters
+        # Make the Name column wide enough for roughly ~40 characters.
+        # (The queue card has generous padding; ~50 chars tends to force a horizontal
+        # scrollbar at the default 1200px window width.)
         fm = self.queue_list.fontMetrics()
         avg_char = max(1, fm.averageCharWidth())
-        name_width = max(320, avg_char * 50)
+        name_width = max(280, avg_char * 40)
         header.resizeSection(0, name_width)
 
         # Status column: keep it fixed so it doesn't jump between Queued/
@@ -1916,14 +1925,31 @@ class MainWindow(QtWidgets.QMainWindow):
             + self.queue_list.iconSize().width()
             + 32
         )
-        header.resizeSection(1, max(160, status_width))
+        header.resizeSection(1, max(140, status_width))
 
-        header.resizeSection(2, 90)
-        header.resizeSection(3, 160)
-        header.resizeSection(4, 120)
-        # Make the column slightly wider than the footer bar so the bar can
-        # sit centered with a bit of breathing room on each side.
-        header.resizeSection(5, 260)
+        # Duration / ETA: fit "H:MM:SS" comfortably, but keep them tight.
+        duration_width = fm.horizontalAdvance("0:00:00") + 24
+        eta_width = fm.horizontalAdvance("0:00:00") + 24
+
+        # Metadata: three chips (sr, ch, fps). Estimate a safe default width so
+        # common values like "23.976 fps" don't get clipped.
+        chip_pad = 16  # QSS: padding: 2px 8px (left+right)
+        chip_gap = 6   # layout spacing between chips
+        meta_width = (
+            fm.horizontalAdvance("48 kHz")
+            + fm.horizontalAdvance("2ch")
+            + fm.horizontalAdvance("23.976 fps")
+            + (chip_pad * 3)
+            + (chip_gap * 2)
+            + 18  # slack for borders/rounding
+        )
+
+        header.resizeSection(2, max(72, duration_width))
+        header.resizeSection(3, max(200, meta_width))
+        header.resizeSection(4, max(72, eta_width))
+
+        # Progress: only slightly wider than the footer progress bar.
+        header.resizeSection(5, max(230, QUEUE_PROGRESS_WIDTH + 10))
 
         # Output column sized for an icon-only button
         fm_btn = self.queue_list.fontMetrics()
@@ -3606,8 +3632,23 @@ class MainWindow(QtWidgets.QMainWindow):
 
             if footer_h > 0 and bar.height() != footer_h:
                 bar.setFixedHeight(footer_h)
-            if footer_w > 0 and bar.width() != footer_w:
-                bar.setFixedWidth(footer_w)
+
+            # Keep the row progress bar in sync with the footer bar, but cap it
+            # to the actual Progress column width so it never clips (or forces
+            # a horizontal scrollbar) when the default window is relatively
+            # narrow.
+            target_w = footer_w
+            try:
+                col_w = int(self.queue_list.columnWidth(self._progress_column))
+            except Exception:
+                col_w = 0
+            if col_w > 0:
+                # Leave a bit of breathing room so stylesheet padding/borders
+                # don't cause sub-pixel clipping.
+                target_w = min(target_w, max(60, col_w - 16))
+
+            if target_w > 0 and bar.width() != target_w:
+                bar.setFixedWidth(target_w)
 
         current_item = self._find_queue_item(media)
         if current_item is None:
