@@ -1914,7 +1914,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # scrollbar at the default 1200px window width.)
         fm = self.queue_list.fontMetrics()
         avg_char = max(1, fm.averageCharWidth())
-        name_width = max(280, avg_char * 40)
+        name_width = max(280, avg_char * 50)
         header.resizeSection(0, name_width)
 
         # Status column: keep it fixed so it doesn't jump between Queued/
