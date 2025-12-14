@@ -96,6 +96,20 @@ class QueueItemDelegate(QtWidgets.QStyledItemDelegate):
         opt = QtWidgets.QStyleOptionViewItem(option)
         self.initStyleOption(opt, index)
 
+        # If this cell has an index widget installed (via setItemWidget), don't
+        # paint the model text/icon as well. Otherwise the text can "ghost"
+        # through translucent widgets (e.g. the Metadata chips) and look like it
+        # was written twice.
+        try:
+            view = opt.widget
+            if isinstance(view, QtWidgets.QAbstractItemView):
+                if view.indexWidget(index) is not None:
+                    opt.text = ""
+                    opt.icon = QtGui.QIcon()
+        except Exception:
+            # Painting must never crash the UI.
+            pass
+
         style = opt.widget.style() if opt.widget else QtWidgets.QApplication.style()
 
         painter.save()
@@ -1894,7 +1908,16 @@ class MainWindow(QtWidgets.QMainWindow):
         name_width = max(320, avg_char * 50)
         header.resizeSection(0, name_width)
 
-        header.resizeSection(1, 140)
+        # Status column: keep it fixed so it doesn't jump between Queued/
+        # Processing…, but make it wide enough that "Processing…" never elides.
+        longest_status = "Processing…"
+        status_width = (
+            fm.horizontalAdvance(longest_status)
+            + self.queue_list.iconSize().width()
+            + 32
+        )
+        header.resizeSection(1, max(160, status_width))
+
         header.resizeSection(2, 90)
         header.resizeSection(3, 160)
         header.resizeSection(4, 120)
@@ -3447,11 +3470,6 @@ class MainWindow(QtWidgets.QMainWindow):
         if not parts:
             item.setText(meta_col, ETA_PLACEHOLDER)
             item.setToolTip(meta_col, ETA_PLACEHOLDER)
-            # ✅ restore normal foreground so placeholder is visible
-            try:
-                item.setData(meta_col, QtCore.Qt.ItemDataRole.ForegroundRole, None)
-            except Exception:
-                pass
             try:
                 self.queue_list.removeItemWidget(item, meta_col)
             except Exception:
@@ -3459,15 +3477,9 @@ class MainWindow(QtWidgets.QMainWindow):
             return
 
         meta_text = " • ".join([p[1] for p in parts])
-        # Keep the raw text for sorting + resize-to-contents,
-        # but hide it so it won't ghost behind the chips.
-        item.setText(meta_col, meta_text)
-        try:
-            item.setForeground(meta_col, QtGui.QBrush(QtGui.QColor(0, 0, 0, 0)))
-        except Exception:
-            pass
-
+        item.setText(meta_col, meta_text)  # keeps sorting working
         item.setToolTip(meta_col, meta_text)
+
         self.queue_list.setItemWidget(item, meta_col, self._build_metadata_widget(parts))
 
     def _status_icon_and_tooltip(
