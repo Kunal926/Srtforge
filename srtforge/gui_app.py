@@ -1889,22 +1889,19 @@ class MainWindow(QtWidgets.QMainWindow):
         header.setHighlightSections(False)
         header.setStretchLastSection(False)
         header.setSectionsMovable(False)
-        # Allow the user to drag the Name column like in Explorer
-        header.setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeMode.Interactive)          # Name
-        header.setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeMode.Fixed)              # Status
-        # Duration/Metadata/ETA get filled asynchronously (ffprobe tasks). When using
-        # ResizeToContents, Qt will often lock the width based on the initial placeholder
-        # ("…") and never grow again, which can clip chips like "23.976 fps".
-        # Use explicit sizing so the default 1200px window doesn't gain a horizontal
-        # scrollbar.
-        header.setSectionResizeMode(2, QtWidgets.QHeaderView.ResizeMode.Fixed)              # Duration
-        header.setSectionResizeMode(3, QtWidgets.QHeaderView.ResizeMode.Interactive)        # Metadata
-        header.setSectionResizeMode(4, QtWidgets.QHeaderView.ResizeMode.Fixed)              # ETA
+        # Column sizing policy (match the screenshot):
+        #   - Name grows/shrinks to consume any spare width so the last column
+        #     (Output) stays flush-right with no dead space.
+        #   - Output stays compact but wide enough that its header label
+        #     ("Output") never elides.
+        header.setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeMode.Stretch)              # Name
+        header.setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeMode.Fixed)                # Status
+        header.setSectionResizeMode(2, QtWidgets.QHeaderView.ResizeMode.Fixed)                # Duration
+        header.setSectionResizeMode(3, QtWidgets.QHeaderView.ResizeMode.Interactive)          # Metadata
+        header.setSectionResizeMode(4, QtWidgets.QHeaderView.ResizeMode.Fixed)                # ETA
+        header.setSectionResizeMode(5, QtWidgets.QHeaderView.ResizeMode.Interactive)          # Progress
+        header.setSectionResizeMode(6, QtWidgets.QHeaderView.ResizeMode.Fixed)                # Output
 
-        # Progress + Output: interactive columns with explicit initial widths so
-        # the progress bar and "Open…" text both fit without overlapping/clipping.
-        header.setSectionResizeMode(5, QtWidgets.QHeaderView.ResizeMode.Interactive)         # Progress
-        header.setSectionResizeMode(6, QtWidgets.QHeaderView.ResizeMode.Interactive)         # Output
         # Allow narrower columns (Duration/ETA) so the table can fit without
         # triggering a horizontal scrollbar.
         header.setMinimumSectionSize(52)
@@ -1951,10 +1948,22 @@ class MainWindow(QtWidgets.QMainWindow):
         # Progress: only slightly wider than the footer progress bar.
         header.resizeSection(5, max(230, QUEUE_PROGRESS_WIDTH + 10))
 
-        # Output column sized for an icon-only button
-        fm_btn = self.queue_list.fontMetrics()
-        # a little wider so the 30×30 GIF isn’t cramped
-        output_width = max(52, fm_btn.height() * 2 + 8)
+        # Output column: compact but wide enough that "Output" doesn't elide.
+        # Keep it narrow so the folder.gif icon remains visually centred.
+        header_fm = header.fontMetrics()
+        output_label = "Output"
+        try:
+            header_item = self.queue_list.headerItem()
+            if header_item is not None:
+                output_label = header_item.text(6) or output_label
+        except Exception:
+            pass
+
+        # Header sections use padding (see QSS: padding: 4px 8px), so add some slack.
+        output_header_w = header_fm.horizontalAdvance(output_label) + 24
+        # The per-row Output button uses a 30×30 icon.
+        output_icon_w = 30 + 24
+        output_width = max(72, output_header_w, output_icon_w)
         header.resizeSection(6, output_width)
 
         # 🔧 Determine column indices from header labels so they stay correct even if
@@ -1973,6 +1982,13 @@ class MainWindow(QtWidgets.QMainWindow):
         self._eta_column = col_map.get("eta", 4)
         self._progress_column = col_map.get("progress", 5)
         self._outputs_column = col_map.get("output", 6)
+
+        # Center the Output header label so it lines up with the folder icon
+        if header_item is not None:
+            header_item.setTextAlignment(
+                self._outputs_column,
+                QtCore.Qt.AlignmentFlag.AlignHCenter | QtCore.Qt.AlignmentFlag.AlignVCenter,
+            )
 
         # Enable click-to-sort; default to Name ascending.
         self.queue_list.setSortingEnabled(True)
