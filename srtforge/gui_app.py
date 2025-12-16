@@ -2125,8 +2125,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
         console_layout = QtWidgets.QHBoxLayout(console_trigger)
         # Give the pill its own padding instead of the icon button doing it
-        console_layout.setContentsMargins(6, 2, 10, 2)
-        console_layout.setSpacing(6)
+        console_layout.setContentsMargins(8, 2, 8, 2)
+        console_layout.setSpacing(0)
 
         # Icon button (acts as the actual toggle)
         self.log_toggle_button = QtWidgets.QToolButton(console_trigger)
@@ -2148,6 +2148,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 background-color: transparent;
                 border: none;
                 padding: 0px;
+                margin: 0px;
             }
             QToolButton#LogToggle:hover,
             QToolButton#LogToggle:pressed,
@@ -2176,15 +2177,10 @@ class MainWindow(QtWidgets.QMainWindow):
         )
         self.log_toggle_button.setIcon(cmd_icon)
 
+        # Optional but helps make it pixel-perfect:
+        self.log_toggle_button.setFixedSize(QtCore.QSize(30, 30))
+        console_layout.addWidget(self.log_toggle_button, 0, QtCore.Qt.AlignCenter)
 
-        # Text label removed – we want just the Command Prompt logo in the pill
-        log_label = QtWidgets.QLabel("", console_trigger)
-        log_label.setObjectName("LogToggleLabel")
-        log_label.setCursor(pointer_cursor)
-
-        console_layout.addWidget(self.log_toggle_button)
-        console_layout.addWidget(log_label)
-        console_layout.setAlignment(QtCore.Qt.AlignVCenter)
 
         # Make the whole pill clickable
         def _toggle_console_from_mouse(event: QtGui.QMouseEvent) -> None:
@@ -2193,7 +2189,6 @@ class MainWindow(QtWidgets.QMainWindow):
             event.accept()
 
         console_trigger.mousePressEvent = _toggle_console_from_mouse  # type: ignore[assignment]
-        log_label.mousePressEvent = _toggle_console_from_mouse  # type: ignore[assignment]
 
         status_bar.addPermanentWidget(console_trigger)
 
@@ -2561,7 +2556,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 color: #94A3B8;
                 border: none;
                 padding: 0;                 /* no internal button padding */
-                margin: 0 4px 0 0;          /* small gap before the label */
+                margin: 0;          /* small gap before the label */
             }}
             QToolButton#LogToggle:hover,
             QToolButton#LogToggle:pressed,
