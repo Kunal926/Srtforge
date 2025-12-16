@@ -1764,6 +1764,17 @@ class MainWindow(QtWidgets.QMainWindow):
         self.theme_toggle.setObjectName("ThemeToggle")
         self.theme_toggle.setCheckable(True)
         self.theme_toggle.setCursor(pointer_cursor)
+        # Make the glyph a bit larger so the emoji doesn't look tiny
+        # inside the circular button.
+        try:
+            f = self.theme_toggle.font()
+            pt = f.pointSize()
+            if pt <= 0:
+                pt = 12
+            f.setPointSize(max(pt, 18))
+            self.theme_toggle.setFont(f)
+        except Exception:
+            pass
         self.theme_toggle.toggled.connect(self._on_theme_toggled)
         actions_row.addWidget(self.theme_toggle)
 
@@ -1780,9 +1791,20 @@ class MainWindow(QtWidgets.QMainWindow):
         if not gear_icon.isNull():
             self.options_button.setIcon(gear_icon)
             self.options_button.setToolButtonStyle(QtCore.Qt.ToolButtonIconOnly)
+            # Slightly larger icon to better match the theme toggle.
+            self.options_button.setIconSize(QtCore.QSize(24, 24))
         else:
             self.options_button.setText("⚙")
             self.options_button.setToolButtonStyle(QtCore.Qt.ToolButtonTextOnly)
+            try:
+                f = self.options_button.font()
+                pt = f.pointSize()
+                if pt <= 0:
+                    pt = 12
+                f.setPointSize(max(pt, 18))
+                self.options_button.setFont(f)
+            except Exception:
+                pass
 
         self.options_button.clicked.connect(self._open_options_dialog)
         actions_row.addWidget(self.options_button)
@@ -1889,29 +1911,33 @@ class MainWindow(QtWidgets.QMainWindow):
         header.setHighlightSections(False)
         header.setStretchLastSection(False)
         header.setSectionsMovable(False)
-        # Column sizing policy (match the screenshot):
-        #   - Name grows/shrinks to consume any spare width so the last column
-        #     (Output) stays flush-right with no dead space.
+        # Column sizing policy:
+        #   - Keep Name user-resizable (normal divider after the Name column).
+        #   - Let Progress be the elastic column that absorbs remaining space so
+        #     the table always looks "filled" with no dead area to the right.
         #   - Output stays compact but wide enough that its header label
         #     ("Output") never elides.
-        header.setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeMode.Stretch)              # Name
+        header.setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeMode.Interactive)          # Name
         header.setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeMode.Fixed)                # Status
         header.setSectionResizeMode(2, QtWidgets.QHeaderView.ResizeMode.Fixed)                # Duration
         header.setSectionResizeMode(3, QtWidgets.QHeaderView.ResizeMode.Interactive)          # Metadata
         header.setSectionResizeMode(4, QtWidgets.QHeaderView.ResizeMode.Fixed)                # ETA
-        header.setSectionResizeMode(5, QtWidgets.QHeaderView.ResizeMode.Interactive)          # Progress
+        header.setSectionResizeMode(5, QtWidgets.QHeaderView.ResizeMode.Stretch)              # Progress
         header.setSectionResizeMode(6, QtWidgets.QHeaderView.ResizeMode.Fixed)                # Output
 
         # Allow narrower columns (Duration/ETA) so the table can fit without
         # triggering a horizontal scrollbar.
         header.setMinimumSectionSize(52)
 
-        # Make the Name column wide enough for roughly ~40 characters.
-        # (The queue card has generous padding; ~50 chars tends to force a horizontal
-        # scrollbar at the default 1200px window width.)
+        # Make the Name column wide enough that the per-file Progress bar can
+        # start near the left edge of its column at the default window size.
+        # (With a too-narrow Name column, the Progress column becomes very wide and
+        # the fixed-width bar looks like it's floating in the middle.)
+        #
+        # Roughly ~60 characters is a good balance for 1200px wide layouts.
         fm = self.queue_list.fontMetrics()
         avg_char = max(1, fm.averageCharWidth())
-        name_width = max(280, avg_char * 50)
+        name_width = max(320, avg_char * 55)
         header.resizeSection(0, name_width)
 
         # Status column: keep it fixed so it doesn't jump between Queued/
@@ -1929,13 +1955,13 @@ class MainWindow(QtWidgets.QMainWindow):
         eta_width = fm.horizontalAdvance("0:00:00") + 24
 
         # Metadata: three chips (sr, ch, fps). Estimate a safe default width so
-        # common values like "23.976 fps" don't get clipped.
+        # common values like "23.976 FPS" don't get clipped.
         chip_pad = 16  # QSS: padding: 2px 8px (left+right)
         chip_gap = 6   # layout spacing between chips
         meta_width = (
             fm.horizontalAdvance("48 kHz")
-            + fm.horizontalAdvance("2ch")
-            + fm.horizontalAdvance("23.976 fps")
+            + fm.horizontalAdvance("2 Ch")
+            + fm.horizontalAdvance("23.976 FPS")
             + (chip_pad * 3)
             + (chip_gap * 2)
             + 18  # slack for borders/rounding
@@ -2090,6 +2116,13 @@ class MainWindow(QtWidgets.QMainWindow):
         console_trigger.setObjectName("FooterConsoleTrigger")
         console_trigger.setCursor(pointer_cursor)
 
+        # Enable :hover styling on the whole pill (some Qt builds require WA_Hover on QWidget)
+        try:
+            console_trigger.setAttribute(QtCore.Qt.WidgetAttribute.WA_Hover, True)
+        except Exception:
+            pass
+        console_trigger.setMouseTracking(True)
+
         console_layout = QtWidgets.QHBoxLayout(console_trigger)
         # Give the pill its own padding instead of the icon button doing it
         console_layout.setContentsMargins(6, 2, 10, 2)
@@ -2142,6 +2175,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.style(),
         )
         self.log_toggle_button.setIcon(cmd_icon)
+
 
         # Text label removed – we want just the Command Prompt logo in the pill
         log_label = QtWidgets.QLabel("", console_trigger)
@@ -2509,6 +2543,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 border-radius: 16px;
                 background-color: transparent;   /* no solid blue block */
                 border: none;
+                font-size: 20px;
                 color: #E5E7EB;                  /* slate-ish icon color */
             }}
             QToolButton#ThemeToggle:hover,
@@ -2546,23 +2581,19 @@ class MainWindow(QtWidgets.QMainWindow):
             #FooterConsoleTrigger {{
                 border-radius: 999px;
                 padding: 2px 10px;              /* pill height + horizontal breathing room */
+                background-color: transparent;
+                border: none;
             }}
             #FooterConsoleTrigger:hover {{
                 background-color: rgba(148, 163, 184, 0.16);
             }}
 
-            /* When the console is open, keep the pill visibly active */
+            /* Subtle selected/open state (no jarring animation) */
             #FooterConsoleTrigger[checked="true"] {{
-                background-color: rgba(15, 23, 42, 0.80);
+                background-color: rgba(148, 163, 184, 0.22);
             }}
-
-            /* --- Remove light-blue highlight box from footer console pill --- */
-            #FooterConsoleTrigger,
-            #FooterConsoleTrigger:hover,
-            #FooterConsoleTrigger:pressed,
-            #FooterConsoleTrigger[checked="true"] {{
-                background-color: transparent;
-                border: none;
+            #FooterConsoleTrigger[checked="true"]:hover {{
+                background-color: rgba(148, 163, 184, 0.26);
             }}
 
             QLabel#LogToggleLabel {{
@@ -2803,6 +2834,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 border-radius: 16px;
                 background-color: transparent;
                 border: none;
+                font-size: 20px;
                 color: #475569;                 /* slate/dark grey */
             }}
             QToolButton#ThemeToggle:hover,
@@ -2840,22 +2872,19 @@ class MainWindow(QtWidgets.QMainWindow):
             #FooterConsoleTrigger {{
                 border-radius: 999px;
                 padding: 2px 10px;
+                background-color: transparent;
+                border: none;
             }}
             #FooterConsoleTrigger:hover {{
                 background-color: rgba(148, 163, 184, 0.12);
             }}
-            /* Active/open state when console is shown */
-            #FooterConsoleTrigger[checked="true"] {{
-                background-color: rgba(59, 130, 246, 0.08);
-            }}
 
-            /* --- Remove light-blue highlight box from footer console pill --- */
-            #FooterConsoleTrigger,
-            #FooterConsoleTrigger:hover,
-            #FooterConsoleTrigger:pressed,
+            /* Subtle selected/open state (no jarring animation) */
             #FooterConsoleTrigger[checked="true"] {{
-                background-color: transparent;
-                border: none;
+                background-color: rgba(148, 163, 184, 0.18);
+            }}
+            #FooterConsoleTrigger[checked="true"]:hover {{
+                background-color: rgba(148, 163, 184, 0.22);
             }}
 
             QLabel#LogToggleLabel {{
@@ -3426,24 +3455,59 @@ class MainWindow(QtWidgets.QMainWindow):
 
         a = (audio_text or "").strip()
         if a and a not in {ETA_PLACEHOLDER, "…"}:
-            tokens = a.split()
-            # sample rate is formatted like: "48 kHz" or "44.1 kHz"
-            if "kHz" in tokens:
-                idx = tokens.index("kHz")
-                khz = " ".join(tokens[: idx + 1]).strip()
-                if khz:
-                    parts.append(("sr", khz))
-                tokens = tokens[idx + 1 :]
+            # Normalise common probe formats:
+            #   - "48 kHz 2ch"  -> "48 kHz", "2 Ch"
+            #   - "44.1kHz 6ch" -> "44.1 kHz", "6 Ch"
+            #   - tolerate case variants like "KHz"/"khz" and "Ch"/"CH".
+            try:
+                import re
 
-            # remaining tokens are typically channels: "2ch", "6ch", etc.
-            for tok in tokens:
-                tok = tok.strip()
-                if tok:
-                    parts.append(("ch", tok))
+                sr_m = re.search(r"(?i)\b(\d+(?:\.\d+)?)\s*k\s*hz\b", a)
+                if sr_m:
+                    sr_val = sr_m.group(1).rstrip("0").rstrip(".")
+                    parts.append(("sr", f"{sr_val} kHz"))
+
+                ch_m = re.search(r"(?i)\b(\d+)\s*ch\b", a)
+                if ch_m:
+                    parts.append(("ch", f"{int(ch_m.group(1))} Ch"))
+            except Exception:
+                # Fallback: keep the previous behaviour, but with friendlier casing.
+                tokens = a.split()
+                khz_idx = None
+                for i, tok in enumerate(tokens):
+                    if tok.strip().lower() == "khz":
+                        khz_idx = i
+                        break
+                if khz_idx is not None:
+                    khz = " ".join(tokens[: khz_idx + 1]).strip()
+                    if khz:
+                        parts.append(("sr", khz.replace("khz", "kHz").replace("KHz", "kHz")))
+                    tokens = tokens[khz_idx + 1 :]
+
+                for tok in tokens:
+                    t = tok.strip()
+                    if not t:
+                        continue
+                    # "2ch" -> "2 Ch"
+                    if t.lower().endswith("ch") and t[:-2].isdigit():
+                        parts.append(("ch", f"{int(t[:-2])} Ch"))
+                    else:
+                        parts.append(("ch", t))
 
         v = (video_text or "").strip()
         if v and v not in {ETA_PLACEHOLDER, "…"}:
-            parts.append(("fps", v))
+            # Normalise fps casing so it matches the other chips.
+            try:
+                import re
+
+                fps_m = re.search(r"(?i)\b(\d+(?:\.\d+)?)\s*fps\b", v)
+                if fps_m:
+                    fps_val = fps_m.group(1).rstrip("0").rstrip(".")
+                    parts.append(("fps", f"{fps_val} FPS"))
+                else:
+                    parts.append(("fps", v))
+            except Exception:
+                parts.append(("fps", v))
 
         return parts
 
@@ -3670,8 +3734,8 @@ class MainWindow(QtWidgets.QMainWindow):
         if current_item is None:
             return
 
-        # Attach the bar to a tiny wrapper widget so it can be centred inside
-        # the cell, both horizontally and vertically.
+        # Attach the bar to a tiny wrapper widget so it can be aligned cleanly
+        # inside the cell (and keep the wrapper transparent).
         existing_container = self.queue_list.itemWidget(current_item, self._progress_column)
         container = bar.parent() if isinstance(bar.parent(), QtWidgets.QWidget) else None
 
@@ -3688,10 +3752,12 @@ class MainWindow(QtWidgets.QMainWindow):
                 pass
 
             layout = QtWidgets.QHBoxLayout(container)
-            layout.setContentsMargins(0, 0, 0, 0)
+            # Match the left padding used by the tree rows so the bar starts at the
+            # Progress column's content edge (not centred in the cell).
+            layout.setContentsMargins(8, 0, 0, 0)
             layout.setSpacing(0)
-            layout.addWidget(bar)
-            layout.setAlignment(bar, QtCore.Qt.AlignCenter)
+            layout.addWidget(bar, 0, QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter)
+            layout.addStretch(1)
             self.queue_list.setItemWidget(current_item, self._progress_column, container)
 
         value = max(0, min(100, int(percent)))
@@ -3885,6 +3951,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 continue
         return False
 
+
     def eventFilter(self, watched: QtCore.QObject, event: QtCore.QEvent) -> bool:  # noqa: N802
         """Play the folder GIF once per hover (only after outputs exist) and stop on unhover."""
         try:
@@ -3899,6 +3966,7 @@ class MainWindow(QtWidgets.QMainWindow):
                             self._play_folder_gif_once(key)
                     elif event.type() == QtCore.QEvent.Type.Leave:
                         self._stop_folder_gif_animation(key)
+
         except Exception:
             # Never let hover animation logic break the rest of the UI.
             pass
@@ -4462,12 +4530,106 @@ def _asset_candidates(filename: str) -> list[Path]:
     return unique
 
 
+
+
+def _trim_command_prompt_pixmap(pixmap: QtGui.QPixmap) -> QtGui.QPixmap:
+    """Trim the stray light vertical strip some Command_Prompt.png exports include.
+
+    A handful of Windows-sourced captures of the Command Prompt icon include a
+    pale vertical bar on the right edge (usually from a selection highlight /
+    screenshot artifact). When rendered at 30×30 in the console pill it shows
+    up as a distracting white line.
+
+    This trims consecutive right-edge columns that are consistently much lighter
+    than the icon's baseline background colour.
+    """
+
+    try:
+        img = pixmap.toImage()
+        if img.isNull():
+            return pixmap
+
+        # Work in a predictable pixel format.
+        try:
+            fmt = QtGui.QImage.Format.Format_ARGB32
+        except Exception:
+            fmt = QtGui.QImage.Format_ARGB32  # type: ignore[attr-defined]
+        img = img.convertToFormat(fmt)
+
+        w = int(img.width())
+        h = int(img.height())
+        if w < 4 or h < 4:
+            return pixmap
+
+        # Estimate the "baseline" background colour from a small grid sample of
+        # the left ~75% of the image (avoids the right-edge artifact skewing the
+        # baseline).
+        sample_x_max = max(1, int(w * 0.75))
+        step_x = max(1, sample_x_max // 16)
+        step_y = max(1, h // 16)
+
+        rs: list[int] = []
+        gs: list[int] = []
+        bs: list[int] = []
+
+        for y in range(0, h, step_y):
+            for x in range(0, sample_x_max, step_x):
+                c = img.pixelColor(x, y)
+                if c.alpha() < 10:
+                    continue
+                rs.append(int(c.red()))
+                gs.append(int(c.green()))
+                bs.append(int(c.blue()))
+
+        if not rs:
+            return pixmap
+
+        rs.sort()
+        gs.sort()
+        bs.sort()
+        mid = len(rs) // 2
+        r_med, g_med, b_med = rs[mid], gs[mid], bs[mid]
+
+        # A column is considered "stray" if it's consistently much lighter than
+        # the baseline colour.
+        def is_stray_column(x: int) -> bool:
+            opaque = 0
+            light = 0
+            for y in range(h):
+                c = img.pixelColor(x, y)
+                if c.alpha() < 10:
+                    continue
+                opaque += 1
+                if (
+                    int(c.red()) >= r_med + 12
+                    and int(c.green()) >= g_med + 12
+                    and int(c.blue()) >= b_med + 12
+                ):
+                    light += 1
+            return opaque > 0 and (light / opaque) >= 0.95
+
+        crop_right = w - 1
+        while crop_right > 0 and is_stray_column(crop_right):
+            crop_right -= 1
+
+        new_w = crop_right + 1
+        if new_w >= w:
+            return pixmap
+
+        trimmed = img.copy(0, 0, new_w, h)
+        return QtGui.QPixmap.fromImage(trimmed)
+    except Exception:
+        return pixmap
+
+
 def _load_asset_pixmap(filename: str) -> Optional[QtGui.QPixmap]:
     """Load a pixmap for ``filename`` from our assets folder, if available."""
     for path in _asset_candidates(filename):
         if path.exists():
             pixmap = QtGui.QPixmap(str(path))
             if not pixmap.isNull():
+                if filename.lower() == "command_prompt.png":
+                    pixmap = _trim_command_prompt_pixmap(pixmap)
                 return pixmap
     return None
 
@@ -4635,10 +4797,10 @@ def _format_fps(fps: float) -> str:
         return ETA_PLACEHOLDER
     rounded = round(float(fps))
     if abs(fps - rounded) < 0.01:
-        return f"{int(rounded)} fps"
+        return f"{int(rounded)} FPS"
     # Trim trailing zeros while keeping useful precision
     s = f"{fps:.3f}".rstrip("0").rstrip(".")
-    return f"{s} fps"
+    return f"{s} FPS"
 
 
 def _format_khz(sample_rate: object) -> str:
@@ -4667,7 +4829,7 @@ def _probe_media_streams_ffprobe_cmd(ffprobe_bin: Optional[Path], media: Path) -
 
     Queue column policy:
       - Audio: show sample rate (kHz) + channel count (e.g. "48 kHz 2ch").
-      - Video: show frame rate (fps) (e.g. "23.976 fps").
+      - Video: show frame rate (fps) (e.g. "23.976 FPS").
     """
 
     exe = str(ffprobe_bin or "ffprobe")
