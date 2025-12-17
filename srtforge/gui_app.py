@@ -67,13 +67,19 @@ class WorkerOptions:
     config_path: Optional[str] = None
 
 
-def add_shadow(widget: QtWidgets.QWidget) -> None:
+def add_shadow(
+    widget: QtWidgets.QWidget,
+    *,
+    blur_radius: int = 30,
+    offset: tuple[int, int] = (0, 12),
+    color: Optional[QtGui.QColor] = None,
+) -> None:
     """Add a soft drop shadow to widgets to emulate Windows 11 cards."""
 
     effect = QtWidgets.QGraphicsDropShadowEffect(widget)
-    effect.setBlurRadius(30)
-    effect.setOffset(0, 12)
-    effect.setColor(QtGui.QColor(15, 23, 42, 50))
+    effect.setBlurRadius(int(blur_radius))
+    effect.setOffset(int(offset[0]), int(offset[1]))
+    effect.setColor(color or QtGui.QColor(15, 23, 42, 50))
     widget.setGraphicsEffect(effect)
 
 
@@ -2059,8 +2065,22 @@ class MainWindow(QtWidgets.QMainWindow):
         # Log drawer (hidden by default – toggled from the status bar)
         self.log_container = QtWidgets.QFrame()
         self.log_container.setObjectName("LogContainer")
+        self.log_container.setFrameShape(QtWidgets.QFrame.NoFrame)
+        self.log_container.setAutoFillBackground(False)
+        try:
+            self.log_container.setAttribute(
+                QtCore.Qt.WidgetAttribute.WA_TranslucentBackground, True
+            )
+        except Exception:
+            pass
+
         log_layout = QtWidgets.QVBoxLayout(self.log_container)
-        log_layout.setContentsMargins(0, 0, 0, 0)
+
+        # Give the log view's shadow room to render so it doesn't get clipped into
+        # a hard-edged rectangle (especially above the status bar).
+        # For blur=16 + offset_y=8 => top≈8, bottom≈24, sides≈16.
+        log_layout.setContentsMargins(16, 8, 16, 24)
+        log_layout.setSpacing(0)
 
         self.log_view = QtWidgets.QPlainTextEdit()
         self.log_view.setObjectName("LogView")
@@ -2071,7 +2091,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.log_view.setMaximumBlockCount(10000)
         self._init_log_zoom()
         log_layout.addWidget(self.log_view)
-        add_shadow(self.log_view)
+
+        # Smaller shadow so it fits cleanly in the bottom area without clipping
+        add_shadow(self.log_view, blur_radius=16, offset=(0, 8))
 
         # Start hidden; user can reveal via the terminal icon in the status bar
         self.log_container.setVisible(False)
@@ -2364,6 +2386,11 @@ class MainWindow(QtWidgets.QMainWindow):
                 border: none;
             }}
 
+            #LogContainer {{
+                background: transparent;
+                border: none;
+            }}
+
             QPlainTextEdit, QTextEdit {{
                 background-color: #020617;
                 color: #E5E7EB;
@@ -2378,6 +2405,11 @@ class MainWindow(QtWidgets.QMainWindow):
             /* Optional: console font */
             QPlainTextEdit#LogView {{
                 font-family: "Cascadia Code", Consolas, monospace;
+            }}
+
+            QPlainTextEdit#LogView:focus {{
+                outline: none;
+                border: 1px solid #020617;
             }}
 
             /* Progress bars: queue footer + per-row */
@@ -2911,6 +2943,11 @@ class MainWindow(QtWidgets.QMainWindow):
                 color: #94A3B8;
             }}
 
+            #LogContainer {{
+                background: transparent;
+                border: none;
+            }}
+
             QPlainTextEdit {{
                 background-color: #FFFFFF;
                 border-radius: 10px;
@@ -2932,6 +2969,10 @@ class MainWindow(QtWidgets.QMainWindow):
                 border: 1px solid #1E293B;
                 font-family: "Cascadia Code", Consolas, monospace;
                 selection-color: #FFFFFF;
+            }}
+            QPlainTextEdit#LogView:focus {{
+                outline: none;
+                border: 1px solid #1E293B;
             }}
             QPlainTextEdit#LogView::viewport {{
                 background: transparent;
