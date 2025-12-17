@@ -2063,7 +2063,9 @@ class MainWindow(QtWidgets.QMainWindow):
         log_layout.setContentsMargins(0, 0, 0, 0)
 
         self.log_view = QtWidgets.QPlainTextEdit()
+        self.log_view.setObjectName("LogView")
         self.log_view.setReadOnly(True)
+        self.log_view.setFrameShape(QtWidgets.QFrame.NoFrame)
         self.log_view.setMinimumHeight(110)
         self.log_view.setMaximumHeight(260)
         self.log_view.setMaximumBlockCount(10000)
@@ -2367,6 +2369,15 @@ class MainWindow(QtWidgets.QMainWindow):
                 color: #E5E7EB;
                 border-radius: 12px;
                 border: 1px solid #020617;
+            }}
+
+            QPlainTextEdit::viewport, QTextEdit::viewport {{
+                background: transparent;
+            }}
+
+            /* Optional: console font */
+            QPlainTextEdit#LogView {{
+                font-family: "Cascadia Code", Consolas, monospace;
             }}
 
             /* Progress bars: queue footer + per-row */
@@ -2907,6 +2918,23 @@ class MainWindow(QtWidgets.QMainWindow):
                 color: #0F172A;
                 selection-background-color: {accent.name()};
                 selection-color: #FFFFFF;
+            }}
+
+            QPlainTextEdit::viewport {{
+                background: transparent;
+            }}
+
+            /* Console/log view: avoid the big white rectangle */
+            QPlainTextEdit#LogView {{
+                background-color: #0F172A;
+                color: #E2E8F0;
+                border-radius: 12px;
+                border: 1px solid #1E293B;
+                font-family: "Cascadia Code", Consolas, monospace;
+                selection-color: #FFFFFF;
+            }}
+            QPlainTextEdit#LogView::viewport {{
+                background: transparent;
             }}
 
             /* Progress bars: queue footer + per-row */
