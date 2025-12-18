@@ -546,10 +546,17 @@ class TranscriptionWorker(QtCore.QThread):
                 break
             self.fileStarted.emit(str(media_path))
             try:
-                self._file_start_ts = time.perf_counter()
                 self._file_media_duration = self._probe_media_duration_seconds(media_path)
+
+                # Measure *transcription* time only (the CLI pipeline). Optional
+                # post-processing (soft-embed / burn) is excluded so ETA training
+                # reflects the transcription workload accurately.
+                pipeline_start_ts = time.perf_counter()
+                self._file_start_ts = pipeline_start_ts
+
                 self._log_timing(f"{media_path.name}: pipeline start")
                 srt_path = self._run_pipeline_subprocess(media_path)
+                pipeline_runtime_s = max(0.0, time.perf_counter() - pipeline_start_ts)
                 self._log_timing(f"{media_path.name}: pipeline finished")
                 if self._stop_event.is_set():
                     raise StopRequested
@@ -611,10 +618,9 @@ class TranscriptionWorker(QtCore.QThread):
                 if burn_output:
                     summary_parts.append(f"burned → {burn_output}")
                 self.fileCompleted.emit(str(media_path), "; ".join(summary_parts))
-                runtime_s = max(0.0, time.perf_counter() - self._file_start_ts)
                 self.etaMeasured.emit(
                     str(media_path),
-                    float(runtime_s),
+                    float(pipeline_runtime_s),
                     float(self._file_media_duration),
                     bool(self.options.prefer_gpu),
                 )
@@ -2135,6 +2141,8 @@ class MainWindow(QtWidgets.QMainWindow):
         status_bar = QtWidgets.QStatusBar(self)
         self.setStatusBar(status_bar)
 
+        status_bar.setSizeGripEnabled(False)
+
         # Tiny coloured dot + short text; full details in tooltip
         self.status_indicator = QtWidgets.QLabel()
         self.status_indicator.setObjectName("StatusIndicator")
@@ -3368,6 +3376,8 @@ class MainWindow(QtWidgets.QMainWindow):
             item.setToolTip(self._meta_column, "Probing media info…")
 
             item.setText(self._eta_column, ETA_PLACEHOLDER)
+            item.setData(self._eta_column, QtCore.Qt.ItemDataRole.UserRole, 0.0)
+            item.setToolTip(self._eta_column, "")
 
             # Per-file progress bar; only attached while processing.
             progress = QtWidgets.QProgressBar()
@@ -3941,17 +3951,28 @@ class MainWindow(QtWidgets.QMainWindow):
             return
 
         key = str(path)
+        remaining = 0.0
+        try:
+            remaining = max(0.0, float(remaining_s or 0.0))
+        except Exception:
+            remaining = 0.0
+
         # Default: placeholder (no ETA / unknown)
         text = ETA_PLACEHOLDER
-        if remaining_s > 1:
+        seconds_val = 0.0
+        if remaining > 1:
             # Round to the nearest second and format as MM:SS / H:MM:SS
-            text = _format_hms(remaining_s)
+            text = _format_hms(remaining)
+            seconds_val = remaining
 
         for i in range(self.queue_list.topLevelItemCount()):
             item = self.queue_list.topLevelItem(i)
             raw = item.data(0, QtCore.Qt.ItemDataRole.UserRole)
             if raw and str(raw) == key:
                 item.setText(self._eta_column, text)
+                item.setData(self._eta_column, QtCore.Qt.ItemDataRole.UserRole, float(seconds_val))
+                if text == ETA_PLACEHOLDER:
+                    item.setToolTip(self._eta_column, "")
                 return
 
     def _clear_all_eta_cells(self) -> None:
@@ -3961,6 +3982,8 @@ class MainWindow(QtWidgets.QMainWindow):
         for i in range(self.queue_list.topLevelItemCount()):
             item = self.queue_list.topLevelItem(i)
             item.setText(self._eta_column, ETA_PLACEHOLDER)
+            item.setData(self._eta_column, QtCore.Qt.ItemDataRole.UserRole, 0.0)
+            item.setToolTip(self._eta_column, "")
 
     def _update_queue_progress_bar(self, current_file_fraction: float) -> None:
         """Update the footer progress bar to reflect whole-queue progress."""
@@ -4243,6 +4266,7 @@ class MainWindow(QtWidgets.QMainWindow):
             return
 
         self._clear_eta()
+        self._clear_all_eta_cells()
 
         # Fresh run: reset per-file status + progress
         for i in range(self.queue_list.topLevelItemCount()):
@@ -4556,15 +4580,33 @@ class MainWindow(QtWidgets.QMainWindow):
             self._eta_timer.start()
 
     def _clear_eta(self) -> None:
+        """Stop ETA timer and reset ETA bookkeeping.
+
+        Note: we intentionally do NOT clear the whole ETA column here because
+        completed rows repurpose it to show their actual transcription time.
+        """
+
+        active = self._eta_media
+
         self._eta_deadline = None
         self._eta_total = 0.0
-        # Clear ETA column for all rows
-        self._clear_all_eta_cells()
         self._eta_media = None
+
         if hasattr(self, "eta_label"):
             self.eta_label.setText("Idle")
         if self._eta_timer.isActive():
             self._eta_timer.stop()
+
+        # If we were tracking a file that did *not* complete, clear its ETA cell
+        # so we don't leave a stale countdown behind after cancellation/failure.
+        if active:
+            item = self._find_queue_item(active)
+            if item is not None:
+                status = item.text(getattr(self, "_status_column", 1))
+                if status != "Completed":
+                    item.setText(self._eta_column, ETA_PLACEHOLDER)
+                    item.setData(self._eta_column, QtCore.Qt.ItemDataRole.UserRole, 0.0)
+                    item.setToolTip(self._eta_column, "")
 
     def _estimate_queue_remaining(self, current_remaining: float) -> float:
         """Return an estimated remaining wall time for the entire queue.
@@ -4663,7 +4705,42 @@ class MainWindow(QtWidgets.QMainWindow):
             self._eta_timer.stop()
 
     def _on_eta_measured(self, media: str, runtime_s: float, duration_s: float, prefer_gpu: bool) -> None:
-        self._eta_memory.update(prefer_gpu, duration_s, runtime_s)
+        # Persist throughput sample for future estimates.
+        try:
+            self._eta_memory.update(prefer_gpu, duration_s, runtime_s)
+        except Exception:
+            # ETA training should never break the UI.
+            pass
+
+        # For successfully completed files, repurpose the ETA column to show the
+        # actual transcription time for that file.
+        item = self._find_queue_item(media)
+        if item is None:
+            return
+
+        try:
+            runtime = max(0.0, float(runtime_s or 0.0))
+        except Exception:
+            runtime = 0.0
+
+        # Format as elapsed wall time (MM:SS / H:MM:SS).
+        runtime_text = _format_hms(runtime)
+        if runtime_text == ETA_PLACEHOLDER:
+            runtime_text = "00:00"
+
+        item.setText(self._eta_column, runtime_text)
+        item.setData(self._eta_column, QtCore.Qt.ItemDataRole.UserRole, runtime)
+
+        # Helpful tooltip: include realtime factor when the media duration is known.
+        tip = f"Transcription time: {runtime_text}"
+        try:
+            dur = float(duration_s or 0.0)
+        except Exception:
+            dur = 0.0
+        if dur > 0 and runtime > 0:
+            speed = dur / runtime
+            tip += f" ({speed:.2f}× realtime)"
+        item.setToolTip(self._eta_column, tip)
 
 
 def _asset_candidates(filename: str) -> list[Path]:
