@@ -2063,41 +2063,54 @@ class MainWindow(QtWidgets.QMainWindow):
         add_shadow(queue_card)
 
         # Log drawer (hidden by default – toggled from the status bar)
+        # NOTE: We add a small gap + bottom spacer so the card shadow isn't
+        # clipped by the scroll-area edge (clipping looks like a sharp
+        # rectangular box).
+        self.log_gap = QtWidgets.QWidget()
+        self.log_gap.setObjectName("LogGap")
+        self.log_gap.setFixedHeight(12)
+        self.log_gap.setVisible(False)
+        self.log_gap.setAutoFillBackground(False)
+        layout.addWidget(self.log_gap)
+
         self.log_container = QtWidgets.QFrame()
         self.log_container.setObjectName("LogContainer")
         self.log_container.setFrameShape(QtWidgets.QFrame.NoFrame)
         self.log_container.setAutoFillBackground(False)
-        try:
-            self.log_container.setAttribute(
-                QtCore.Qt.WidgetAttribute.WA_TranslucentBackground, True
-            )
-        except Exception:
-            pass
 
+        # The console should behave like the Queue card: a raised Win11-style
+        # card with padding, not a "sunken" text field.
         log_layout = QtWidgets.QVBoxLayout(self.log_container)
-
-        # Give the log view's shadow room to render so it doesn't get clipped into
-        # a hard-edged rectangle (especially above the status bar).
-        # For blur=16 + offset_y=8 => top≈8, bottom≈24, sides≈16.
-        log_layout.setContentsMargins(16, 8, 16, 24)
+        log_layout.setContentsMargins(16, 12, 16, 12)
         log_layout.setSpacing(0)
 
         self.log_view = QtWidgets.QPlainTextEdit()
         self.log_view.setObjectName("LogView")
         self.log_view.setReadOnly(True)
         self.log_view.setFrameShape(QtWidgets.QFrame.NoFrame)
-        self.log_view.setMinimumHeight(110)
-        self.log_view.setMaximumHeight(260)
+        self.log_view.setMinimumHeight(130)
+        self.log_view.setMaximumHeight(280)
         self.log_view.setMaximumBlockCount(10000)
         self._init_log_zoom()
         log_layout.addWidget(self.log_view)
 
-        # Smaller shadow so it fits cleanly in the bottom area without clipping
-        add_shadow(self.log_view, blur_radius=16, offset=(0, 8))
+        # Add elevation to the *card* instead of the text edit so it doesn't
+        # look depressed/inset.
+        add_shadow(self.log_container, blur_radius=24, offset=(0, 10))
 
         # Start hidden; user can reveal via the terminal icon in the status bar
         self.log_container.setVisible(False)
         layout.addWidget(self.log_container)
+
+        # Spacer under the log drawer so its drop shadow doesn't get clipped by
+        # the scroll-area bottom edge (which otherwise creates a sharp
+        # rectangular cutoff and can visually swallow the status bar separator).
+        self.log_shadow_spacer = QtWidgets.QWidget()
+        self.log_shadow_spacer.setObjectName("LogShadowSpacer")
+        self.log_shadow_spacer.setAutoFillBackground(False)
+        self.log_shadow_spacer.setFixedHeight(24)
+        self.log_shadow_spacer.setVisible(False)
+        layout.addWidget(self.log_shadow_spacer)
 
         scroll = QtWidgets.QScrollArea()
         scroll.setFrameShape(QtWidgets.QFrame.NoFrame)
@@ -2161,7 +2174,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # Icon wired up below via the Command Prompt PNG
         self.log_toggle_button.setAutoRaise(True)
         self.log_toggle_button.setFocusPolicy(QtCore.Qt.FocusPolicy.NoFocus)
-        self.log_toggle_button.setIconSize(QtCore.QSize(30, 30))
+        self.log_toggle_button.setIconSize(QtCore.QSize(22, 22))
         self.log_toggle_button.setText("")
         self.log_toggle_button.toggled.connect(self._toggle_log_panel)
 
@@ -2202,7 +2215,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.log_toggle_button.setIcon(cmd_icon)
 
         # Optional but helps make it pixel-perfect:
-        self.log_toggle_button.setFixedSize(QtCore.QSize(30, 30))
+        self.log_toggle_button.setFixedSize(QtCore.QSize(24, 24))
         console_layout.addWidget(self.log_toggle_button, 0, QtCore.Qt.AlignCenter)
 
 
@@ -2289,7 +2302,15 @@ class MainWindow(QtWidgets.QMainWindow):
     def _toggle_log_panel(self, checked: bool) -> None:
         if getattr(self, "log_container", None) is None:
             return
+
         self.log_container.setVisible(checked)
+
+        # Keep spacing helpers in sync so the UI doesn't jump / clip shadows.
+        if hasattr(self, "log_gap"):
+            self.log_gap.setVisible(checked)
+        if hasattr(self, "log_shadow_spacer"):
+            self.log_shadow_spacer.setVisible(checked)
+
         if hasattr(self, "log_toggle_button"):
             self.log_toggle_button.setToolTip("Hide console" if checked else "Show console")
 
@@ -2361,6 +2382,20 @@ class MainWindow(QtWidgets.QMainWindow):
                 background-color: #0F172A;
             }}
 
+            /* Footer/status bar: keep a crisp separator line and remove per-item boxes */
+            QStatusBar {{
+                background-color: #0F172A;
+                border-top: 1px solid rgba(148, 163, 184, 0.22);
+            }}
+            QStatusBar::item {{
+                border: none;
+                background: transparent;
+            }}
+            QStatusBar QLabel {{
+                background: transparent;
+                border: none;
+            }}
+
             QLabel {{
                 color: #E5E7EB;
             }}
@@ -2387,6 +2422,12 @@ class MainWindow(QtWidgets.QMainWindow):
             }}
 
             #LogContainer {{
+                background-color: #020617;
+                border-radius: 16px;
+                border: none;
+            }}
+
+            #LogGap, #LogShadowSpacer {{
                 background: transparent;
                 border: none;
             }}
@@ -2402,15 +2443,25 @@ class MainWindow(QtWidgets.QMainWindow):
                 background: transparent;
             }}
 
-            /* Optional: console font */
+                        /* Console/log view (dark mode): text sits on the LogContainer card */
             QPlainTextEdit#LogView {{
+                background: transparent;
+                background-color: transparent;
+                border: none;
+                color: #E5E7EB;
                 font-family: "Cascadia Code", Consolas, monospace;
+                padding: 10px;
+                selection-background-color: {accent.name()};
+                selection-color: #FFFFFF;
             }}
-
+            QPlainTextEdit#LogView::viewport {{
+                background: transparent;
+            }}
             QPlainTextEdit#LogView:focus {{
                 outline: none;
-                border: 1px solid #020617;
+                border: none;
             }}
+
 
             /* Progress bars: queue footer + per-row */
             QProgressBar#FooterProgressBar,
@@ -2673,6 +2724,20 @@ class MainWindow(QtWidgets.QMainWindow):
         else:
             # --- Light mode QSS ---
             custom = f"""
+            /* Footer/status bar: crisp separator + no framed items */
+            QStatusBar {{
+                background-color: #FFFFFF;
+                border-top: 1px solid #E2E8F0;
+            }}
+            QStatusBar::item {{
+                border: none;
+                background: transparent;
+            }}
+            QStatusBar QLabel {{
+                background: transparent;
+                border: none;
+            }}
+
             QLabel#HeaderLabel {{
                 font-size: 22px;
                 font-weight: 500;
@@ -2944,6 +3009,12 @@ class MainWindow(QtWidgets.QMainWindow):
             }}
 
             #LogContainer {{
+                background: #FFFFFF;
+                border-radius: 16px;
+                border: 1px solid #E2E8F0;
+            }}
+
+            #LogGap, #LogShadowSpacer {{
                 background: transparent;
                 border: none;
             }}
@@ -2961,22 +3032,25 @@ class MainWindow(QtWidgets.QMainWindow):
                 background: transparent;
             }}
 
-            /* Console/log view: avoid the big white rectangle */
+                        /* Console/log view (light mode): plain text on the LogContainer card */
             QPlainTextEdit#LogView {{
-                background-color: #0F172A;
-                color: #E2E8F0;
-                border-radius: 12px;
-                border: 1px solid #1E293B;
+                background: transparent;
+                background-color: transparent;
+                border: none;
+                color: #0F172A;
                 font-family: "Cascadia Code", Consolas, monospace;
+                padding: 10px;
+                selection-background-color: {accent.name()};
                 selection-color: #FFFFFF;
-            }}
-            QPlainTextEdit#LogView:focus {{
-                outline: none;
-                border: 1px solid #1E293B;
             }}
             QPlainTextEdit#LogView::viewport {{
                 background: transparent;
             }}
+            QPlainTextEdit#LogView:focus {{
+                outline: none;
+                border: none;
+            }}
+
 
             /* Progress bars: queue footer + per-row */
             QProgressBar#FooterProgressBar,
@@ -3100,6 +3174,23 @@ class MainWindow(QtWidgets.QMainWindow):
         """
 
         self.setStyleSheet(base_qss + custom)
+
+        # Keep the console-toggle icon readable (avoid the "solid black square" look).
+        if hasattr(self, "log_toggle_button"):
+            icon_color = QtGui.QColor("#E5E7EB") if self._dark_mode else QtGui.QColor("#475569")
+            icon = _load_asset_icon(
+                "Command_Prompt.png",
+                QtWidgets.QStyle.StandardPixmap.SP_ComputerIcon,
+                self.style(),
+            )
+            try:
+                pm = icon.pixmap(64, 64)
+                if _pixmap_looks_like_flat_block(pm):
+                    icon = _make_terminal_icon(icon_color)
+            except Exception:
+                icon = _make_terminal_icon(icon_color)
+            self.log_toggle_button.setIcon(icon)
+
 
     def _update_theme_toggle_label(self) -> None:
         """Update the theme toggle glyph + tooltip."""
@@ -4710,6 +4801,104 @@ def _load_asset_icon(
     if style is None:
         style = QtWidgets.QApplication.style()
     return style.standardIcon(fallback)
+
+def _pixmap_looks_like_flat_block(pixmap: QtGui.QPixmap) -> bool:
+    """Heuristic: detect an icon pixmap that renders as a near-solid block.
+
+    This is used to avoid the console toggle showing up as a plain black square
+    if the PNG asset loses detail when scaled or when its alpha channel isn't
+    preserved correctly by the host environment.
+    """
+    try:
+        if pixmap.isNull():
+            return False
+        img = pixmap.toImage()
+        if img.isNull():
+            return False
+
+        w, h = img.width(), img.height()
+        if w < 4 or h < 4:
+            return False
+
+        step = max(1, min(w, h) // 32)
+        total_samples = ((w + step - 1) // step) * ((h + step - 1) // step)
+
+        opaque = 0
+        rmin = gmin = bmin = 255
+        rmax = gmax = bmax = 0
+
+        for y in range(0, h, step):
+            for x in range(0, w, step):
+                c = img.pixelColor(x, y)
+                if c.alpha() < 200:
+                    continue
+                opaque += 1
+                r = int(c.red())
+                g = int(c.green())
+                b = int(c.blue())
+                if r < rmin:
+                    rmin = r
+                if g < gmin:
+                    gmin = g
+                if b < bmin:
+                    bmin = b
+                if r > rmax:
+                    rmax = r
+                if g > gmax:
+                    gmax = g
+                if b > bmax:
+                    bmax = b
+
+        # Mostly transparent => not a solid block.
+        if opaque == 0 or (opaque / max(1, total_samples)) < 0.75:
+            return False
+
+        # Very low colour variance => likely a flat/solid square.
+        return (rmax - rmin) < 10 and (gmax - gmin) < 10 and (bmax - bmin) < 10
+    except Exception:
+        return False
+
+
+def _make_terminal_icon(color: QtGui.QColor, *, size: int = 64) -> QtGui.QIcon:
+    """Generate a simple terminal glyph icon (transparent background)."""
+    pm = QtGui.QPixmap(size, size)
+    pm.fill(QtCore.Qt.GlobalColor.transparent)
+
+    p = QtGui.QPainter(pm)
+    p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, True)
+
+    pen_w = max(3, int(size * 0.08))
+    pen = QtGui.QPen(color)
+    pen.setWidth(pen_w)
+    pen.setCapStyle(QtCore.Qt.PenCapStyle.RoundCap)
+    pen.setJoinStyle(QtCore.Qt.PenJoinStyle.RoundJoin)
+    p.setPen(pen)
+    p.setBrush(QtCore.Qt.BrushStyle.NoBrush)
+
+    # Outer rounded square
+    pad = pen_w / 2.0
+    rect = QtCore.QRectF(pad, pad, size - (2 * pad), size - (2 * pad))
+    radius = size * 0.18
+    p.drawRoundedRect(rect, radius, radius)
+
+    # Prompt: ">"
+    x_left = size * 0.32
+    x_tip = size * 0.45
+    y_top = size * 0.34
+    y_mid = size * 0.50
+    y_bot = size * 0.66
+    p.drawLine(QtCore.QPointF(x_left, y_top), QtCore.QPointF(x_tip, y_mid))
+    p.drawLine(QtCore.QPointF(x_left, y_bot), QtCore.QPointF(x_tip, y_mid))
+
+    # Prompt: "_"
+    ux1 = size * 0.54
+    ux2 = size * 0.74
+    uy = size * 0.66
+    p.drawLine(QtCore.QPointF(ux1, uy), QtCore.QPointF(ux2, uy))
+
+    p.end()
+    return QtGui.QIcon(pm)
+
 
 
 def _load_asset_movie(filename: str) -> Optional[QtGui.QMovie]:
