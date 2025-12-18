@@ -1699,7 +1699,9 @@ class MainWindow(QtWidgets.QMainWindow):
         layout = QtWidgets.QVBoxLayout(page)
         # No extra vertical gap above/below the header; keep side padding
         layout.setSpacing(0)
-        layout.setContentsMargins(16, 0, 16, 12)
+        # A small bottom margin prevents card shadows from being clipped by the
+        # scroll-area viewport edge (which otherwise creates sharp cut-offs).
+        layout.setContentsMargins(16, 0, 16, 8)
         pointer_cursor = QtGui.QCursor(QtCore.Qt.CursorShape.PointingHandCursor)
 
         # --- Header: logo + title centered, controls on the right --------------
@@ -2037,7 +2039,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.queue_stack.addWidget(self.queue_list)
 
-        card_layout.addWidget(self.queue_stack)
+        # Let the queue/table area grow and shrink with the window.
+        card_layout.addWidget(self.queue_stack, 1)
 
         # Bottom bar: total duration (left) + Start / Stop (right)
         bottom_bar = QtWidgets.QHBoxLayout()
@@ -2059,8 +2062,12 @@ class MainWindow(QtWidgets.QMainWindow):
 
         card_layout.addLayout(bottom_bar)
 
-        layout.addWidget(queue_card)
-        add_shadow(queue_card)
+        # Let the queue card absorb any extra vertical space (so the queue isn't
+        # stuck at a fixed height and we don't get a huge blank gap).
+        layout.addWidget(queue_card, 1)
+        # Slightly smaller shadow so cards can sit closer to the footer without
+        # getting their shadow clipped (which looks like a sharp edge).
+        add_shadow(queue_card, blur_radius=12, offset=(0, 4))
 
         # Log drawer (hidden by default – toggled from the status bar)
         # NOTE: We add a small gap + bottom spacer so the card shadow isn't
@@ -2068,7 +2075,8 @@ class MainWindow(QtWidgets.QMainWindow):
         # rectangular box).
         self.log_gap = QtWidgets.QWidget()
         self.log_gap.setObjectName("LogGap")
-        self.log_gap.setFixedHeight(12)
+        # Small separation between the queue card and the log card.
+        self.log_gap.setFixedHeight(8)
         self.log_gap.setVisible(False)
         self.log_gap.setAutoFillBackground(False)
         layout.addWidget(self.log_gap)
@@ -2096,20 +2104,25 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # Add elevation to the *card* instead of the text edit so it doesn't
         # look depressed/inset.
-        add_shadow(self.log_container, blur_radius=24, offset=(0, 10))
+        # Keep the log drawer close to the footer without clipped shadow edges.
+        add_shadow(self.log_container, blur_radius=12, offset=(0, 4))
 
         # Start hidden; user can reveal via the terminal icon in the status bar
         self.log_container.setVisible(False)
         layout.addWidget(self.log_container)
 
-        # Spacer under the log drawer so its drop shadow doesn't get clipped by
-        # the scroll-area bottom edge (which otherwise creates a sharp
-        # rectangular cutoff and can visually swallow the status bar separator).
+        # Bottom spacer so the last card's drop shadow (queue or log drawer)
+        # never clips against the scroll-area edge (which otherwise creates a
+        # sharp rectangular cutoff).
         self.log_shadow_spacer = QtWidgets.QWidget()
         self.log_shadow_spacer.setObjectName("LogShadowSpacer")
         self.log_shadow_spacer.setAutoFillBackground(False)
-        self.log_shadow_spacer.setFixedHeight(24)
-        self.log_shadow_spacer.setVisible(False)
+        # A couple extra pixels of slack avoids any 1px shadow clipping due to
+        # rounding/HiDPI scaling.
+        self.log_shadow_spacer.setFixedHeight(10)
+        # Keep it visible all the time: when the log drawer is closed the queue
+        # card becomes the bottom-most widget and also needs this space.
+        self.log_shadow_spacer.setVisible(True)
         layout.addWidget(self.log_shadow_spacer)
 
         scroll = QtWidgets.QScrollArea()
@@ -2161,8 +2174,10 @@ class MainWindow(QtWidgets.QMainWindow):
         console_trigger.setMouseTracking(True)
 
         console_layout = QtWidgets.QHBoxLayout(console_trigger)
-        # Give the pill its own padding instead of the icon button doing it
-        console_layout.setContentsMargins(8, 2, 8, 2)
+        # Give the pill its own padding instead of the icon button doing it.
+        # Keep vertical padding tiny so the status bar doesn't get taller when
+        # we restore the console icon size.
+        console_layout.setContentsMargins(8, 0, 8, 0)
         console_layout.setSpacing(0)
 
         # Icon button (acts as the actual toggle)
@@ -2174,7 +2189,8 @@ class MainWindow(QtWidgets.QMainWindow):
         # Icon wired up below via the Command Prompt PNG
         self.log_toggle_button.setAutoRaise(True)
         self.log_toggle_button.setFocusPolicy(QtCore.Qt.FocusPolicy.NoFocus)
-        self.log_toggle_button.setIconSize(QtCore.QSize(22, 22))
+        # Restore the larger Command_Prompt.png size.
+        self.log_toggle_button.setIconSize(QtCore.QSize(30, 30))
         self.log_toggle_button.setText("")
         self.log_toggle_button.toggled.connect(self._toggle_log_panel)
 
@@ -2215,7 +2231,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.log_toggle_button.setIcon(cmd_icon)
 
         # Optional but helps make it pixel-perfect:
-        self.log_toggle_button.setFixedSize(QtCore.QSize(24, 24))
+        self.log_toggle_button.setFixedSize(QtCore.QSize(32, 32))
         console_layout.addWidget(self.log_toggle_button, 0, QtCore.Qt.AlignCenter)
 
 
@@ -2308,8 +2324,8 @@ class MainWindow(QtWidgets.QMainWindow):
         # Keep spacing helpers in sync so the UI doesn't jump / clip shadows.
         if hasattr(self, "log_gap"):
             self.log_gap.setVisible(checked)
-        if hasattr(self, "log_shadow_spacer"):
-            self.log_shadow_spacer.setVisible(checked)
+        # NOTE: log_shadow_spacer stays visible all the time so the bottom-most
+        # card's drop shadow never gets clipped.
 
         if hasattr(self, "log_toggle_button"):
             self.log_toggle_button.setToolTip("Hide console" if checked else "Show console")
