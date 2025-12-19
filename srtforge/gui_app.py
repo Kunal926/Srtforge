@@ -2392,6 +2392,17 @@ class MainWindow(QtWidgets.QMainWindow):
         self.log_view.setObjectName("LogView")
         self.log_view.setReadOnly(True)
         self.log_view.setFrameShape(QtWidgets.QFrame.NoFrame)
+        # Make the console truly blend into the card (prevents a nested text-field box)
+        self.log_view.setAutoFillBackground(False)
+        try:
+            self.log_view.viewport().setAutoFillBackground(False)
+        except Exception:
+            pass
+        # Enforce transparency regardless of the global theme QSS.
+        self.log_view.setStyleSheet(
+            "QPlainTextEdit { background: transparent; background-color: transparent; border: none; padding: 10px; }"
+            "QPlainTextEdit::viewport { background: transparent; }"
+        )
         self.log_view.setMinimumHeight(130)
         self.log_view.setMaximumHeight(280)
         self.log_view.setMaximumBlockCount(10000)
@@ -2653,8 +2664,9 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # Discord-like dark neutrals (core set)
         deep_black = "#000000"
-        app_bg_std = "#070709"
-        surface_bg = "#0c0c0e"
+        # Even darker OLED-friendly cards/containers
+        surface_bg = "#070709"  # queue + log card surfaces
+        app_bg_std = "#060608"  # inset fields (slightly darker for depth)
         text_primary = "#e3e3e6"
         text_secondary = "#9b9ca3"
         text_muted = "#85868e"
@@ -2720,6 +2732,12 @@ class MainWindow(QtWidgets.QMainWindow):
                 background-color: {app_bg};
             }}
 
+            /* Keep sizing identical to light mode */
+            QWidget {{
+                font-family: "Segoe UI", "Inter", system-ui;
+                font-size: 14px;
+            }}
+
             /* Footer/status bar: crisp separator line and no framed items */
             QStatusBar {{
                 background-color: {app_bg};
@@ -2756,13 +2774,13 @@ class MainWindow(QtWidgets.QMainWindow):
             #QueueCard {{
                 background-color: {surface_bg};
                 border-radius: 16px;
-                border: none;
+                border: 1px solid {border_hairline};
             }}
 
             #LogContainer {{
                 background-color: {surface_bg};
                 border-radius: 16px;
-                border: none;
+                border: 1px solid {border_hairline};
             }}
 
             #LogGap, #LogShadowSpacer {{
@@ -3006,12 +3024,12 @@ class MainWindow(QtWidgets.QMainWindow):
             #FooterConsoleTrigger:hover {{
                 background-color: {hover_overlay};
             }}
-            /* Selected/open state */
+            /* Selected/open state (neutral grey, not green) */
             #FooterConsoleTrigger[checked="true"] {{
-                background-color: {green_select_soft};
+                background-color: {pressed_overlay};
             }}
             #FooterConsoleTrigger[checked="true"]:hover {{
-                background-color: {green_select_strong};
+                background-color: {border_strong};
             }}
 
             QLabel#LogToggleLabel {{
@@ -3123,6 +3141,37 @@ class MainWindow(QtWidgets.QMainWindow):
             QToolButton#ThemeToggle:pressed,
             QToolButton#OptionsButton:pressed {{
                 background-color: rgba(0,0,0,0.08);
+            }}
+
+            /* Console pill in status bar (light mode) */
+            QToolButton#LogToggle {{
+                background-color: transparent;
+                color: #64748B;
+                border: none;
+                padding: 0;
+                margin: 0;
+            }}
+            QToolButton#LogToggle:hover,
+            QToolButton#LogToggle:pressed,
+            QToolButton#LogToggle:checked {{
+                background-color: transparent;
+            }}
+
+            #FooterConsoleTrigger {{
+                border-radius: 999px;
+                padding: 2px 10px;
+                background-color: transparent;
+                border: none;
+            }}
+            #FooterConsoleTrigger:hover {{
+                background-color: rgba(15, 23, 42, 0.05);
+            }}
+            #FooterConsoleTrigger[checked="true"] {{
+                /* Neutral light grey (no green ring) */
+                background-color: #E5E7EB;
+            }}
+            #FooterConsoleTrigger[checked="true"]:hover {{
+                background-color: #CBD5E1;
             }}
 
             QGroupBox {{
@@ -3243,6 +3292,11 @@ class MainWindow(QtWidgets.QMainWindow):
             }}
             #QueueSummaryLabel {{
                 color: #475569;
+                background: transparent;
+                background-color: transparent;
+                border: none;
+                padding: 0px;
+                margin: 0px;
             }}
 
             QPushButton, QToolButton {{
