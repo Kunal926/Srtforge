@@ -75,7 +75,7 @@ QPlainTextEdit {
 
 QComboBox QAbstractItemView {
     border-radius: 12px;
-    border: 1px solid #cbd5f5;
+    border: 1px solid #E2E8F0;
     selection-background-color: {ACCENT_COLOR};
 }
 
@@ -107,7 +107,7 @@ QToolButton#QueueOpenButton {
     border: none;
     padding: 2px 8px;
     border-radius: 999px;
-    color: #2563EB;
+    color: {ACCENT_COLOR};
 }
 
 QToolButton#QueueOpenButton:disabled {
@@ -115,5 +115,5 @@ QToolButton#QueueOpenButton:disabled {
 }
 
 QToolButton#QueueOpenButton:hover:!disabled {
-    background-color: rgba(37, 99, 235, 0.08);
+    background-color: rgba(22, 163, 74, 0.08);
 }
