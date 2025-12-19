@@ -1296,6 +1296,250 @@ class LogTailer(QtCore.QObject):
                 self._callback(body)
 
 
+def _qcolor_to_rgba(color: QtGui.QColor) -> str:
+    """Return a Qt stylesheet-ready color string.
+
+    Qt's QSS `rgba(r,g,b,a)` expects alpha in 0-255.
+    """
+    c = QtGui.QColor(color)
+    if not c.isValid():
+        return "#000000"
+    if c.alpha() >= 255:
+        return c.name()
+    return f"rgba({c.red()},{c.green()},{c.blue()},{c.alpha()})"
+
+
+
+class _ComboPopupFixer(QtCore.QObject):
+    """Fix ComboBox dropdown popups looking "boxed" on Windows.
+
+    On Windows (and with some Qt styles), a QComboBox popup can keep a square
+    frame / shadow even if you round the internal QListView via QSS. That shows
+    up as a sharp rectangle (and sometimes black bars) around a dropdown that is
+    meant to look like a Win11 rounded menu.
+
+    This helper patches the *popup container window* that Qt creates for the
+    dropdown so it matches the styled list:
+
+    - removes the native frame/drop-shadow hints (best-effort)
+    - forces the popup background to be painted (prevents black bars)
+    - applies a rounded mask so the popup window itself is clipped
+    - keeps it defensive + non-blocking (no infinite style repolish loops)
+    """
+
+    def __init__(self, combo: QtWidgets.QComboBox, *, radius: int = 12) -> None:
+        super().__init__(combo)
+        self._combo = combo
+        self._radius = max(0, int(radius))
+
+        # Force creation of the internal view early.
+        self._view: QtWidgets.QAbstractItemView = combo.view()
+        self._popup: Optional[QtWidgets.QWidget] = None
+
+        # Re-entrancy / event-loop safety.
+        self._polishing = False
+        self._last_qss: str = ""
+
+        # Avoid a second border coming from the view itself.
+        try:
+            self._view.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)  # type: ignore[attr-defined]
+        except Exception:
+            pass
+        self._view.setContentsMargins(0, 0, 0, 0)
+
+        # Hook events on the view; the popup container gets hooked once discovered.
+        self._view.installEventFilter(self)
+        self._ensure_popup_hook()
+
+    def _ensure_popup_hook(self) -> None:
+        """Discover and hook the real popup container window."""
+
+        try:
+            popup = self._view.window()
+        except Exception:
+            return
+        if not isinstance(popup, QtWidgets.QWidget):
+            return
+
+        # Only hook the dropdown popup (Qt::Popup). Guard against accidentally
+        # grabbing the dialog/main window and changing its flags.
+        try:
+            if popup is self._combo.window():
+                return
+            if not (popup.windowFlags() & QtCore.Qt.WindowType.Popup):
+                return
+        except Exception:
+            return
+
+        if popup is self._popup:
+            return
+
+        self._popup = popup
+        popup.installEventFilter(self)
+
+    def _try_apply_dwm_rounding(self, popup: QtWidgets.QWidget) -> None:
+        """Ask DWM for rounded corners on Windows 11 (best-effort)."""
+        if sys.platform != "win32":  # pragma: no cover - Windows only
+            return
+        try:
+            import ctypes  # local import: keep non-Windows safe
+        except Exception:
+            return
+        try:
+            hwnd = int(popup.winId())
+        except Exception:
+            return
+        # DWMWA_WINDOW_CORNER_PREFERENCE = 33, DWMWCP_ROUND = 2
+        try:
+            value = ctypes.c_int(2)
+            ctypes.windll.dwmapi.DwmSetWindowAttribute(  # type: ignore[attr-defined]
+                hwnd,
+                33,
+                ctypes.byref(value),
+                ctypes.sizeof(value),
+            )
+        except Exception:
+            pass
+
+    def _apply_mask(self, popup: QtWidgets.QWidget) -> None:
+        """Apply a rounded window mask so the popup is actually clipped."""
+
+        if self._radius <= 0:
+            popup.clearMask()
+            return
+
+        rect = popup.rect()
+        if rect.isEmpty():
+            return
+
+        # NOTE: don't shrink the rect. Shrinking can leave a 1px "halo" where
+        # the unmasked background shows through (it looks like a weird boundary).
+        path = QtGui.QPainterPath()
+        path.addRoundedRect(QtCore.QRectF(rect), float(self._radius), float(self._radius))
+        popup.setMask(QtGui.QRegion(path.toFillPolygon().toPolygon()))
+
+    def _build_qss(self) -> str:
+        """Build a theme-aware stylesheet for the popup and its list view."""
+
+        pal = self._combo.palette()
+
+        bg = _qcolor_to_rgba(pal.color(QtGui.QPalette.ColorRole.Base))
+        text = _qcolor_to_rgba(pal.color(QtGui.QPalette.ColorRole.Text))
+        sel_bg = _qcolor_to_rgba(pal.color(QtGui.QPalette.ColorRole.Highlight))
+        sel_text = _qcolor_to_rgba(pal.color(QtGui.QPalette.ColorRole.HighlightedText))
+
+        # IMPORTANT:
+        #   Paint the background on the *popup container* so there are no
+        #   unpainted areas (a common source of black bars).
+        #   Keep borders OFF so there's no extra "outline box".
+        return f"""
+        QWidget#SrtforgeComboPopup {{
+            background-color: {bg};
+            border: none;
+            border-radius: {self._radius}px;
+            padding: 0px;
+            margin: 0px;
+        }}
+        QWidget#SrtforgeComboPopup QListView {{
+            background: transparent;
+            border: none;
+            outline: 0;
+            padding: 4px 0px;
+            margin: 0px;
+        }}
+        QWidget#SrtforgeComboPopup QListView::item {{
+            padding: 6px 12px;
+            margin: 0px 6px;
+            border-radius: 8px;
+            color: {text};
+        }}
+        QWidget#SrtforgeComboPopup QListView::item:selected {{
+            background-color: {sel_bg};
+            color: {sel_text};
+        }}
+        """
+
+    def _polish(self) -> None:
+        """(Re)apply popup flags + QSS + masking."""
+
+        if self._polishing:
+            return
+        self._polishing = True
+        try:
+            self._ensure_popup_hook()
+            popup = self._popup
+            if not isinstance(popup, QtWidgets.QWidget):
+                return
+
+            # Remove the system frame/shadow where possible.
+            # Avoid relying on translucency (it can cause black bars on some builds).
+            try:
+                flags = popup.windowFlags()
+                wanted = (
+                    flags
+                    | QtCore.Qt.WindowType.FramelessWindowHint
+                    | QtCore.Qt.WindowType.NoDropShadowWindowHint
+                )
+                if wanted != flags:
+                    geo = popup.geometry()
+                    was_visible = popup.isVisible()
+                    popup.setWindowFlags(wanted)
+                    popup.setGeometry(geo)
+                    if was_visible:
+                        popup.show()
+            except Exception:
+                pass
+
+            popup.setContentsMargins(0, 0, 0, 0)
+            if popup.layout() is not None:
+                try:
+                    popup.layout().setContentsMargins(0, 0, 0, 0)
+                    popup.layout().setSpacing(0)
+                except Exception:
+                    pass
+
+            if isinstance(popup, QtWidgets.QFrame):
+                popup.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
+                popup.setLineWidth(0)
+                popup.setMidLineWidth(0)
+
+            if popup.objectName() != "SrtforgeComboPopup":
+                popup.setObjectName("SrtforgeComboPopup")
+
+            # Ensure the widget paints its own background (no black gaps).
+            popup.setAttribute(QtCore.Qt.WidgetAttribute.WA_StyledBackground, True)
+            try:
+                popup.setAttribute(QtCore.Qt.WidgetAttribute.WA_TranslucentBackground, False)
+            except Exception:
+                pass
+
+            self._try_apply_dwm_rounding(popup)
+
+            qss = self._build_qss().strip()
+            if qss and qss != self._last_qss:
+                popup.setStyleSheet(qss)
+                self._last_qss = qss
+
+            self._apply_mask(popup)
+        finally:
+            self._polishing = False
+
+    def eventFilter(self, watched: QtCore.QObject, event: QtCore.QEvent) -> bool:  # noqa: N802
+        try:
+            if watched in (self._view, self._popup):
+                if event.type() in (
+                    QtCore.QEvent.Type.Polish,
+                    QtCore.QEvent.Type.Show,
+                    QtCore.QEvent.Type.Resize,
+                    QtCore.QEvent.Type.PaletteChange,
+                    QtCore.QEvent.Type.ApplicationPaletteChange,
+                ):
+                    self._polish()
+        except Exception:
+            pass
+        return super().eventFilter(watched, event)
+
+
 class OptionsDialog(QtWidgets.QDialog):
     """Popup dialog with Basic and Advanced tabs for configuration."""
 
@@ -1484,6 +1728,18 @@ class OptionsDialog(QtWidgets.QDialog):
         backend_value = (initial_settings.separation.backend or "fv4").lower()
         self.backend.setCurrentIndex(max(0, self.backend.findData(backend_value)))
         form.addRow("Separation backend", self.backend)
+
+        # Fix Windows ComboBox dropdown chrome (square outline/shadow + sharp corners).
+        # Applies to:
+        #   - Device (Basic tab)
+        #   - Soft-embed method (Basic tab)
+        #   - Separation backend (Advanced tab)
+        self._combo_popup_fixers = [
+            _ComboPopupFixer(self.device_combo, radius=12),
+            _ComboPopupFixer(self.embed_method, radius=12),
+            _ComboPopupFixer(self.backend, radius=12),
+        ]
+
 
         self.sep_hz = QtWidgets.QSpinBox()
         self.sep_hz.setRange(8000, 96000)
@@ -1746,6 +2002,12 @@ class MainWindow(QtWidgets.QMainWindow):
         if icon and not icon.isNull():
             # Keep the logo at the same visual size, but with no extra border
             logo_pix = icon.pixmap(63, 63)
+            # QIcon.pixmap() can re-introduce transparent padding when scaling.
+            # Trim again so the visible logo sits closer to the title text.
+            try:
+                logo_pix = _trim_transparent_pixmap(logo_pix)
+            except Exception:
+                pass
             logo_label.setPixmap(logo_pix)
             logo_label.setFixedSize(logo_pix.size())
 
@@ -1757,7 +2019,7 @@ class MainWindow(QtWidgets.QMainWindow):
         title.setMargin(0)
         title.setIndent(0)
         # Completely kill padding/margins so text hugs the logo
-        title.setStyleSheet("margin: 0px; padding: 0px;")
+        title.setStyleSheet("margin: 0px; padding: 0px; margin-left: -4px;")
 
         # Hard 0px spacing between logo and text so they visually touch
         brand_row.setSpacing(0)
@@ -5002,6 +5264,43 @@ def _load_asset_movie(filename: str) -> Optional[QtGui.QMovie]:
             if movie.isValid():
                 return movie
     return None
+
+
+def _trim_transparent_pixmap(pixmap: QtGui.QPixmap) -> QtGui.QPixmap:
+    """Trim fully transparent rows/columns from a pixmap.
+
+    Useful because QIcon.pixmap() can add transparent padding when scaling.
+    """
+    if pixmap.isNull():
+        return pixmap
+
+    img = pixmap.toImage()
+    if img.isNull():
+        return pixmap
+
+    rect = img.rect()
+    left, right = rect.right(), rect.left()
+    top, bottom = rect.bottom(), rect.top()
+    found = False
+
+    for y in range(rect.top(), rect.bottom() + 1):
+        for x in range(rect.left(), rect.right() + 1):
+            if img.pixelColor(x, y).alpha() > 0:
+                found = True
+                if x < left:
+                    left = x
+                if x > right:
+                    right = x
+                if y < top:
+                    top = y
+                if y > bottom:
+                    bottom = y
+
+    if not found or left > right or top > bottom:
+        return pixmap
+
+    cropped = img.copy(left, top, right - left + 1, bottom - top + 1)
+    return QtGui.QPixmap.fromImage(cropped)
 
 
 def _load_app_icon() -> QtGui.QIcon:
