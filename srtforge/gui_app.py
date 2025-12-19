@@ -79,7 +79,7 @@ def add_shadow(
     effect = QtWidgets.QGraphicsDropShadowEffect(widget)
     effect.setBlurRadius(int(blur_radius))
     effect.setOffset(int(offset[0]), int(offset[1]))
-    effect.setColor(color or QtGui.QColor(15, 23, 42, 50))
+    effect.setColor(color or QtGui.QColor(0, 0, 0, 80))
     widget.setGraphicsEffect(effect)
 
 
@@ -2082,7 +2082,6 @@ class MainWindow(QtWidgets.QMainWindow):
             pass
         self.theme_toggle.toggled.connect(self._on_theme_toggled)
         actions_row.addWidget(self.theme_toggle)
-
         self.options_button = QtWidgets.QToolButton()
         self.options_button.setObjectName("OptionsButton")
         self.options_button.setCursor(pointer_cursor)
@@ -2641,32 +2640,53 @@ class MainWindow(QtWidgets.QMainWindow):
         self._log_zoom_delta = 0
         self._apply_log_font()
     def _apply_styles(self) -> None:
-        # Brand accent: Parakeet-style green for buttons and highlights
-        accent = QtGui.QColor("#16A34A")  # close to that Parakeet green
-        palette = self.palette()
+        """Apply theme palette + QSS.
 
+        Dark mode uses Discord-like neutrals (no blue contrast) + Srtforge green.
+        Dark mode background is always true-black (OLED-style).
+        """
+
+        # Brand accent ramp (green)
+        accent = QtGui.QColor("#16A34A")
+        accent_hover = QtGui.QColor("#22C55E")
+        accent_pressed = QtGui.QColor("#15803D")
+
+        # Discord-like dark neutrals (core set)
+        deep_black = "#000000"
+        app_bg_std = "#070709"
+        surface_bg = "#0c0c0e"
+        text_primary = "#e3e3e6"
+        text_secondary = "#9b9ca3"
+        text_muted = "#85868e"
+
+        # Depth overlays (alpha on top of surfaces)
+        border_hairline = "rgba(227,227,230,0.10)"
+        border_strong = "rgba(227,227,230,0.14)"
+        hover_overlay = "rgba(227,227,230,0.06)"
+        pressed_overlay = "rgba(227,227,230,0.10)"
+        green_select = "rgba(22,163,74,0.22)"
+        green_select_soft = "rgba(22,163,74,0.18)"
+        green_select_strong = "rgba(22,163,74,0.26)"
+        # ---- Palette --------------------------------------------------------
+        palette = self.palette()
         if self._dark_mode:
-            # ---- Dark (Slate) palette ----
-            # App background      #0F172A
-            # Card / queue bg     #1E293B-ish (we use cards via QSS)
-            # Primary text        #F1F5F9
-            # Secondary text      #94A3B8
-            palette.setColor(QtGui.QPalette.ColorRole.Window, QtGui.QColor("#0F172A"))
-            palette.setColor(QtGui.QPalette.ColorRole.Base, QtGui.QColor("#020617"))
-            palette.setColor(QtGui.QPalette.ColorRole.AlternateBase, QtGui.QColor("#020617"))
-            palette.setColor(QtGui.QPalette.ColorRole.Text, QtGui.QColor("#E5E7EB"))
-            palette.setColor(QtGui.QPalette.ColorRole.WindowText, QtGui.QColor("#F1F5F9"))
+            app_bg = deep_black
+            inset_bg = app_bg_std  # keep a subtle lifted inset even in OLED mode
+
+            palette.setColor(QtGui.QPalette.ColorRole.Window, QtGui.QColor(app_bg))
+            palette.setColor(QtGui.QPalette.ColorRole.Base, QtGui.QColor(inset_bg))
+            palette.setColor(QtGui.QPalette.ColorRole.AlternateBase, QtGui.QColor(surface_bg))
+            palette.setColor(QtGui.QPalette.ColorRole.Text, QtGui.QColor(text_primary))
+            palette.setColor(QtGui.QPalette.ColorRole.WindowText, QtGui.QColor(text_primary))
             palette.setColor(QtGui.QPalette.ColorRole.Button, accent)
-            palette.setColor(QtGui.QPalette.ColorRole.ButtonText, QtGui.QColor("#F9FAFB"))
+            # Better contrast on #16A34A with dark text
+            palette.setColor(QtGui.QPalette.ColorRole.ButtonText, QtGui.QColor(surface_bg))
             palette.setColor(QtGui.QPalette.ColorRole.Highlight, accent)
-            palette.setColor(QtGui.QPalette.ColorRole.ToolTipBase, QtGui.QColor("#020617"))
-            palette.setColor(QtGui.QPalette.ColorRole.ToolTipText, QtGui.QColor("#E5E7EB"))
+            palette.setColor(QtGui.QPalette.ColorRole.HighlightedText, QtGui.QColor(surface_bg))
+            palette.setColor(QtGui.QPalette.ColorRole.ToolTipBase, QtGui.QColor(surface_bg))
+            palette.setColor(QtGui.QPalette.ColorRole.ToolTipText, QtGui.QColor(text_primary))
         else:
-            # ---- Light palette ----
-            # App background      #F8FAFC
-            # Card / queue bg     #FFFFFF
-            # Primary text        #0F172A
-            # Secondary text      #64748B
+            # Light mode stays Win11-ish, but we remove remaining blue accents.
             palette.setColor(QtGui.QPalette.ColorRole.Window, QtGui.QColor("#F8FAFC"))
             palette.setColor(QtGui.QPalette.ColorRole.Base, QtGui.QColor("#FFFFFF"))
             palette.setColor(QtGui.QPalette.ColorRole.AlternateBase, QtGui.QColor("#F1F5F9"))
@@ -2675,6 +2695,7 @@ class MainWindow(QtWidgets.QMainWindow):
             palette.setColor(QtGui.QPalette.ColorRole.Button, accent)
             palette.setColor(QtGui.QPalette.ColorRole.ButtonText, QtGui.QColor("#FFFFFF"))
             palette.setColor(QtGui.QPalette.ColorRole.Highlight, accent)
+            palette.setColor(QtGui.QPalette.ColorRole.HighlightedText, QtGui.QColor("#FFFFFF"))
             palette.setColor(QtGui.QPalette.ColorRole.ToolTipBase, QtGui.QColor("#E5E7EB"))
             palette.setColor(QtGui.QPalette.ColorRole.ToolTipText, QtGui.QColor("#020617"))
 
@@ -2683,24 +2704,26 @@ class MainWindow(QtWidgets.QMainWindow):
         # Only use the Win11 .qss file as a base for light mode; in dark mode we fully override.
         base_qss = ""
         if not self._dark_mode:
-            base_qss = self._load_win11_stylesheet(accent) or ""
+            base_qss = self._load_win11_stylesheet(accent, accent_hover) or ""
 
-        lighter = QtGui.QColor(accent)
-        lighter = lighter.lighter(115)
-        darker = QtGui.QColor(accent)
-        darker = darker.darker(115)
+        # QSS expects these names
+        lighter = QtGui.QColor(accent_hover)
+        darker = QtGui.QColor(accent_pressed)
 
         if self._dark_mode:
-            # --- Dark mode QSS: no bright borders, rely on elevation + slate cards ---
+            app_bg = deep_black
+            inset_bg = app_bg_std
+
+            # --- Dark mode QSS (Discord-neutral + green accent) ---
             custom = f"""
             #MainWindow {{
-                background-color: #0F172A;
+                background-color: {app_bg};
             }}
 
-            /* Footer/status bar: keep a crisp separator line and remove per-item boxes */
+            /* Footer/status bar: crisp separator line and no framed items */
             QStatusBar {{
-                background-color: #0F172A;
-                border-top: 1px solid rgba(148, 163, 184, 0.22);
+                background-color: {app_bg};
+                border-top: 1px solid {border_hairline};
             }}
             QStatusBar::item {{
                 border: none;
@@ -2712,15 +2735,15 @@ class MainWindow(QtWidgets.QMainWindow):
             }}
 
             QLabel {{
-                color: #E5E7EB;
+                color: {text_primary};
             }}
             QLabel#HeaderLabel {{
-                color: #F9FAFB;
+                color: {text_primary};
                 font-size: 22px;
                 font-weight: 500;
             }}
             QLabel#EtaLabel {{
-                color: #94A3B8;
+                color: {text_secondary};
                 padding: 6px 10px;
             }}
             QLabel#QueueSummaryLabel {{
@@ -2731,13 +2754,13 @@ class MainWindow(QtWidgets.QMainWindow):
             }}
 
             #QueueCard {{
-                background-color: #020617;
+                background-color: {surface_bg};
                 border-radius: 16px;
                 border: none;
             }}
 
             #LogContainer {{
-                background-color: #020617;
+                background-color: {surface_bg};
                 border-radius: 16px;
                 border: none;
             }}
@@ -2748,26 +2771,28 @@ class MainWindow(QtWidgets.QMainWindow):
             }}
 
             QPlainTextEdit, QTextEdit {{
-                background-color: #020617;
-                color: #E5E7EB;
+                background-color: {inset_bg};
+                color: {text_primary};
                 border-radius: 12px;
-                border: 1px solid #020617;
+                border: 1px solid {border_hairline};
+                selection-background-color: {accent.name()};
+                selection-color: {surface_bg};
             }}
 
             QPlainTextEdit::viewport, QTextEdit::viewport {{
                 background: transparent;
             }}
 
-                        /* Console/log view (dark mode): text sits on the LogContainer card */
+            /* Console/log view (dark mode): text sits on the LogContainer card */
             QPlainTextEdit#LogView {{
                 background: transparent;
                 background-color: transparent;
                 border: none;
-                color: #E5E7EB;
+                color: {text_primary};
                 font-family: "Cascadia Code", Consolas, monospace;
                 padding: 10px;
                 selection-background-color: {accent.name()};
-                selection-color: #FFFFFF;
+                selection-color: {surface_bg};
             }}
             QPlainTextEdit#LogView::viewport {{
                 background: transparent;
@@ -2777,13 +2802,12 @@ class MainWindow(QtWidgets.QMainWindow):
                 border: none;
             }}
 
-
             /* Progress bars: queue footer + per-row */
             QProgressBar#FooterProgressBar,
             QProgressBar#QueueProgressBar {{
                 border-radius: 999px;
-                background-color: rgba(15, 23, 42, 0.9);
-                border: 1px solid rgba(148, 163, 184, 0.6);
+                background-color: {hover_overlay};
+                border: 1px solid rgba(227,227,230,0.12);
                 height: 10px;
                 padding: 0px;
                 text-align: center;
@@ -2795,7 +2819,7 @@ class MainWindow(QtWidgets.QMainWindow):
             }}
 
             QGroupBox {{
-                background-color: #020617;
+                background-color: {surface_bg};
                 border-radius: 16px;
                 border: none;
                 margin-top: 16px;
@@ -2804,7 +2828,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 subcontrol-origin: margin;
                 left: 16px;
                 padding: 4px 8px 4px 8px;
-                color: #E5E7EB;
+                color: {text_primary};
                 font-weight: 500;
             }}
 
@@ -2825,7 +2849,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 padding: 2px 8px;
             }}
             #EmbedHeader[checked="true"] {{
-                background-color: rgba(30, 64, 175, 0.75); /* dark blue-ish box */
+                background-color: {green_select_soft};
             }}
 
             /* Header contents: keep them flat on the pill */
@@ -2838,8 +2862,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 width: 16px;
                 height: 16px;
                 border-radius: 3px;
-                border: 1px solid #1F2937;
-                background: #020617;
+                border: 1px solid {border_strong};
+                background: {inset_bg};
                 margin-right: 6px;
             }}
             QCheckBox#EmbedCheckbox::indicator:checked {{
@@ -2859,15 +2883,15 @@ class MainWindow(QtWidgets.QMainWindow):
             }}
 
             #QueueList {{
-                background-color: #020617;
+                background-color: {surface_bg};
                 border-radius: 10px;
                 border: none;
             }}
             #QueueList QHeaderView::section {{
                 background-color: transparent;
-                color: #9CA3AF;
+                color: {text_secondary};
                 border: none;
-                border-right: 1px solid rgba(148, 163, 184, 0.35);
+                border-right: 1px solid {border_hairline};
                 padding: 4px 8px;
                 font-weight: 500;
             }}
@@ -2881,13 +2905,13 @@ class MainWindow(QtWidgets.QMainWindow):
                 min-height: 38px;  /* tall enough for the progress bar */
             }}
             #QueueList::item:hover:!selected {{
-                background-color: rgba(148, 163, 184, 0.18);
+                background-color: {hover_overlay};
             }}
             #QueueList::item:selected,
             #QueueList::item:selected:active,
             #QueueList::item:selected:!active {{
-                background-color: rgba(59, 130, 246, 0.35);
-                color: #E5E7EB;
+                background-color: {green_select};
+                color: {text_primary};
                 border: none;
                 outline: none;
             }}
@@ -2900,14 +2924,14 @@ class MainWindow(QtWidgets.QMainWindow):
 
             QPushButton, QToolButton {{
                 background-color: {accent.name()};
-                color: #F9FAFB;
+                color: {surface_bg};
                 border-radius: 8px;
                 padding: 6px 14px;
                 border: none;
             }}
             QPushButton:disabled, QToolButton:disabled {{
-                background-color: #1E293B;
-                color: #64748B;
+                background-color: rgba(227,227,230,0.12);
+                color: {text_muted};
             }}
             QPushButton:hover, QToolButton:hover {{
                 background-color: {lighter.name()};
@@ -2919,13 +2943,13 @@ class MainWindow(QtWidgets.QMainWindow):
             /* Ghost secondary actions: Remove / Clear */
             QPushButton#SecondaryButton {{
                 background-color: transparent;
-                color: #94A3B8;
+                color: {text_secondary};
                 border-radius: 8px;
-                border: 1px solid #1F2937;
+                border: 1px solid {border_hairline};
             }}
             QPushButton#SecondaryButton:disabled {{
-                color: #4B5563;
-                border: 1px solid #1F2937;
+                color: {text_muted};
+                border: 1px solid {border_hairline};
             }}
             QPushButton#SecondaryButton:hover {{
                 color: #FCA5A5;
@@ -2945,99 +2969,90 @@ class MainWindow(QtWidgets.QMainWindow):
                 max-height: 32px;
                 padding: 0;
                 border-radius: 16px;
-                background-color: transparent;   /* no solid blue block */
+                background-color: transparent;
                 border: none;
                 font-size: 20px;
-                color: #E5E7EB;                  /* slate-ish icon color */
+                color: {text_primary};
             }}
             QToolButton#ThemeToggle:hover,
             QToolButton#OptionsButton:hover {{
-                background-color: rgba(148, 163, 184, 0.24); /* light grey circle on hover */
+                background-color: {hover_overlay};
             }}
             QToolButton#ThemeToggle:pressed,
             QToolButton#OptionsButton:pressed {{
-                background-color: rgba(148, 163, 184, 0.32);
+                background-color: {pressed_overlay};
             }}
 
             /* Console pill in status bar (dark mode) */
             QToolButton#LogToggle {{
                 background-color: transparent;
-                color: #94A3B8;
+                color: {text_secondary};
                 border: none;
-                padding: 0;                 /* no internal button padding */
-                margin: 0;          /* small gap before the label */
+                padding: 0;
+                margin: 0;
             }}
             QToolButton#LogToggle:hover,
             QToolButton#LogToggle:pressed,
             QToolButton#LogToggle:checked {{
-                background-color: transparent;   /* pill handles hover/active */
-            }}
-
-            /* Remove highlight from the icon button inside the pill */
-            QToolButton#LogToggle,
-            QToolButton#LogToggle:hover,
-            QToolButton#LogToggle:pressed,
-            QToolButton#LogToggle:checked {{
-                background: transparent;
-                border: none;
+                background-color: transparent;
             }}
 
             #FooterConsoleTrigger {{
                 border-radius: 999px;
-                padding: 2px 10px;              /* pill height + horizontal breathing room */
+                padding: 2px 10px;
                 background-color: transparent;
                 border: none;
             }}
             #FooterConsoleTrigger:hover {{
-                background-color: rgba(148, 163, 184, 0.16);
+                background-color: {hover_overlay};
             }}
-
-            /* Subtle selected/open state (no jarring animation) */
+            /* Selected/open state */
             #FooterConsoleTrigger[checked="true"] {{
-                background-color: rgba(148, 163, 184, 0.22);
+                background-color: {green_select_soft};
             }}
             #FooterConsoleTrigger[checked="true"]:hover {{
-                background-color: rgba(148, 163, 184, 0.26);
+                background-color: {green_select_strong};
             }}
 
             QLabel#LogToggleLabel {{
-                color: #94A3B8;
+                color: {text_secondary};
             }}
             #FooterConsoleTrigger:hover QLabel#LogToggleLabel {{
-                color: #E5E7EB;
+                color: {text_primary};
             }}
             #FooterConsoleTrigger[checked="true"] QLabel#LogToggleLabel {{
-                color: #F9FAFB;
+                color: {text_primary};
             }}
 
             QLineEdit, QComboBox {{
-                background-color: #020617;
+                background-color: {inset_bg};
                 border-radius: 8px;
-                border: 1px solid #1E293B;
+                border: 1px solid {border_hairline};
                 padding: 4px 8px;
-                color: #E5E7EB;
+                color: {text_primary};
                 selection-background-color: {accent.name()};
+                selection-color: {surface_bg};
             }}
 
             QLabel#DropIcon {{
                 font-size: 56px;
-                color: rgba(148, 163, 184, 0.5);
+                color: rgba(227,227,230,0.38);
             }}
             QLabel#DropHint {{
-                color: #94A3B8;
+                color: {text_secondary};
             }}
 
             QScrollArea {{
-                background-color: #0F172A;
+                background-color: {app_bg};
                 border: none;
             }}
 
             #GlobalDropOverlay {{
-                background: rgba(15, 23, 42, 0.80);
+                background: rgba(0, 0, 0, 0.70);
             }}
             """
         else:
-            # --- Light mode QSS ---
+            # --- Light mode QSS (keep it clean + green/neutral, no blue) ---
             custom = f"""
             /* Footer/status bar: crisp separator + no framed items */
             QStatusBar {{
@@ -3080,6 +3095,36 @@ class MainWindow(QtWidgets.QMainWindow):
                 padding: 4px 8px;
             }}
 
+            /* Kill the last remaining blue-ish border from win11.qss in combo popups */
+            QComboBox QAbstractItemView {{
+                border-radius: 12px;
+                border: 1px solid #E2E8F0;
+                selection-background-color: {accent.name()};
+            }}
+
+            /* Top-right header icons: ghost buttons (light mode) */
+            QToolButton#ThemeToggle,
+            QToolButton#OptionsButton {{
+                min-width: 32px;
+                max-width: 32px;
+                min-height: 32px;
+                max-height: 32px;
+                padding: 0;
+                border-radius: 16px;
+                background-color: transparent;
+                border: none;
+                font-size: 20px;
+                color: #0F172A;
+            }}
+            QToolButton#ThemeToggle:hover,
+            QToolButton#OptionsButton:hover {{
+                background-color: rgba(0,0,0,0.05);
+            }}
+            QToolButton#ThemeToggle:pressed,
+            QToolButton#OptionsButton:pressed {{
+                background-color: rgba(0,0,0,0.08);
+            }}
+
             QGroupBox {{
                 margin-top: 12px;
                 background: #FFFFFF;
@@ -3109,7 +3154,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 padding: 2px 8px;
             }}
             #EmbedHeader[checked="true"] {{
-                background-color: rgba(59, 130, 246, 0.08);  /* soft blue pill */
+                background-color: rgba(22, 163, 74, 0.08);
             }}
 
             /* Header contents: keep a visible checkbox so it's clearly clickable */
@@ -3179,7 +3224,7 @@ class MainWindow(QtWidgets.QMainWindow):
             #QueueList::item:selected,
             #QueueList::item:selected:active,
             #QueueList::item:selected:!active {{
-                background: rgba(59,130,246,0.14);
+                background: rgba(22, 163, 74, 0.14);
                 color: #111827;
                 border: none;
                 outline: none;
@@ -3197,10 +3242,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 padding: 6px 10px;
             }}
             #QueueSummaryLabel {{
-                background-color: transparent;
-                border: none;
-                padding: 0px;
-                margin: 0px;
+                color: #475569;
             }}
 
             QPushButton, QToolButton {{
@@ -3241,86 +3283,12 @@ class MainWindow(QtWidgets.QMainWindow):
                 background-color: #FEE2E2;
             }}
 
-            /* Top-right header icons: ghost buttons */
-            QToolButton#ThemeToggle,
-            QToolButton#OptionsButton {{
-                min-width: 32px;
-                max-width: 32px;
-                min-height: 32px;
-                max-height: 32px;
-                padding: 0;
-                border-radius: 16px;
-                background-color: transparent;
-                border: none;
-                font-size: 20px;
-                color: #475569;                 /* slate/dark grey */
-            }}
-            QToolButton#ThemeToggle:hover,
-            QToolButton#OptionsButton:hover {{
-                background-color: rgba(148, 163, 184, 0.20); /* light grey circle on hover */
-            }}
-            QToolButton#ThemeToggle:pressed,
-            QToolButton#OptionsButton:pressed {{
-                background-color: rgba(148, 163, 184, 0.30);
-            }}
-
-            /* Console pill in status bar (light mode) */
-            QToolButton#LogToggle {{
-                background-color: transparent;
-                color: #64748B;
-                border: none;
-                padding: 0;                 /* let the pill own the padding */
-                margin: 0 4px 0 0;
-            }}
-            QToolButton#LogToggle:hover,
-            QToolButton#LogToggle:pressed,
-            QToolButton#LogToggle:checked {{
-                background-color: transparent;   /* no extra box on hover */
-            }}
-
-            /* Remove highlight from the icon button inside the pill */
-            QToolButton#LogToggle,
-            QToolButton#LogToggle:hover,
-            QToolButton#LogToggle:pressed,
-            QToolButton#LogToggle:checked {{
-                background: transparent;
-                border: none;
-            }}
-
-            #FooterConsoleTrigger {{
-                border-radius: 999px;
-                padding: 2px 10px;
-                background-color: transparent;
-                border: none;
-            }}
-            #FooterConsoleTrigger:hover {{
-                background-color: rgba(148, 163, 184, 0.12);
-            }}
-
-            /* Subtle selected/open state (no jarring animation) */
-            #FooterConsoleTrigger[checked="true"] {{
-                background-color: rgba(148, 163, 184, 0.18);
-            }}
-            #FooterConsoleTrigger[checked="true"]:hover {{
-                background-color: rgba(148, 163, 184, 0.22);
-            }}
-
-            QLabel#LogToggleLabel {{
-                color: #64748B;
-            }}
-            #FooterConsoleTrigger:hover QLabel#LogToggleLabel {{
-                color: #0F172A;
-            }}
-            #FooterConsoleTrigger[checked="true"] QLabel#LogToggleLabel {{
-                color: #1D4ED8;
-            }}
-
             QLabel#DropIcon {{
                 font-size: 56px;
-                color: rgba(148, 163, 184, 0.5);
+                color: rgba(15, 23, 42, 0.28);
             }}
             QLabel#DropHint {{
-                color: #94A3B8;
+                color: #64748B;
             }}
 
             #LogContainer {{
@@ -3347,7 +3315,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 background: transparent;
             }}
 
-                        /* Console/log view (light mode): plain text on the LogContainer card */
+            /* Console/log view (light mode): plain text on the LogContainer card */
             QPlainTextEdit#LogView {{
                 background: transparent;
                 background-color: transparent;
@@ -3366,7 +3334,6 @@ class MainWindow(QtWidgets.QMainWindow):
                 border: none;
             }}
 
-
             /* Progress bars: queue footer + per-row */
             QProgressBar#FooterProgressBar,
             QProgressBar#QueueProgressBar {{
@@ -3384,27 +3351,19 @@ class MainWindow(QtWidgets.QMainWindow):
             }}
             """
 
-        # ---- Per-row "Open…" button + its menu --------------------------------
+        # ---- Per-row "Open…" button + its menu -------------------------------
         if self._dark_mode:
-            open_text = "#E5E7EB"
-            open_bg = "rgba(15, 23, 42, 0.85)"
-            open_border = "rgba(148, 163, 184, 0.60)"
-            open_hover = "rgba(59, 130, 246, 0.45)"
-            open_disabled = "#4B5563"
-            menu_bg = "#020617"
-            menu_border = "#111827"
-            menu_item = "#E5E7EB"
-            menu_item_hover = "rgba(59, 130, 246, 0.40)"
+            menu_bg = surface_bg
+            menu_border = border_hairline
+            menu_item = text_primary
+            menu_item_hover = green_select_soft
+            menu_sep = border_hairline
         else:
-            open_text = "#0F172A"
-            open_bg = "#FFFFFF"
-            open_border = "#CBD5E1"
-            open_hover = "rgba(59, 130, 246, 0.10)"
-            open_disabled = "#CBD5E1"
             menu_bg = "#FFFFFF"
             menu_border = "#E2E8F0"
             menu_item = "#0F172A"
-            menu_item_hover = "rgba(59, 130, 246, 0.12)"
+            menu_item_hover = "rgba(22, 163, 74, 0.12)"
+            menu_sep = "#E2E8F0"
 
         custom += f"""
         /* Output column: icon‑only GIF, no pill/rectangle */
@@ -3437,7 +3396,7 @@ class MainWindow(QtWidgets.QMainWindow):
             width: 0px;
         }}
 
-        /* View menu styling: tighter icon/text gap & slightly larger icons */
+        /* View menu styling */
         QMenu#QueueOpenMenu {{
             background-color: {menu_bg};
             border: 1px solid {menu_border};
@@ -3451,28 +3410,28 @@ class MainWindow(QtWidgets.QMainWindow):
             font-size: 13px;
         }}
         QMenu#QueueOpenMenu::icon {{
-            padding-left: 6px;   /* small indent for icon */
-            padding-right: 4px;  /* minimal gap between icon and text */
+            padding-left: 6px;
+            padding-right: 4px;
         }}
         QMenu#QueueOpenMenu::item:selected {{
             background-color: {menu_item_hover};
         }}
         QMenu#QueueOpenMenu::separator {{
             height: 1px;
-            background: rgba(148, 163, 184, 0.40);
+            background: {menu_sep};
             margin: 4px 10px;
         }}
         """
 
-        # ---- Metadata column chips ---------------------------------------------
+        # ---- Metadata column chips -----------------------------------------
         if self._dark_mode:
-            chip_text = "#E5E7EB"
-            chip_bg = "rgba(148, 163, 184, 0.14)"
-            chip_border = "rgba(148, 163, 184, 0.30)"
+            chip_text = text_primary
+            chip_bg = "rgba(227,227,230,0.08)"
+            chip_border = "rgba(227,227,230,0.14)"
         else:
             chip_text = "#0F172A"
-            chip_bg = "rgba(148, 163, 184, 0.22)"
-            chip_border = "rgba(148, 163, 184, 0.40)"
+            chip_bg = "rgba(0,0,0,0.06)"
+            chip_border = "rgba(0,0,0,0.10)"
 
         custom += f"""
         QWidget#MetaContainer {{
@@ -3492,7 +3451,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # Keep the console-toggle icon readable (avoid the "solid black square" look).
         if hasattr(self, "log_toggle_button"):
-            icon_color = QtGui.QColor("#E5E7EB") if self._dark_mode else QtGui.QColor("#475569")
+            icon_color = QtGui.QColor(text_primary) if self._dark_mode else QtGui.QColor("#475569")
             icon = _load_asset_icon(
                 "Command_Prompt.png",
                 QtWidgets.QStyle.StandardPixmap.SP_ComputerIcon,
@@ -3519,22 +3478,34 @@ class MainWindow(QtWidgets.QMainWindow):
             self.theme_toggle.setText("🌙")
             self.theme_toggle.setToolTip("Switch to dark mode")
 
+
+
     def _on_theme_toggled(self, checked: bool) -> None:
         """Switch between light and dark palettes."""
         self._dark_mode = bool(checked)
         self._update_theme_toggle_label()
         self._apply_styles()
 
-    def _load_win11_stylesheet(self, accent: QtGui.QColor) -> Optional[str]:
+
+
+    def _load_win11_stylesheet(
+        self,
+        accent: QtGui.QColor,
+        accent_hover: Optional[QtGui.QColor] = None,
+    ) -> Optional[str]:
+        """Load the bundled Win11 QSS and substitute our green accent."""
         try:
             data = resources.files("srtforge.assets.styles").joinpath("win11.qss").read_text(encoding="utf-8")
         except Exception:  # pragma: no cover - packaging guard
             return None
-        lighter = QtGui.QColor(accent)
-        lighter = lighter.lighter(115)
+
+        hover = QtGui.QColor(accent_hover or accent)
+        if accent_hover is None:
+            hover = hover.lighter(115)
+
         return (
             data.replace("{ACCENT_COLOR}", accent.name())
-            .replace("{ACCENT_COLOR_LIGHT}", lighter.name())
+            .replace("{ACCENT_COLOR_LIGHT}", hover.name())
         )
 
     # ---- persistent options ------------------------------------------------------
@@ -3566,7 +3537,6 @@ class MainWindow(QtWidgets.QMainWindow):
             finally:
                 self.theme_toggle.blockSignals(block)
         self._update_theme_toggle_label()
-
     def _save_persistent_options(self) -> None:
         """Persist current GUI options for the next run."""
         s = self._qsettings
@@ -3588,7 +3558,6 @@ class MainWindow(QtWidgets.QMainWindow):
         # NEW
         s.setValue("srt_next_to_media", bool(self._basic_options.get("srt_next_to_media", False)))
         s.setValue("dark_mode", bool(getattr(self, "_dark_mode", False)))
-
         s.sync()
 
     # ---- runtime helpers ---------------------------------------------------------
