@@ -1991,17 +1991,27 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # Centered branding (bigger logo + title)
         brand_row = QtWidgets.QHBoxLayout()
-        brand_row.setContentsMargins(0, 0, 0, 0)
+        # Tiny vertical padding so the logo/title don't touch the titlebar
+        # or the queue card (keep this subtle, Win11-style).
+        brand_row.setContentsMargins(0, 4, 0, 4)
+        brand_row.setSpacing(0)
+
 
         logo_label = QtWidgets.QLabel()
         logo_label.setContentsMargins(0, 0, 0, 0)
         # Remove all padding/margins around the logo so the pixmap box is tight
         logo_label.setStyleSheet("margin: 0px; padding: 0px;")
 
+        # Jellyfin-style branding: logo slightly larger than text with a small gap.
+        LOGO_SIZE = 72
+        LOGO_TEXT_GAP = 10
+
+        has_logo = False
+
         icon = getattr(self, "_app_icon", _load_app_icon())
         if icon and not icon.isNull():
             # Keep the logo at the same visual size, but with no extra border
-            logo_pix = icon.pixmap(63, 63)
+            logo_pix = icon.pixmap(LOGO_SIZE, LOGO_SIZE)
             # QIcon.pixmap() can re-introduce transparent padding when scaling.
             # Trim again so the visible logo sits closer to the title text.
             try:
@@ -2009,9 +2019,30 @@ class MainWindow(QtWidgets.QMainWindow):
             except Exception:
                 pass
             logo_label.setPixmap(logo_pix)
-            logo_label.setFixedSize(logo_pix.size())
+
+            has_logo = True
+
+            # HiDPI fix: QIcon.pixmap() may return a device-pixel-scaled pixmap.
+            # QLabel geometry is in device-independent pixels, so size the label
+            # using the pixmap's device-independent size to avoid fake 'padding'.
+            try:
+                dpr = float(logo_pix.devicePixelRatioF())
+            except Exception:
+                try:
+                    dpr = float(logo_pix.devicePixelRatio())
+                except Exception:
+                    dpr = 1.0
+            if not dpr or dpr <= 0:
+                dpr = 1.0
+            w = int(round(logo_pix.width() / dpr))
+            h = int(round(logo_pix.height() / dpr))
+            if w > 0 and h > 0:
+                logo_label.setFixedSize(w, h)
+            logo_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
 
         brand_row.addWidget(logo_label, 0, QtCore.Qt.AlignVCenter)
+        if has_logo:
+            brand_row.addSpacing(LOGO_TEXT_GAP)
 
         title = QtWidgets.QLabel("SrtForge\nStudio")
         title.setObjectName("HeaderLabel")
@@ -2019,10 +2050,8 @@ class MainWindow(QtWidgets.QMainWindow):
         title.setMargin(0)
         title.setIndent(0)
         # Completely kill padding/margins so text hugs the logo
-        title.setStyleSheet("margin: 0px; padding: 0px; margin-left: -4px;")
+        title.setStyleSheet("margin: 0px; padding: 0px;")
 
-        # Hard 0px spacing between logo and text so they visually touch
-        brand_row.setSpacing(0)
         brand_row.addWidget(title, 0, QtCore.Qt.AlignVCenter)
 
         brand_row.addStretch()
