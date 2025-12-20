@@ -25,7 +25,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 from .config import DEFAULT_OUTPUT_SUFFIX
 from .logging import LATEST_LOG, LOGS_DIR
-from .settings import settings, CONFIG_ENV_VAR
+from .settings import settings, CONFIG_ENV_VAR, load_settings
 from .win11_backdrop import apply_win11_look, get_windows_accent_qcolor
 
 
@@ -5032,7 +5032,24 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _open_options_dialog(self) -> None:
         initial_basic = dict(self._basic_options)
-        dialog = OptionsDialog(parent=self, initial_basic=initial_basic, initial_settings=settings)
+        initial_settings = settings
+
+        # The Options dialog should reflect the *current* session configuration.
+        #
+        # We write a session YAML (self._runtime_config_path) whenever the user
+        # clicks OK in Options and also when restoring persisted tuning settings.
+        # When re-opening Options we must load from that YAML so Advanced/Performance
+        # controls don't snap back to global defaults (e.g. GPU limit -> 100%).
+        if self._runtime_config_path:
+            try:
+                runtime_path = Path(self._runtime_config_path)
+                if runtime_path.exists():
+                    initial_settings = load_settings(runtime_path)
+            except Exception:
+                # Never fail to open Options just because loading a session YAML failed.
+                initial_settings = settings
+
+        dialog = OptionsDialog(parent=self, initial_basic=initial_basic, initial_settings=initial_settings)
         if dialog.exec() != QtWidgets.QDialog.Accepted:
             return
 
