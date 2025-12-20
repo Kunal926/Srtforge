@@ -94,6 +94,10 @@ class ParakeetSettings:
     # priority CUDA stream during inference so the desktop stays responsive.
     gpu_limit_percent: int = 100
 
+    # When enabled, Parakeet inference runs on a low-priority CUDA stream to improve
+    # desktop responsiveness on display-attached GPUs. This is independent of gpu_limit_percent.
+    use_low_priority_cuda_stream: bool = False
+
 
 @dataclass(slots=True)
 class AppSettings:
@@ -154,16 +158,25 @@ def load_settings(path: Optional[Path] = None) -> AppSettings:
         else:
             config_path = PACKAGE_ROOT / DEFAULT_CONFIG_FILENAME
     config = AppSettings()
+    missing_low_pri_key = True
     if config_path and Path(config_path).exists():
         with open(config_path, "r", encoding="utf8") as handle:
-            payload = yaml.safe_load(handle) or {}
-        if isinstance(payload, dict):
-            _merge_dataclass(config, payload)
+            loaded = yaml.safe_load(handle) or {}
+        if isinstance(loaded, dict):
+            parakeet_payload = loaded.get("parakeet") if isinstance(loaded.get("parakeet"), dict) else {}
+            missing_low_pri_key = not bool(parakeet_payload and "use_low_priority_cuda_stream" in parakeet_payload)
+            _merge_dataclass(config, loaded)
+
     # Ensure FV4 paths default to package data when left relative
     config.separation.fv4.cfg = _resolve_path(config.separation.fv4.cfg)
     config.separation.fv4.ckpt = _resolve_path(config.separation.fv4.ckpt)
     config.paths.temp_dir = _resolve_path(config.paths.temp_dir)
     config.paths.output_dir = _resolve_path(config.paths.output_dir)
+
+    # Backward compatibility: older configs coupled gpu_limit_percent<100 to low-priority streams.
+    if missing_low_pri_key and int(getattr(config.parakeet, "gpu_limit_percent", 100) or 100) < 100:
+        config.parakeet.use_low_priority_cuda_stream = True
+
     return config
 
 
