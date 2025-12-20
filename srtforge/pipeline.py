@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import shutil
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterable, Optional
@@ -56,6 +56,9 @@ class PipelineConfig:
     ffmpeg_prefer_center: bool = settings.ffmpeg.prefer_center
     force_float32: bool = settings.parakeet.force_float32
     prefer_gpu: bool = settings.parakeet.prefer_gpu
+    rel_pos_local_attn: list[int] = field(default_factory=lambda: list(settings.parakeet.rel_pos_local_attn))
+    subsampling_conv_chunking: bool = settings.parakeet.subsampling_conv_chunking
+    gpu_limit_percent: int = settings.parakeet.gpu_limit_percent
     allow_untagged_english: bool = settings.separation.allow_untagged_english
 
 
@@ -197,6 +200,9 @@ class Pipeline:
                             nemo_local=nemo_local,
                             force_float32=self.config.force_float32,
                             prefer_gpu=self.config.prefer_gpu,
+                            rel_pos_local_attn=self.config.rel_pos_local_attn,
+                            subsampling_conv_chunking=self.config.subsampling_conv_chunking,
+                            gpu_limit_percent=self.config.gpu_limit_percent,
                             run_logger=run_logger,
                         )
 
