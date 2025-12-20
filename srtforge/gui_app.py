@@ -1423,7 +1423,9 @@ class _ComboPopupFixer(QtCore.QObject):
 
         pal = self._combo.palette()
 
-        bg = _qcolor_to_rgba(pal.color(QtGui.QPalette.ColorRole.Base))
+        # Use AlternateBase so the dropdown matches our "surface" color (queue/menu)
+        # instead of the inset field background.
+        bg = _qcolor_to_rgba(pal.color(QtGui.QPalette.ColorRole.AlternateBase))
         text = _qcolor_to_rgba(pal.color(QtGui.QPalette.ColorRole.Text))
         sel_bg = _qcolor_to_rgba(pal.color(QtGui.QPalette.ColorRole.Highlight))
         sel_text = _qcolor_to_rgba(pal.color(QtGui.QPalette.ColorRole.HighlightedText))
@@ -1545,11 +1547,14 @@ class OptionsDialog(QtWidgets.QDialog):
 
     def __init__(self, *, parent=None, initial_basic: dict, initial_settings) -> None:
         super().__init__(parent)
+        # Helps QSS target the Options dialog without affecting native/system dialogs.
+        self.setObjectName("OptionsDialog")
         self.setWindowTitle("Options")
         self.resize(760, 520)
         self._eta_reset_requested = False
         layout = QtWidgets.QVBoxLayout(self)
         self.tabs = QtWidgets.QTabWidget(self)
+        self.tabs.setObjectName("OptionsTabs")
         layout.addWidget(self.tabs)
 
         # ----- Basic tab (mirrors main window) ---------------------------------
@@ -2737,7 +2742,6 @@ class MainWindow(QtWidgets.QMainWindow):
         """Apply theme palette + QSS.
 
         Dark mode uses Discord-like neutrals (no blue contrast) + Srtforge green.
-        Dark mode background is always true-black (OLED-style).
         """
 
         # Brand accent ramp (green)
@@ -2746,9 +2750,10 @@ class MainWindow(QtWidgets.QMainWindow):
         accent_pressed = QtGui.QColor("#15803D")
 
         # Discord-like dark neutrals (core set)
-        deep_black = "#000000"
-        # Even darker OLED-friendly cards/containers
-        surface_bg = "#070709"  # queue + log card surfaces
+        # Dark mode background (requested): #0C0C0E
+        deep_black = "#0C0C0E"
+        # Card/containers surface (match Queue + Options dialog)
+        surface_bg = "#0C0C0E"
         app_bg_std = "#060608"  # inset fields (slightly darker for depth)
         text_primary = "#e3e3e6"
         text_secondary = "#9b9ca3"
@@ -2813,6 +2818,38 @@ class MainWindow(QtWidgets.QMainWindow):
             custom = f"""
             #MainWindow {{
                 background-color: {app_bg};
+            }}
+
+            /* Options dialog: match Queue surface */
+            QDialog#OptionsDialog {{
+                background-color: {surface_bg};
+            }}
+            QDialog#OptionsDialog QTabWidget::pane {{
+                background-color: {surface_bg};
+                border: 1px solid {border_hairline};
+                border-radius: 12px;
+                top: -1px;
+            }}
+            QDialog#OptionsDialog QWidget#qt_tabwidget_stackedwidget {{
+                background-color: {surface_bg};
+                border-radius: 12px;
+            }}
+            QDialog#OptionsDialog QTabBar::tab {{
+                background-color: {inset_bg};
+                color: {text_secondary};
+                border: 1px solid {border_hairline};
+                border-bottom: none;
+                padding: 6px 14px;
+                margin-right: 4px;
+                border-top-left-radius: 10px;
+                border-top-right-radius: 10px;
+            }}
+            QDialog#OptionsDialog QTabBar::tab:selected {{
+                background-color: {surface_bg};
+                color: {text_primary};
+            }}
+            QDialog#OptionsDialog QTabBar::tab:hover:!selected {{
+                background-color: {hover_overlay};
             }}
 
             /* Keep sizing identical to light mode */
