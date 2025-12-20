@@ -59,6 +59,7 @@ class PipelineConfig:
     rel_pos_local_attn: list[int] = field(default_factory=lambda: list(settings.parakeet.rel_pos_local_attn))
     subsampling_conv_chunking: bool = settings.parakeet.subsampling_conv_chunking
     gpu_limit_percent: int = settings.parakeet.gpu_limit_percent
+    use_low_priority_cuda_stream: bool = settings.parakeet.use_low_priority_cuda_stream
     allow_untagged_english: bool = settings.separation.allow_untagged_english
 
 
@@ -203,6 +204,7 @@ class Pipeline:
                             rel_pos_local_attn=self.config.rel_pos_local_attn,
                             subsampling_conv_chunking=self.config.subsampling_conv_chunking,
                             gpu_limit_percent=self.config.gpu_limit_percent,
+                            use_low_priority_cuda_stream=self.config.use_low_priority_cuda_stream,
                             run_logger=run_logger,
                         )
 
