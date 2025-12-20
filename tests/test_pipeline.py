@@ -67,6 +67,7 @@ def test_pipeline_executes_parakeet_steps(tmp_path, monkeypatch):
         rel_pos_local_attn,
         subsampling_conv_chunking: bool,
         gpu_limit_percent: int,
+        use_low_priority_cuda_stream: bool,
         run_logger=None,
     ):
         outputs.append(
@@ -80,6 +81,7 @@ def test_pipeline_executes_parakeet_steps(tmp_path, monkeypatch):
                 "rel_pos_local_attn": rel_pos_local_attn,
                 "subsampling_conv_chunking": subsampling_conv_chunking,
                 "gpu_limit_percent": gpu_limit_percent,
+                "use_low_priority_cuda_stream": use_low_priority_cuda_stream,
             }
         )
         if run_logger is not None:
