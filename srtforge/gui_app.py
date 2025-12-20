@@ -1766,7 +1766,18 @@ class OptionsDialog(QtWidgets.QDialog):
             "When set below 100%, Srtforge will attempt to keep the desktop responsive by limiting the CUDA allocator "
             "memory fraction and running inference on a low-priority CUDA stream."
         )
-        perf_form.addRow("GPU limit (best effort)", self.gpu_limit_spin)
+        perf_form.addRow("VRAM limit (best effort)", self.gpu_limit_spin)
+
+        # Low-priority CUDA stream (independent of VRAM limit)
+        self.low_pri_cuda_stream = QtWidgets.QCheckBox()
+        self.low_pri_cuda_stream.setChecked(
+            bool(getattr(initial_settings.parakeet, "use_low_priority_cuda_stream", False))
+        )
+        self.low_pri_cuda_stream.setToolTip(
+            "Run Parakeet inference on a low-priority CUDA stream so the desktop stays responsive. "
+            "This is independent of the VRAM limit. Default: Off."
+        )
+        perf_form.addRow("Low-priority CUDA stream", self.low_pri_cuda_stream)
 
         self.tabs.addTab(perf, "Performance")
 
@@ -1915,6 +1926,7 @@ class OptionsDialog(QtWidgets.QDialog):
                 "rel_pos_local_attn": [int(self.local_attn_left.value()), int(self.local_attn_right.value())],
                 "subsampling_conv_chunking": self.subsampling_conv_chunking.isChecked(),
                 "gpu_limit_percent": int(self.gpu_limit_spin.value()),
+                "use_low_priority_cuda_stream": self.low_pri_cuda_stream.isChecked(),
             },
         }
 
@@ -3609,6 +3621,18 @@ class MainWindow(QtWidgets.QMainWindow):
         """Switch between light and dark palettes."""
         self._dark_mode = bool(checked)
         self._update_theme_toggle_label()
+        # Restore persisted Advanced/Performance tuning into a session YAML so CLI runs inherit it.
+        persisted = self._load_persisted_tuning_payload()
+        if persisted is not None:
+            try:
+                if self._runtime_config_path:
+                    try:
+                        os.unlink(self._runtime_config_path)
+                    except OSError:
+                        pass
+                self._runtime_config_path = self._write_runtime_yaml(persisted)
+            except Exception:
+                pass
         self._apply_styles()
 
 
@@ -3662,6 +3686,18 @@ class MainWindow(QtWidgets.QMainWindow):
             finally:
                 self.theme_toggle.blockSignals(block)
         self._update_theme_toggle_label()
+        # Restore persisted Advanced/Performance tuning into a session YAML so CLI runs inherit it.
+        persisted = self._load_persisted_tuning_payload()
+        if persisted is not None:
+            try:
+                if self._runtime_config_path:
+                    try:
+                        os.unlink(self._runtime_config_path)
+                    except OSError:
+                        pass
+                self._runtime_config_path = self._write_runtime_yaml(persisted)
+            except Exception:
+                pass
     def _save_persistent_options(self) -> None:
         """Persist current GUI options for the next run."""
         s = self._qsettings
@@ -3684,6 +3720,78 @@ class MainWindow(QtWidgets.QMainWindow):
         s.setValue("srt_next_to_media", bool(self._basic_options.get("srt_next_to_media", False)))
         s.setValue("dark_mode", bool(getattr(self, "_dark_mode", False)))
         s.sync()
+
+
+    def _persist_tuning_settings(self, payload: dict) -> None:
+        """Persist Advanced/Performance settings so they survive app restarts."""
+        s = self._qsettings
+        try:
+            # Advanced
+            paths = payload.get("paths") or {}
+            ffmpeg = payload.get("ffmpeg") or {}
+            sep = payload.get("separation") or {}
+            par = payload.get("parakeet") or {}
+            s.setValue("adv_output_dir", paths.get("output_dir") or "")
+            s.setValue("adv_temp_dir", paths.get("temp_dir") or "")
+            s.setValue("adv_sep_backend", sep.get("backend") or "fv4")
+            s.setValue("adv_sep_hz", int(sep.get("sep_hz") or 48000))
+            s.setValue("adv_sep_prefer_center", bool(sep.get("prefer_center")))
+            s.setValue("adv_allow_untagged", bool(sep.get("allow_untagged_english")))
+            s.setValue("adv_ff_prefer_center", bool(ffmpeg.get("prefer_center")))
+            s.setValue("adv_filter_chain", str(ffmpeg.get("filter_chain") or ""))
+            # Performance
+            s.setValue("perf_force_f32", bool(par.get("force_float32")))
+            attn = par.get("rel_pos_local_attn") or [768, 768]
+            if isinstance(attn, (list, tuple)) and len(attn) >= 2:
+                s.setValue("perf_attn_left", int(attn[0]))
+                s.setValue("perf_attn_right", int(attn[1]))
+            s.setValue("perf_subsampling_chunk", bool(par.get("subsampling_conv_chunking")))
+            s.setValue("perf_vram_limit", int(par.get("gpu_limit_percent") or 100))
+            s.setValue("perf_low_pri_stream", bool(par.get("use_low_priority_cuda_stream")))
+            s.sync()
+        except Exception:
+            # Persistence should never crash the app.
+            pass
+
+    def _load_persisted_tuning_payload(self) -> Optional[dict]:
+        """Return persisted Advanced/Performance settings as a YAML payload, or None if none exist."""
+        s = self._qsettings
+        # Treat presence of at least one key as "has tuning".
+        if not s.contains("adv_output_dir") and not s.contains("perf_vram_limit"):
+            return None
+        try:
+            gpu_pref = bool(self._basic_options.get("prefer_gpu", True))
+            payload = {
+                "paths": {
+                    "temp_dir": (s.value("adv_temp_dir", "", type=str) or "").strip() or None,
+                    "output_dir": (s.value("adv_output_dir", "", type=str) or "").strip() or None,
+                },
+                "ffmpeg": {
+                    "prefer_center": s.value("adv_ff_prefer_center", False, type=bool),
+                    "filter_chain": s.value("adv_filter_chain", settings.ffmpeg.filter_chain, type=str),
+                },
+                "separation": {
+                    "backend": s.value("adv_sep_backend", settings.separation.backend, type=str),
+                    "sep_hz": int(s.value("adv_sep_hz", settings.separation.sep_hz, type=int)),
+                    "prefer_center": s.value("adv_sep_prefer_center", settings.separation.prefer_center, type=bool),
+                    "prefer_gpu": gpu_pref,
+                    "allow_untagged_english": s.value("adv_allow_untagged", settings.separation.allow_untagged_english, type=bool),
+                },
+                "parakeet": {
+                    "force_float32": s.value("perf_force_f32", settings.parakeet.force_float32, type=bool),
+                    "prefer_gpu": gpu_pref,
+                    "rel_pos_local_attn": [
+                        int(s.value("perf_attn_left", 768, type=int)),
+                        int(s.value("perf_attn_right", 768, type=int)),
+                    ],
+                    "subsampling_conv_chunking": s.value("perf_subsampling_chunk", False, type=bool),
+                    "gpu_limit_percent": int(s.value("perf_vram_limit", 100, type=int)),
+                    "use_low_priority_cuda_stream": s.value("perf_low_pri_stream", False, type=bool),
+                },
+            }
+            return payload
+        except Exception:
+            return None
 
     # ---- runtime helpers ---------------------------------------------------------
     def _update_tool_status(self) -> None:
@@ -4939,6 +5047,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 pass
         self._runtime_config_path = self._write_runtime_yaml(payload)
         self._append_log(f"Using custom options for this session ({self._runtime_config_path})")
+        self._persist_tuning_settings(payload)
 
         if reset_eta:
             try:
