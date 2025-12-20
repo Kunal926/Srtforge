@@ -2267,10 +2267,14 @@ class MainWindow(QtWidgets.QMainWindow):
         card_layout.addLayout(action_bar)
 
         # Center: stacked empty state vs queue list
+        # Helps QSS target the stack so it stays transparent inside the card.
         self.queue_stack = QtWidgets.QStackedWidget()
+        self.queue_stack.setObjectName("QueueStack")
 
         # Empty drag & drop state
         self.queue_placeholder = QtWidgets.QWidget()
+        # Helps QSS target the placeholder so it stays transparent inside the card.
+        self.queue_placeholder.setObjectName("QueuePlaceholder")
         ph_layout = QtWidgets.QVBoxLayout(self.queue_placeholder)
         ph_layout.addStretch()
 
@@ -2897,7 +2901,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
             /* Footer/status bar: crisp separator line and no framed items */
             QStatusBar {{
-                background-color: {app_bg};
+                background-color: #000000;
                 border-top: 1px solid {border_hairline};
             }}
             QStatusBar::item {{
@@ -2929,13 +2933,20 @@ class MainWindow(QtWidgets.QMainWindow):
             }}
 
             #QueueCard {{
-                background-color: {surface_bg};
+                background-color: {inset_bg};
                 border-radius: 16px;
                 border: 1px solid {border_hairline};
             }}
 
+            /* Keep internal queue stack/placeholder transparent so QueueCard shows through */
+            #QueueStack, #QueuePlaceholder {{
+                background: transparent;
+                background-color: transparent;
+                border: none;
+            }}
+
             #LogContainer {{
-                background-color: {surface_bg};
+                background-color: {inset_bg};
                 border-radius: 16px;
                 border: 1px solid {border_hairline};
             }}
@@ -2950,6 +2961,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 color: {text_primary};
                 border-radius: 12px;
                 border: 1px solid {border_hairline};
+                padding: 6px 10px;
                 selection-background-color: {accent.name()};
                 selection-color: {surface_bg};
             }}
@@ -2962,6 +2974,7 @@ class MainWindow(QtWidgets.QMainWindow):
             QCheckBox {{
                 color: {text_primary};
                 spacing: 6px;
+                padding: 4px 0;
             }}
             QCheckBox::indicator {{
                 width: 16px;
@@ -3021,10 +3034,11 @@ class MainWindow(QtWidgets.QMainWindow):
             }}
 
             QGroupBox {{
-                background-color: {surface_bg};
+                background-color: {inset_bg};
                 border-radius: 16px;
                 border: none;
                 margin-top: 16px;
+                padding: 20px;
             }}
             QGroupBox::title {{
                 subcontrol-origin: margin;
@@ -3086,7 +3100,7 @@ class MainWindow(QtWidgets.QMainWindow):
             }}
 
             #QueueList {{
-                background-color: {surface_bg};
+                background-color: {inset_bg};
                 border-radius: 10px;
                 border: none;
             }}
@@ -3131,6 +3145,10 @@ class MainWindow(QtWidgets.QMainWindow):
                 border-radius: 8px;
                 padding: 6px 14px;
                 border: none;
+            }}
+            /* Match light mode's (win11.qss) heavier button text */
+            QPushButton {{
+                font-weight: 600;
             }}
             QPushButton:disabled, QToolButton:disabled {{
                 background-color: rgba(227,227,230,0.12);
