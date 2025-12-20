@@ -1419,25 +1419,46 @@ class _ComboPopupFixer(QtCore.QObject):
         popup.setMask(QtGui.QRegion(path.toFillPolygon().toPolygon()))
 
     def _build_qss(self) -> str:
-        """Build a theme-aware stylesheet for the popup and its list view."""
+        """Build a theme-aware stylesheet for the popup and its list view.
+
+        In dark mode we force a neutral black/grey palette for the dropdown
+        itself (Windows/Qt can otherwise inject a blue-tinted popup background).
+        """
 
         pal = self._combo.palette()
 
+        window_col = pal.color(QtGui.QPalette.ColorRole.Window)
+        is_dark = window_col.lightness() < 128
+
         # Use AlternateBase so the dropdown matches our "surface" color (queue/menu)
         # instead of the inset field background.
-        bg = _qcolor_to_rgba(pal.color(QtGui.QPalette.ColorRole.AlternateBase))
+        if is_dark:
+            bg = "#0C0C0E"
+        else:
+            bg = _qcolor_to_rgba(pal.color(QtGui.QPalette.ColorRole.AlternateBase))
+
         text = _qcolor_to_rgba(pal.color(QtGui.QPalette.ColorRole.Text))
-        sel_bg = _qcolor_to_rgba(pal.color(QtGui.QPalette.ColorRole.Highlight))
-        sel_text = _qcolor_to_rgba(pal.color(QtGui.QPalette.ColorRole.HighlightedText))
+
+        if is_dark:
+            # Neutral greys (avoid blue/green selection in the popup list).
+            border = "rgba(227,227,230,0.12)"
+            hover_bg = "rgba(227,227,230,0.06)"
+            sel_bg = "rgba(227,227,230,0.10)"
+            sel_text = text
+        else:
+            border = "rgba(0,0,0,0.08)"
+            hover_bg = "rgba(0,0,0,0.04)"
+            sel_bg = _qcolor_to_rgba(pal.color(QtGui.QPalette.ColorRole.Highlight))
+            sel_text = _qcolor_to_rgba(pal.color(QtGui.QPalette.ColorRole.HighlightedText))
 
         # IMPORTANT:
         #   Paint the background on the *popup container* so there are no
         #   unpainted areas (a common source of black bars).
-        #   Keep borders OFF so there's no extra "outline box".
+        #   Keep the border minimal so there's no obvious extra "outline box".
         return f"""
         QWidget#SrtforgeComboPopup {{
             background-color: {bg};
-            border: none;
+            border: 1px solid {border};
             border-radius: {self._radius}px;
             padding: 0px;
             margin: 0px;
@@ -1454,6 +1475,9 @@ class _ComboPopupFixer(QtCore.QObject):
             margin: 0px 6px;
             border-radius: 8px;
             color: {text};
+        }}
+        QWidget#SrtforgeComboPopup QListView::item:hover:!selected {{
+            background-color: {hover_bg};
         }}
         QWidget#SrtforgeComboPopup QListView::item:selected {{
             background-color: {sel_bg};
@@ -2046,6 +2070,7 @@ class MainWindow(QtWidgets.QMainWindow):
     # ---- UI construction ---------------------------------------------------------
     def _build_ui(self) -> None:
         page = QtWidgets.QWidget()
+        page.setObjectName("MainPage")
         layout = QtWidgets.QVBoxLayout(page)
         # No extra vertical gap above/below the header; keep side padding
         layout.setSpacing(0)
@@ -2780,7 +2805,7 @@ class MainWindow(QtWidgets.QMainWindow):
             palette.setColor(QtGui.QPalette.ColorRole.WindowText, QtGui.QColor(text_primary))
             palette.setColor(QtGui.QPalette.ColorRole.Button, accent)
             # Better contrast on #16A34A with dark text
-            palette.setColor(QtGui.QPalette.ColorRole.ButtonText, QtGui.QColor(surface_bg))
+            palette.setColor(QtGui.QPalette.ColorRole.ButtonText, QtGui.QColor(text_primary))
             palette.setColor(QtGui.QPalette.ColorRole.Highlight, accent)
             palette.setColor(QtGui.QPalette.ColorRole.HighlightedText, QtGui.QColor(surface_bg))
             palette.setColor(QtGui.QPalette.ColorRole.ToolTipBase, QtGui.QColor(surface_bg))
@@ -2798,6 +2823,10 @@ class MainWindow(QtWidgets.QMainWindow):
             palette.setColor(QtGui.QPalette.ColorRole.HighlightedText, QtGui.QColor("#FFFFFF"))
             palette.setColor(QtGui.QPalette.ColorRole.ToolTipBase, QtGui.QColor("#E5E7EB"))
             palette.setColor(QtGui.QPalette.ColorRole.ToolTipText, QtGui.QColor("#020617"))
+
+        app = QtWidgets.QApplication.instance()
+        if app is not None:
+            app.setPalette(palette)
 
         self.setPalette(palette)
 
@@ -2817,6 +2846,14 @@ class MainWindow(QtWidgets.QMainWindow):
             # --- Dark mode QSS (Discord-neutral + green accent) ---
             custom = f"""
             #MainWindow {{
+                background-color: {app_bg};
+            }}
+
+            /* Ensure the scroll area's viewport + page paint the same deep background */
+            QScrollArea::viewport {{
+                background-color: {app_bg};
+            }}
+            QWidget#MainPage {{
                 background-color: {app_bg};
             }}
 
@@ -2921,6 +2958,33 @@ class MainWindow(QtWidgets.QMainWindow):
                 background: transparent;
             }}
 
+            /* Checkboxes: neutral greys (avoid blue OS accent in dark mode) */
+            QCheckBox {{
+                color: {text_primary};
+                spacing: 6px;
+            }}
+            QCheckBox::indicator {{
+                width: 16px;
+                height: 16px;
+                border-radius: 3px;
+                border: 1px solid {border_strong};
+                background: {inset_bg};
+            }}
+            QCheckBox::indicator:hover {{
+                border-color: rgba(227,227,230,0.22);
+            }}
+            QCheckBox::indicator:checked {{
+                background: rgba(227,227,230,0.18);
+                border-color: rgba(227,227,230,0.22);
+            }}
+            QCheckBox::indicator:checked:hover {{
+                background: rgba(227,227,230,0.22);
+            }}
+            QCheckBox::indicator:disabled {{
+                background: rgba(227,227,230,0.06);
+                border-color: rgba(227,227,230,0.10);
+            }}
+
             /* Console/log view (dark mode): text sits on the LogContainer card */
             QPlainTextEdit#LogView {{
                 background: transparent;
@@ -2987,7 +3051,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 padding: 2px 8px;
             }}
             #EmbedHeader[checked="true"] {{
-                background-color: {green_select_soft};
+                background-color: {pressed_overlay};
             }}
 
             /* Header contents: keep them flat on the pill */
@@ -3005,8 +3069,9 @@ class MainWindow(QtWidgets.QMainWindow):
                 margin-right: 6px;
             }}
             QCheckBox#EmbedCheckbox::indicator:checked {{
-                background: {accent.name()};
-                border-color: {accent.name()};
+                /* Neutral checked state (avoid bright green fill) */
+                background: rgba(227,227,230,0.18);
+                border-color: rgba(227,227,230,0.22);
             }}
             QToolButton#EmbedChevron {{
                 background-color: transparent;
@@ -3062,7 +3127,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
             QPushButton, QToolButton {{
                 background-color: {accent.name()};
-                color: {surface_bg};
+                color: {text_primary};
                 border-radius: 8px;
                 padding: 6px 14px;
                 border: none;
