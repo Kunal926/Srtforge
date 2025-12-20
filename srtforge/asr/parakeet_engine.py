@@ -289,6 +289,7 @@ def parakeet_to_srt(
     rel_pos_local_attn: Optional[List[int]] = None,
     subsampling_conv_chunking: bool = False,
     gpu_limit_percent: int = 100,
+    use_low_priority_cuda_stream: bool = False,
     run_logger: Optional[RunLogger] = None,
     max_chars_per_line: int = 42,
     pause_ms: int = 240,
@@ -413,18 +414,18 @@ def parakeet_to_srt(
             f"signature: {sig_repr}"
         )
 
-    # Best-effort GPU limiter: run inference on a low-priority CUDA stream
-    # when gpu_limit_percent < 100. This does not guarantee an exact utilization cap,
-    # but can improve desktop responsiveness on display-attached GPUs.
+    # Best-effort GPU limiter: run inference on a low-priority CUDA stream when enabled.
+# This does not guarantee an exact utilization cap, but can improve desktop responsiveness on
+# display-attached GPUs.
     inference_ctx = nullcontext()
     inference_stream = None
     gpu_limit_percent = _clamp_percent(gpu_limit_percent, default=100)
-    if use_cuda and torch is not None and gpu_limit_percent < 100:
+    if use_cuda and torch is not None and bool(use_low_priority_cuda_stream):
         try:
             least_priority, _greatest_priority = torch.cuda.get_stream_priority_range()
             inference_stream = torch.cuda.Stream(priority=least_priority)
             inference_ctx = torch.cuda.stream(inference_stream)
-            _log_event(run_logger, f"GPU limit {gpu_limit_percent}%: using low-priority CUDA stream for inference")
+            _log_event(run_logger, "Using low-priority CUDA stream for Parakeet inference")
         except Exception as exc:
             _log_event(run_logger, f"GPU limit: unable to create low-priority CUDA stream ({exc})")
             inference_ctx = nullcontext()
