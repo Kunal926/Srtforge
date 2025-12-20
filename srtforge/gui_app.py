@@ -1541,7 +1541,7 @@ class _ComboPopupFixer(QtCore.QObject):
 
 
 class OptionsDialog(QtWidgets.QDialog):
-    """Popup dialog with Basic and Advanced tabs for configuration."""
+    """Popup dialog with Basic, Performance, and Advanced tabs for configuration."""
 
     def __init__(self, *, parent=None, initial_basic: dict, initial_settings) -> None:
         super().__init__(parent)
@@ -1697,6 +1697,79 @@ class OptionsDialog(QtWidgets.QDialog):
         grid.setColumnStretch(1, 1)
         self.tabs.addTab(basic, "Basic")
 
+        # ----- Performance tab (hardware tuning; defaults preserve existing behavior) ---
+        perf = QtWidgets.QWidget()
+        perf_form = QtWidgets.QFormLayout(perf)
+
+        # Force float32 (moved from Advanced -> Performance)
+        self.force_f32 = QtWidgets.QCheckBox()
+        self.force_f32.setChecked(bool(initial_settings.parakeet.force_float32))
+        self.force_f32.setToolTip(
+            "Force float32 for Parakeet inference. Helps stability on some GPUs, but may be slower."
+        )
+        perf_form.addRow("Force float32 (Parakeet)", self.force_f32)
+
+        # Local attention window (rel_pos_local_attn)
+        rel_attn = getattr(initial_settings.parakeet, "rel_pos_local_attn", [768, 768]) or [768, 768]
+        try:
+            left_default = int(rel_attn[0]) if len(rel_attn) > 0 else 768
+            right_default = int(rel_attn[1]) if len(rel_attn) > 1 else 768
+        except Exception:
+            left_default, right_default = 768, 768
+
+        self.local_attn_left = QtWidgets.QSpinBox()
+        self.local_attn_left.setRange(32, 4096)
+        self.local_attn_left.setSingleStep(32)
+        self.local_attn_left.setValue(left_default)
+
+        self.local_attn_right = QtWidgets.QSpinBox()
+        self.local_attn_right.setRange(32, 4096)
+        self.local_attn_right.setSingleStep(32)
+        self.local_attn_right.setValue(right_default)
+
+        attn_row = QtWidgets.QHBoxLayout()
+        attn_widget = QtWidgets.QWidget()
+        attn_widget.setLayout(attn_row)
+        attn_row.addWidget(QtWidgets.QLabel("Left"))
+        attn_row.addWidget(self.local_attn_left)
+        attn_row.addWidget(QtWidgets.QLabel("Right"))
+        attn_row.addWidget(self.local_attn_right)
+        attn_row.addStretch(1)
+
+        attn_widget.setToolTip(
+            "Local attention window used when Parakeet applies long-audio settings (rel_pos_local_attn). "
+            "Lower values can reduce VRAM usage on weaker GPUs for long inputs. "
+            "Default: 768, 768 (matches current behaviour)."
+        )
+        perf_form.addRow("Local attention window", attn_widget)
+
+        # Subsampling conv chunking (factor=1)
+        self.subsampling_conv_chunking = QtWidgets.QCheckBox("Enable (factor=1)")
+        self.subsampling_conv_chunking.setChecked(
+            bool(getattr(initial_settings.parakeet, "subsampling_conv_chunking", False))
+        )
+        self.subsampling_conv_chunking.setToolTip(
+            "Enable Parakeet subsampling conv chunking (factor=1). "
+            "Can reduce memory pressure on long audio, but may reduce throughput. "
+            "Default: Off."
+        )
+        perf_form.addRow("Subsampling conv chunking", self.subsampling_conv_chunking)
+
+        # GPU limiter (%)
+        self.gpu_limit_spin = QtWidgets.QSpinBox()
+        self.gpu_limit_spin.setRange(10, 100)
+        self.gpu_limit_spin.setSingleStep(5)
+        self.gpu_limit_spin.setValue(int(getattr(initial_settings.parakeet, "gpu_limit_percent", 100) or 100))
+        self.gpu_limit_spin.setSuffix("%")
+        self.gpu_limit_spin.setToolTip(
+            "Best-effort GPU limiter. 100% preserves current behaviour. "
+            "When set below 100%, Srtforge will attempt to keep the desktop responsive by limiting the CUDA allocator "
+            "memory fraction and running inference on a low-priority CUDA stream."
+        )
+        perf_form.addRow("GPU limit (best effort)", self.gpu_limit_spin)
+
+        self.tabs.addTab(perf, "Performance")
+
         # ----- Advanced tab (writes YAML for CLI via SRTFORGE_CONFIG) ----------
         adv = QtWidgets.QWidget()
         form = QtWidgets.QFormLayout(adv)
@@ -1763,11 +1836,6 @@ class OptionsDialog(QtWidgets.QDialog):
         self.filter_chain = QtWidgets.QPlainTextEdit(initial_settings.ffmpeg.filter_chain or "")
         self.filter_chain.setMinimumHeight(80)
         form.addRow("FFmpeg filter chain", self.filter_chain)
-
-        # Parakeet
-        self.force_f32 = QtWidgets.QCheckBox()
-        self.force_f32.setChecked(bool(initial_settings.parakeet.force_float32))
-        form.addRow("Force float32 (Parakeet)", self.force_f32)
 
         self.tabs.addTab(adv, "Advanced")
 
@@ -1844,6 +1912,9 @@ class OptionsDialog(QtWidgets.QDialog):
             "parakeet": {
                 "force_float32": self.force_f32.isChecked(),
                 "prefer_gpu": gpu_pref,
+                "rel_pos_local_attn": [int(self.local_attn_left.value()), int(self.local_attn_right.value())],
+                "subsampling_conv_chunking": self.subsampling_conv_chunking.isChecked(),
+                "gpu_limit_percent": int(self.gpu_limit_spin.value()),
             },
         }
 

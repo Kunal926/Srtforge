@@ -75,8 +75,24 @@ class SeparationSettings:
 class ParakeetSettings:
     """Configuration forwarded to the Parakeet ASR stage."""
 
+    # Keep float32 enabled by default for maximum compatibility.
     force_float32: bool = True
+
+    # Prefer CUDA when available (mirrors the GUI Device dropdown / CLI --cpu flag).
     prefer_gpu: bool = True
+
+    # Parakeet long-audio local attention window used when change_attention_model()
+    # is applied. Lower values reduce VRAM usage at the cost of context/accuracy.
+    rel_pos_local_attn: list[int] = field(default_factory=lambda: [768, 768])
+
+    # When enabled, apply asr.change_subsampling_conv_chunking_factor(1) after the
+    # model is loaded. This can reduce memory pressure on long audio.
+    subsampling_conv_chunking: bool = False
+
+    # Best-effort GPU limiting knob. 100 preserves current behavior.
+    # Values < 100 may cap per-process CUDA allocator memory and/or use a lower
+    # priority CUDA stream during inference so the desktop stays responsive.
+    gpu_limit_percent: int = 100
 
 
 @dataclass(slots=True)

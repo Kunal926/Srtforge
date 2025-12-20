@@ -64,9 +64,24 @@ def test_pipeline_executes_parakeet_steps(tmp_path, monkeypatch):
         nemo_local,
         force_float32: bool,
         prefer_gpu: bool,
+        rel_pos_local_attn,
+        subsampling_conv_chunking: bool,
+        gpu_limit_percent: int,
         run_logger=None,
     ):
-        outputs.append((preprocessed, srt_path, fps, nemo_local, force_float32, prefer_gpu))
+        outputs.append(
+            {
+                "preprocessed": preprocessed,
+                "srt_path": srt_path,
+                "fps": fps,
+                "nemo_local": nemo_local,
+                "force_float32": force_float32,
+                "prefer_gpu": prefer_gpu,
+                "rel_pos_local_attn": rel_pos_local_attn,
+                "subsampling_conv_chunking": subsampling_conv_chunking,
+                "gpu_limit_percent": gpu_limit_percent,
+            }
+        )
         if run_logger is not None:
             run_logger.log("fake_parakeet invoked")
         srt_path.write_text("1\n00:00:00,000 --> 00:00:01,000\nHello\n\n")
@@ -85,13 +100,20 @@ def test_pipeline_executes_parakeet_steps(tmp_path, monkeypatch):
     result = Pipeline(config).run()
 
     assert [name for name, *_ in tools.calls] == ["extract", "isolate", "preprocess"]
-    assert outputs and outputs[0][2] == pytest.approx(23.976)
-    assert outputs[0][4] is config.force_float32
-    assert outputs[0][5] is False
+    assert outputs and outputs[0]["fps"] == pytest.approx(23.976)
+    assert outputs[0]["force_float32"] is config.force_float32
+    assert outputs[0]["prefer_gpu"] is False
+    assert outputs[0]["rel_pos_local_attn"] == config.rel_pos_local_attn
+    assert outputs[0]["subsampling_conv_chunking"] is config.subsampling_conv_chunking
+    assert outputs[0]["gpu_limit_percent"] == config.gpu_limit_percent
     isolate_call = tools.calls[1]
     assert isolate_call[-1] is False
     preprocess_call = tools.calls[-1]
-    assert preprocess_call[2] == config.ffmpeg_filter_chain
+    if config.ffmpeg_prefer_center:
+        assert preprocess_call[2].startswith("pan=mono")
+        assert preprocess_call[2].endswith(config.ffmpeg_filter_chain)
+    else:
+        assert preprocess_call[2] == config.ffmpeg_filter_chain
     assert result.output_path == output_path
     assert result.output_path.exists()
     assert not result.skipped

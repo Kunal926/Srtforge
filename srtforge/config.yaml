@@ -15,3 +15,6 @@ separation:
 parakeet:
   force_float32: true
   prefer_gpu: true
+  rel_pos_local_attn: [768, 768]
+  subsampling_conv_chunking: false
+  gpu_limit_percent: 100
