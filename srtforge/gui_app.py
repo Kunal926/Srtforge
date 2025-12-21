@@ -1582,6 +1582,7 @@ class OptionsDialog(QtWidgets.QDialog):
         self.setWindowTitle("Options")
         self.resize(760, 520)
         self._eta_reset_requested = False
+        self._defaults_reset_requested = False
         layout = QtWidgets.QVBoxLayout(self)
         self.tabs = QtWidgets.QTabWidget(self)
         self.tabs.setObjectName("OptionsTabs")
@@ -1720,8 +1721,18 @@ class OptionsDialog(QtWidgets.QDialog):
             "Clear stored ETA measurements so future runs can retrain from scratch."
         )
         self.reset_eta_button.clicked.connect(self._on_reset_eta_clicked)
+
+        # NEW: Reset all GUI options back to shipped defaults (including theme)
+        self.reset_defaults_button = QtWidgets.QPushButton("Reset to defaults")
+        self.reset_defaults_button.setObjectName("ResetDefaultsButton")
+        self.reset_defaults_button.setToolTip(
+            "Reset Basic / Performance / Advanced options back to defaults. "
+            "Also switches the app back to light mode when you press OK."
+        )
+        self.reset_defaults_button.clicked.connect(self._on_reset_defaults_clicked)
         eta_row = QtWidgets.QHBoxLayout()
         eta_row.addStretch()
+        eta_row.addWidget(self.reset_defaults_button)
         eta_row.addWidget(self.reset_eta_button)
         grid.addLayout(eta_row, row, 0, 1, 2)
         row += 1
@@ -1977,9 +1988,111 @@ class OptionsDialog(QtWidgets.QDialog):
             ),
         )
 
+    def _on_reset_defaults_clicked(self) -> None:
+        """Reset every option in the dialog back to shipped defaults."""
+
+        resp = QtWidgets.QMessageBox.question(
+            self,
+            "Reset to defaults",
+            (
+                "This will reset all options in Basic, Performance, and Advanced back to their default values.\n\n"
+                "Theme note: Light mode will be applied when you press OK.\n\n"
+                "Continue?"
+            ),
+            QtWidgets.QMessageBox.StandardButton.Yes
+            | QtWidgets.QMessageBox.StandardButton.Cancel,
+        )
+        if resp != QtWidgets.QMessageBox.StandardButton.Yes:
+            return
+
+        self._defaults_reset_requested = True
+
+        # ---- Basic defaults -------------------------------------------------
+        default_basic = {
+            "prefer_gpu": True,
+            "embed_subtitles": False,
+            "burn_subtitles": False,
+            "cleanup_gpu": False,
+            "soft_embed_method": "auto",
+            "soft_embed_overwrite_source": False,
+            "srt_title": "Srtforge (English)",
+            "srt_language": "eng",
+            "srt_default": False,
+            "srt_forced": False,
+            "srt_next_to_media": False,
+        }
+
+        try:
+            self.device_combo.setCurrentIndex(max(0, self.device_combo.findData(True)))
+        except Exception:
+            self.device_combo.setCurrentIndex(0)
+
+        self.embed_checkbox.setChecked(bool(default_basic["embed_subtitles"]))
+
+        try:
+            self.embed_method.setCurrentIndex(max(0, self.embed_method.findData("auto")))
+        except Exception:
+            self.embed_method.setCurrentIndex(0)
+
+        self.title_edit.setText(str(default_basic["srt_title"]))
+        self.lang_edit.setText(str(default_basic["srt_language"]))
+        self.default_cb.setChecked(bool(default_basic["srt_default"]))
+        self.forced_cb.setChecked(bool(default_basic["srt_forced"]))
+        self.embed_overwrite_cb.setChecked(
+            bool(default_basic["soft_embed_overwrite_source"])
+        )
+        self.external_srt_cb.setChecked(bool(default_basic["srt_next_to_media"]))
+        self.burn_cb.setChecked(bool(default_basic["burn_subtitles"]))
+        self.cleanup_cb.setChecked(bool(default_basic["cleanup_gpu"]))
+
+        # ---- Performance defaults (from shipped config.yaml -> `settings`) ---
+        self.force_f32.setChecked(bool(getattr(settings.parakeet, "force_float32", True)))
+
+        rel_attn = getattr(settings.parakeet, "rel_pos_local_attn", [768, 768]) or [768, 768]
+        try:
+            left_default = int(rel_attn[0]) if len(rel_attn) > 0 else 768
+            right_default = int(rel_attn[1]) if len(rel_attn) > 1 else 768
+        except Exception:
+            left_default, right_default = 768, 768
+        self.local_attn_left.setValue(left_default)
+        self.local_attn_right.setValue(right_default)
+
+        self.subsampling_conv_chunking.setChecked(
+            bool(getattr(settings.parakeet, "subsampling_conv_chunking", False))
+        )
+        self.gpu_limit_spin.setValue(int(getattr(settings.parakeet, "gpu_limit_percent", 100) or 100))
+        self.low_pri_cuda_stream.setChecked(
+            bool(getattr(settings.parakeet, "use_low_priority_cuda_stream", False))
+        )
+
+        # ---- Advanced defaults (paths + separation + ffmpeg) ----------------
+        try:
+            self.output_dir.setText(str(getattr(settings.paths, "output_dir", "") or ""))
+            self.temp_dir.setText(str(getattr(settings.paths, "temp_dir", "") or ""))
+        except Exception:
+            self.output_dir.setText("")
+            self.temp_dir.setText("")
+
+        backend_value = (getattr(settings.separation, "backend", "fv4") or "fv4").lower()
+        self.backend.setCurrentIndex(max(0, self.backend.findData(backend_value)))
+        self.sep_hz.setValue(int(getattr(settings.separation, "sep_hz", 48000) or 48000))
+        self.sep_prefer_center.setChecked(bool(getattr(settings.separation, "prefer_center", False)))
+        self.allow_untagged.setChecked(
+            bool(getattr(settings.separation, "allow_untagged_english", False))
+        )
+
+        self.ff_prefer_center.setChecked(bool(getattr(settings.ffmpeg, "prefer_center", False)))
+        self.filter_chain.setPlainText(
+            str(getattr(settings.ffmpeg, "filter_chain", "") or "")
+        )
+
     def eta_reset_requested(self) -> bool:
         """Return True if the user requested ETA training reset in this session."""
         return bool(self._eta_reset_requested)
+
+    def defaults_reset_requested(self) -> bool:
+        """Return True if the user requested a full reset-to-defaults in this session."""
+        return bool(self._defaults_reset_requested)
 
 
 class MainWindow(QtWidgets.QMainWindow):
@@ -5332,6 +5445,21 @@ class MainWindow(QtWidgets.QMainWindow):
             return
 
         reset_eta = dialog.eta_reset_requested()
+        reset_defaults = dialog.defaults_reset_requested()
+
+        # If the user hit "Reset to defaults", also reset the app theme to
+        # light mode. We apply this here (after OK) so Cancel truly cancels.
+        # Persistence is handled by the _update_persistent_config() call below.
+        if reset_defaults:
+            self._dark_mode = False
+            if hasattr(self, "theme_toggle"):
+                block = self.theme_toggle.blockSignals(True)
+                try:
+                    self.theme_toggle.setChecked(False)
+                finally:
+                    self.theme_toggle.blockSignals(block)
+            self._update_theme_toggle_label()
+            self._apply_styles()
         basic = dialog.basic_values()
         self._basic_options = basic
         payload = dialog.settings_payload(prefer_gpu=basic["prefer_gpu"])
