@@ -2017,6 +2017,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.ffmpeg_paths = locate_ffmpeg_binaries()
         self.mkv_paths = locate_mkvmerge_binary()
         self._qsettings = QtCore.QSettings("srtforge", "SrtforgeStudio")
+        # Persist the last folder used in the "Add files…" dialog across app restarts.
+        # (Qt remembers it only for the current process by default.)
+        self._last_media_dir: str = ""
         self._eta_timer = QtCore.QTimer(self)
         self._eta_timer.setInterval(1000)
         self._eta_timer.timeout.connect(self._tick_eta)
@@ -3808,6 +3811,19 @@ class MainWindow(QtWidgets.QMainWindow):
         # NEW
         self._basic_options["srt_next_to_media"] = s.value("srt_next_to_media", False, type=bool)
 
+        # "Add files…" dialog: remember the last folder across runs.
+        last_dir = (s.value("last_media_dir", "", type=str) or "").strip()
+        if last_dir:
+            try:
+                if Path(last_dir).expanduser().exists():
+                    self._last_media_dir = last_dir
+                else:
+                    self._last_media_dir = ""
+            except Exception:
+                self._last_media_dir = ""
+        else:
+            self._last_media_dir = ""
+
         # Theme
         self._dark_mode = s.value("dark_mode", False, type=bool)
         if hasattr(self, "theme_toggle"):
@@ -3849,8 +3865,45 @@ class MainWindow(QtWidgets.QMainWindow):
         s.setValue("srt_forced", bool(self._basic_options.get("srt_forced", False)))
         # NEW
         s.setValue("srt_next_to_media", bool(self._basic_options.get("srt_next_to_media", False)))
+        # "Add files…" dialog folder.
+        s.setValue("last_media_dir", str(getattr(self, "_last_media_dir", "") or ""))
         s.setValue("dark_mode", bool(getattr(self, "_dark_mode", False)))
         s.sync()
+
+    def _remember_last_media_dir(self, paths: list[Path]) -> None:
+        """Persist the directory of the most recently added media file.
+
+        Qt's static ``QFileDialog.getOpenFileNames`` remembers the last folder only
+        for the current process. We store it in QSettings so re-opening
+        srtforge-gui starts in the same directory.
+        """
+
+        if not paths:
+            return
+
+        try:
+            last = paths[-1]
+
+            # If the user dropped a directory, remember it directly.
+            # Otherwise remember the parent folder of the file.
+            try:
+                if last.exists() and last.is_dir():
+                    directory = last
+                else:
+                    directory = last.parent
+            except Exception:
+                directory = last.parent
+
+            if not directory:
+                return
+
+            self._last_media_dir = str(directory)
+            self._qsettings.setValue("last_media_dir", self._last_media_dir)
+            # Sync immediately so it survives crashes/forced closes.
+            self._qsettings.sync()
+        except Exception:
+            # Persistence should never crash the app.
+            pass
 
 
     def _persist_tuning_settings(self, payload: dict) -> None:
@@ -3955,11 +4008,32 @@ class MainWindow(QtWidgets.QMainWindow):
         self._add_files_to_queue(files)
 
     def _open_file_dialog(self) -> None:
-        files, _ = QtWidgets.QFileDialog.getOpenFileNames(self, "Select media files")
+        start_dir = getattr(self, "_last_media_dir", "") or ""
+        try:
+            # If the persisted folder no longer exists (e.g. unplugged drive),
+            # fall back to Qt's default behaviour.
+            if start_dir and not Path(start_dir).expanduser().exists():
+                start_dir = ""
+        except Exception:
+            start_dir = ""
+
+        files, _ = QtWidgets.QFileDialog.getOpenFileNames(
+            self,
+            "Select media files",
+            start_dir,
+        )
         if files:
             self._add_files_to_queue(files)
 
     def _add_files_to_queue(self, files: Iterable[str]) -> None:
+        normalized = _normalize_paths(files)
+        if not normalized:
+            return
+
+        # Update the persisted "Add files" folder even if all selected files
+        # were already in the queue.
+        self._remember_last_media_dir(normalized)
+
         existing = {
             Path(
                 self.queue_list.topLevelItem(i).data(
@@ -3971,7 +4045,7 @@ class MainWindow(QtWidgets.QMainWindow):
         ffprobe = self.ffmpeg_paths.ffprobe if self.ffmpeg_paths else None
         pointer_cursor = QtGui.QCursor(QtCore.Qt.CursorShape.PointingHandCursor)
 
-        for path in _normalize_paths(files):
+        for path in normalized:
             if path in existing:
                 continue
             item = QueueTreeWidgetItem()
