@@ -35,6 +35,25 @@ from .settings import (
 from .win11_backdrop import apply_win11_look, get_windows_accent_qcolor
 
 
+# ---------------------------------------------------------------------------
+# GUI Basic-tab factory defaults (single source of truth).
+# These are *GUI-only* defaults, persisted in srtforge.config under "gui".
+# ---------------------------------------------------------------------------
+DEFAULT_BASIC_OPTIONS: dict[str, object] = {
+    "prefer_gpu": True,
+    "embed_subtitles": True,
+    "burn_subtitles": False,
+    "cleanup_gpu": True,
+    "soft_embed_method": "auto",
+    "soft_embed_overwrite_source": True,
+    "srt_title": "Srtforge (English)",
+    "srt_language": "eng",
+    "srt_default": True,
+    "srt_forced": True,
+    "srt_next_to_media": False,
+}
+
+
 @dataclass(slots=True)
 class FFmpegBinaries:
     """Resolved FFmpeg and ffprobe executables."""
@@ -2007,20 +2026,8 @@ class OptionsDialog(QtWidgets.QDialog):
 
         self._defaults_reset_requested = True
 
-        # ---- Basic defaults -------------------------------------------------
-        default_basic = {
-            "prefer_gpu": True,
-            "embed_subtitles": False,
-            "burn_subtitles": False,
-            "cleanup_gpu": False,
-            "soft_embed_method": "auto",
-            "soft_embed_overwrite_source": False,
-            "srt_title": "Srtforge (English)",
-            "srt_language": "eng",
-            "srt_default": False,
-            "srt_forced": False,
-            "srt_next_to_media": False,
-        }
+        # ---- Basic defaults (single source of truth) ------------------------
+        default_basic = DEFAULT_BASIC_OPTIONS
 
         try:
             self.device_combo.setCurrentIndex(max(0, self.device_combo.findData(True)))
@@ -2030,20 +2037,22 @@ class OptionsDialog(QtWidgets.QDialog):
         self.embed_checkbox.setChecked(bool(default_basic["embed_subtitles"]))
 
         try:
-            self.embed_method.setCurrentIndex(max(0, self.embed_method.findData("auto")))
+            self.embed_method.setCurrentIndex(
+                max(0, self.embed_method.findData(str(default_basic.get("soft_embed_method", "auto"))))
+            )
         except Exception:
             self.embed_method.setCurrentIndex(0)
 
-        self.title_edit.setText(str(default_basic["srt_title"]))
-        self.lang_edit.setText(str(default_basic["srt_language"]))
-        self.default_cb.setChecked(bool(default_basic["srt_default"]))
-        self.forced_cb.setChecked(bool(default_basic["srt_forced"]))
+        self.title_edit.setText(str(default_basic.get("srt_title", "Srtforge (English)")))
+        self.lang_edit.setText(str(default_basic.get("srt_language", "eng")))
+        self.default_cb.setChecked(bool(default_basic.get("srt_default", False)))
+        self.forced_cb.setChecked(bool(default_basic.get("srt_forced", False)))
         self.embed_overwrite_cb.setChecked(
-            bool(default_basic["soft_embed_overwrite_source"])
+            bool(default_basic.get("soft_embed_overwrite_source", False))
         )
-        self.external_srt_cb.setChecked(bool(default_basic["srt_next_to_media"]))
-        self.burn_cb.setChecked(bool(default_basic["burn_subtitles"]))
-        self.cleanup_cb.setChecked(bool(default_basic["cleanup_gpu"]))
+        self.external_srt_cb.setChecked(bool(default_basic.get("srt_next_to_media", False)))
+        self.burn_cb.setChecked(bool(default_basic.get("burn_subtitles", False)))
+        self.cleanup_cb.setChecked(bool(default_basic.get("cleanup_gpu", False)))
 
         # ---- Performance defaults (from shipped config.yaml -> `settings`) ---
         self.force_f32.setChecked(bool(getattr(settings.parakeet, "force_float32", True)))
@@ -2123,20 +2132,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # Theme state (persisted via srtforge.config)
         self._dark_mode: bool = False
         # Single source of truth for user options (kept only in the Options dialog)
-        self._basic_options = {
-            "prefer_gpu": True,
-            "embed_subtitles": True,
-            "burn_subtitles": False,
-            "cleanup_gpu": True,
-            "soft_embed_method": "auto",
-            "soft_embed_overwrite_source": True,  # NEW
-            "srt_title": "Srtforge (English)",
-            "srt_language": "eng",
-            "srt_default": True,
-            "srt_forced": True,
-            # NEW
-            "srt_next_to_media": False,
-        }
+        self._basic_options = dict(DEFAULT_BASIC_OPTIONS)
         self.ffmpeg_paths = locate_ffmpeg_binaries()
         self.mkv_paths = locate_mkvmerge_binary()
         self._qsettings = QtCore.QSettings("srtforge", "SrtforgeStudio")
