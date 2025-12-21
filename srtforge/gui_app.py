@@ -23,9 +23,15 @@ import yaml
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from .config import DEFAULT_OUTPUT_SUFFIX
+from .config import DEFAULT_OUTPUT_SUFFIX, PACKAGE_ROOT
 from .logging import LATEST_LOG, LOGS_DIR
-from .settings import settings, CONFIG_ENV_VAR, load_settings
+from .settings import (
+    CONFIG_ENV_VAR,
+    DEFAULT_CONFIG_FILENAME,
+    get_persistent_config_path,
+    load_settings,
+    settings,
+)
 from .win11_backdrop import apply_win11_look, get_windows_accent_qcolor
 
 
@@ -1997,7 +2003,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self._last_worker_options: Optional[WorkerOptions] = None
         self._runtime_config_path: Optional[str] = None
 
-        # Theme state (persisted via QSettings)
+        # Single persistent settings file (YAML content with a .config extension).
+        # This replaces the per-session temp YAML that used to live under %TEMP%.
+        self._config_path: Path = get_persistent_config_path()
+
+        # Theme state (persisted via srtforge.config)
         self._dark_mode: bool = False
         # Single source of truth for user options (kept only in the Options dialog)
         self._basic_options = {
@@ -3755,19 +3765,9 @@ class MainWindow(QtWidgets.QMainWindow):
         """Switch between light and dark palettes."""
         self._dark_mode = bool(checked)
         self._update_theme_toggle_label()
-        # Restore persisted Advanced/Performance tuning into a session YAML so CLI runs inherit it.
-        persisted = self._load_persisted_tuning_payload()
-        if persisted is not None:
-            try:
-                if self._runtime_config_path:
-                    try:
-                        os.unlink(self._runtime_config_path)
-                    except OSError:
-                        pass
-                self._runtime_config_path = self._write_runtime_yaml(persisted)
-            except Exception:
-                pass
         self._apply_styles()
+        # Persist UI state immediately so theme survives crashes/forced closes.
+        self._save_persistent_options()
 
 
 
@@ -3792,27 +3792,204 @@ class MainWindow(QtWidgets.QMainWindow):
         )
 
     # ---- persistent options ------------------------------------------------------
-    def _load_persistent_options(self) -> None:
-        """Restore user-facing options from the last run."""
-        s = self._qsettings
+    #
+    # Everything the GUI persists (basic options, Advanced/Performance tuning,
+    # last-used paths, theme) is stored in a single YAML file with a `.config`
+    # extension.
+    #
+    # The file location is resolved by settings.get_persistent_config_path() and
+    # defaults to `PROJECT_ROOT/srtforge.config` (or next to the executable for
+    # PyInstaller builds).
 
-        self._basic_options["prefer_gpu"] = s.value("device_prefer_gpu", True, type=bool)
-        self._basic_options["embed_subtitles"] = s.value("embed_subtitles", False, type=bool)
-        self._basic_options["burn_subtitles"] = s.value("burn_subtitles", False, type=bool)
-        self._basic_options["cleanup_gpu"] = s.value("cleanup_gpu", False, type=bool)
-        self._basic_options["soft_embed_method"] = s.value("soft_embed_method", "auto", type=str)
-        self._basic_options["soft_embed_overwrite_source"] = s.value(
-            "soft_embed_overwrite_source", False, type=bool
+    def _read_persistent_config(self) -> dict:
+        try:
+            path = Path(self._config_path)
+            if not path.exists():
+                return {}
+            with open(path, "r", encoding="utf-8") as handle:
+                loaded = yaml.safe_load(handle) or {}
+            return loaded if isinstance(loaded, dict) else {}
+        except Exception:
+            return {}
+
+    def _write_persistent_config(self, payload: dict) -> None:
+        try:
+            path = Path(self._config_path)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp_path = path.with_name(path.name + ".tmp")
+            with open(tmp_path, "w", encoding="utf-8") as handle:
+                yaml.safe_dump(payload, handle, sort_keys=False, allow_unicode=True)
+            os.replace(tmp_path, path)
+        except Exception:
+            # Persistence should never crash the app.
+            pass
+
+    def _update_persistent_config(self, *, pipeline: Optional[dict] = None, gui: Optional[dict] = None) -> None:
+        payload = self._read_persistent_config()
+        if not isinstance(payload, dict):
+            payload = {}
+
+        if isinstance(pipeline, dict):
+            # Pipeline sections (used by the CLI subprocess via SRTFORGE_CONFIG).
+            for key, value in pipeline.items():
+                payload[key] = value
+
+        if isinstance(gui, dict):
+            existing_gui = payload.get("gui")
+            if not isinstance(existing_gui, dict):
+                existing_gui = {}
+            existing_gui.update(gui)
+            payload["gui"] = existing_gui
+
+        self._write_persistent_config(payload)
+
+    def _ensure_persistent_config_file(self) -> None:
+        """Ensure srtforge.config exists (seeded from config.yaml / legacy QSettings)."""
+
+        path = Path(self._config_path)
+        if path.exists():
+            self._runtime_config_path = str(path)
+            return
+
+        base: dict = {}
+
+        # Seed from shipped config.yaml so CLI defaults remain stable.
+        try:
+            default_cfg = PACKAGE_ROOT / DEFAULT_CONFIG_FILENAME
+            if default_cfg.exists():
+                with open(default_cfg, "r", encoding="utf-8") as handle:
+                    loaded = yaml.safe_load(handle) or {}
+                if isinstance(loaded, dict):
+                    base = loaded
+        except Exception:
+            base = {}
+
+        # One-time migration from legacy QSettings (pre-srtforge.config builds).
+        try:
+            legacy = getattr(self, "_qsettings", None)
+            if legacy is not None:
+                gui_patch: dict = {}
+
+                # Basic options
+                if legacy.contains("device_prefer_gpu"):
+                    gui_patch["prefer_gpu"] = legacy.value("device_prefer_gpu", True, type=bool)
+                if legacy.contains("embed_subtitles"):
+                    gui_patch["embed_subtitles"] = legacy.value("embed_subtitles", False, type=bool)
+                if legacy.contains("burn_subtitles"):
+                    gui_patch["burn_subtitles"] = legacy.value("burn_subtitles", False, type=bool)
+                if legacy.contains("cleanup_gpu"):
+                    gui_patch["cleanup_gpu"] = legacy.value("cleanup_gpu", False, type=bool)
+                if legacy.contains("soft_embed_method"):
+                    gui_patch["soft_embed_method"] = legacy.value("soft_embed_method", "auto", type=str)
+                if legacy.contains("soft_embed_overwrite_source"):
+                    gui_patch["soft_embed_overwrite_source"] = legacy.value(
+                        "soft_embed_overwrite_source", False, type=bool
+                    )
+                if legacy.contains("srt_title"):
+                    gui_patch["srt_title"] = legacy.value("srt_title", "Srtforge (English)", type=str)
+                if legacy.contains("srt_language"):
+                    gui_patch["srt_language"] = legacy.value("srt_language", "eng", type=str)
+                if legacy.contains("srt_default"):
+                    gui_patch["srt_default"] = legacy.value("srt_default", False, type=bool)
+                if legacy.contains("srt_forced"):
+                    gui_patch["srt_forced"] = legacy.value("srt_forced", False, type=bool)
+                if legacy.contains("srt_next_to_media"):
+                    gui_patch["srt_next_to_media"] = legacy.value("srt_next_to_media", False, type=bool)
+
+                # Last folder + theme
+                last_dir = (legacy.value("last_media_dir", "", type=str) or "").strip()
+                if last_dir:
+                    gui_patch["last_media_dir"] = last_dir
+                if legacy.contains("dark_mode"):
+                    gui_patch["dark_mode"] = legacy.value("dark_mode", False, type=bool)
+
+                if gui_patch:
+                    existing_gui = base.get("gui")
+                    if not isinstance(existing_gui, dict):
+                        existing_gui = {}
+                    existing_gui.update(gui_patch)
+                    base["gui"] = existing_gui
+
+                # Advanced/Performance tuning (stored as pipeline YAML sections)
+                if legacy.contains("adv_output_dir") or legacy.contains("perf_vram_limit"):
+                    gpu_pref = bool(gui_patch.get("prefer_gpu", True))
+                    base["paths"] = {
+                        "temp_dir": (legacy.value("adv_temp_dir", "", type=str) or "").strip() or None,
+                        "output_dir": (legacy.value("adv_output_dir", "", type=str) or "").strip() or None,
+                    }
+                    base["ffmpeg"] = {
+                        "prefer_center": legacy.value("adv_ff_prefer_center", False, type=bool),
+                        "filter_chain": legacy.value("adv_filter_chain", settings.ffmpeg.filter_chain, type=str),
+                    }
+                    base["separation"] = {
+                        "backend": legacy.value("adv_sep_backend", settings.separation.backend, type=str),
+                        "sep_hz": int(legacy.value("adv_sep_hz", settings.separation.sep_hz, type=int)),
+                        "prefer_center": legacy.value(
+                            "adv_sep_prefer_center", settings.separation.prefer_center, type=bool
+                        ),
+                        "prefer_gpu": gpu_pref,
+                        "allow_untagged_english": legacy.value(
+                            "adv_allow_untagged", settings.separation.allow_untagged_english, type=bool
+                        ),
+                    }
+                    base["parakeet"] = {
+                        "force_float32": legacy.value(
+                            "perf_force_f32", settings.parakeet.force_float32, type=bool
+                        ),
+                        "prefer_gpu": gpu_pref,
+                        "rel_pos_local_attn": [
+                            int(legacy.value("perf_attn_left", 768, type=int)),
+                            int(legacy.value("perf_attn_right", 768, type=int)),
+                        ],
+                        "subsampling_conv_chunking": legacy.value(
+                            "perf_subsampling_chunk", False, type=bool
+                        ),
+                        "gpu_limit_percent": int(legacy.value("perf_vram_limit", 100, type=int)),
+                        "use_low_priority_cuda_stream": legacy.value(
+                            "perf_low_pri_stream", False, type=bool
+                        ),
+                    }
+        except Exception:
+            # Migration should never crash the app.
+            pass
+
+        # Ensure the GUI section always exists with sane defaults.
+        gui_section = base.get("gui")
+        if not isinstance(gui_section, dict):
+            gui_section = {}
+        for key, default in self._basic_options.items():
+            gui_section.setdefault(key, default)
+        gui_section.setdefault("last_media_dir", "")
+        gui_section.setdefault("dark_mode", False)
+        base["gui"] = gui_section
+
+        self._write_persistent_config(base)
+        self._runtime_config_path = str(path) if path.exists() else None
+
+    def _load_persistent_options(self) -> None:
+        """Restore user-facing options from srtforge.config."""
+
+        self._ensure_persistent_config_file()
+
+        cfg = self._read_persistent_config()
+        gui = cfg.get("gui") if isinstance(cfg.get("gui"), dict) else {}
+
+        self._basic_options["prefer_gpu"] = bool(gui.get("prefer_gpu", self._basic_options["prefer_gpu"]))
+        self._basic_options["embed_subtitles"] = bool(gui.get("embed_subtitles", self._basic_options["embed_subtitles"]))
+        self._basic_options["burn_subtitles"] = bool(gui.get("burn_subtitles", self._basic_options["burn_subtitles"]))
+        self._basic_options["cleanup_gpu"] = bool(gui.get("cleanup_gpu", self._basic_options["cleanup_gpu"]))
+        self._basic_options["soft_embed_method"] = str(gui.get("soft_embed_method", self._basic_options["soft_embed_method"]))
+        self._basic_options["soft_embed_overwrite_source"] = bool(
+            gui.get("soft_embed_overwrite_source", self._basic_options["soft_embed_overwrite_source"])
         )
-        self._basic_options["srt_title"] = s.value("srt_title", "Srtforge (English)", type=str)
-        self._basic_options["srt_language"] = s.value("srt_language", "eng", type=str)
-        self._basic_options["srt_default"] = s.value("srt_default", False, type=bool)
-        self._basic_options["srt_forced"] = s.value("srt_forced", False, type=bool)
-        # NEW
-        self._basic_options["srt_next_to_media"] = s.value("srt_next_to_media", False, type=bool)
+        self._basic_options["srt_title"] = str(gui.get("srt_title", self._basic_options["srt_title"]))
+        self._basic_options["srt_language"] = str(gui.get("srt_language", self._basic_options["srt_language"]))
+        self._basic_options["srt_default"] = bool(gui.get("srt_default", self._basic_options["srt_default"]))
+        self._basic_options["srt_forced"] = bool(gui.get("srt_forced", self._basic_options["srt_forced"]))
+        self._basic_options["srt_next_to_media"] = bool(gui.get("srt_next_to_media", self._basic_options["srt_next_to_media"]))
 
         # "Add files…" dialog: remember the last folder across runs.
-        last_dir = (s.value("last_media_dir", "", type=str) or "").strip()
+        last_dir = (str(gui.get("last_media_dir", "")) or "").strip()
         if last_dir:
             try:
                 if Path(last_dir).expanduser().exists():
@@ -3825,7 +4002,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self._last_media_dir = ""
 
         # Theme
-        self._dark_mode = s.value("dark_mode", False, type=bool)
+        self._dark_mode = bool(gui.get("dark_mode", False))
         if hasattr(self, "theme_toggle"):
             block = self.theme_toggle.blockSignals(True)
             try:
@@ -3833,50 +4010,24 @@ class MainWindow(QtWidgets.QMainWindow):
             finally:
                 self.theme_toggle.blockSignals(block)
         self._update_theme_toggle_label()
-        # Restore persisted Advanced/Performance tuning into a session YAML so CLI runs inherit it.
-        persisted = self._load_persisted_tuning_payload()
-        if persisted is not None:
-            try:
-                if self._runtime_config_path:
-                    try:
-                        os.unlink(self._runtime_config_path)
-                    except OSError:
-                        pass
-                self._runtime_config_path = self._write_runtime_yaml(persisted)
-            except Exception:
-                pass
+
+        # Ensure CLI runs inherit the same persistent config.
+        try:
+            cfg_path = Path(self._config_path)
+            self._runtime_config_path = str(cfg_path) if cfg_path.exists() else None
+        except Exception:
+            self._runtime_config_path = None
+
     def _save_persistent_options(self) -> None:
-        """Persist current GUI options for the next run."""
-        s = self._qsettings
+        """Persist current GUI options to srtforge.config."""
 
-        s.setValue("device_prefer_gpu", bool(self._basic_options.get("prefer_gpu", True)))
-        s.setValue("embed_subtitles", bool(self._basic_options.get("embed_subtitles", False)))
-        s.setValue("burn_subtitles", bool(self._basic_options.get("burn_subtitles", False)))
-        s.setValue("cleanup_gpu", bool(self._basic_options.get("cleanup_gpu", False)))
-
-        s.setValue("soft_embed_method", str(self._basic_options.get("soft_embed_method", "auto")))
-        s.setValue(
-            "soft_embed_overwrite_source",
-            bool(self._basic_options.get("soft_embed_overwrite_source", False)),
-        )
-        s.setValue("srt_title", str(self._basic_options.get("srt_title", "Srtforge (English)")))
-        s.setValue("srt_language", str(self._basic_options.get("srt_language", "eng")))
-        s.setValue("srt_default", bool(self._basic_options.get("srt_default", False)))
-        s.setValue("srt_forced", bool(self._basic_options.get("srt_forced", False)))
-        # NEW
-        s.setValue("srt_next_to_media", bool(self._basic_options.get("srt_next_to_media", False)))
-        # "Add files…" dialog folder.
-        s.setValue("last_media_dir", str(getattr(self, "_last_media_dir", "") or ""))
-        s.setValue("dark_mode", bool(getattr(self, "_dark_mode", False)))
-        s.sync()
+        gui_payload = dict(self._basic_options)
+        gui_payload["last_media_dir"] = str(getattr(self, "_last_media_dir", "") or "")
+        gui_payload["dark_mode"] = bool(getattr(self, "_dark_mode", False))
+        self._update_persistent_config(gui=gui_payload)
 
     def _remember_last_media_dir(self, paths: list[Path]) -> None:
-        """Persist the directory of the most recently added media file.
-
-        Qt's static ``QFileDialog.getOpenFileNames`` remembers the last folder only
-        for the current process. We store it in QSettings so re-opening
-        srtforge-gui starts in the same directory.
-        """
+        """Persist the directory of the most recently added media file."""
 
         if not paths:
             return
@@ -3898,84 +4049,11 @@ class MainWindow(QtWidgets.QMainWindow):
                 return
 
             self._last_media_dir = str(directory)
-            self._qsettings.setValue("last_media_dir", self._last_media_dir)
             # Sync immediately so it survives crashes/forced closes.
-            self._qsettings.sync()
+            self._save_persistent_options()
         except Exception:
             # Persistence should never crash the app.
             pass
-
-
-    def _persist_tuning_settings(self, payload: dict) -> None:
-        """Persist Advanced/Performance settings so they survive app restarts."""
-        s = self._qsettings
-        try:
-            # Advanced
-            paths = payload.get("paths") or {}
-            ffmpeg = payload.get("ffmpeg") or {}
-            sep = payload.get("separation") or {}
-            par = payload.get("parakeet") or {}
-            s.setValue("adv_output_dir", paths.get("output_dir") or "")
-            s.setValue("adv_temp_dir", paths.get("temp_dir") or "")
-            s.setValue("adv_sep_backend", sep.get("backend") or "fv4")
-            s.setValue("adv_sep_hz", int(sep.get("sep_hz") or 48000))
-            s.setValue("adv_sep_prefer_center", bool(sep.get("prefer_center")))
-            s.setValue("adv_allow_untagged", bool(sep.get("allow_untagged_english")))
-            s.setValue("adv_ff_prefer_center", bool(ffmpeg.get("prefer_center")))
-            s.setValue("adv_filter_chain", str(ffmpeg.get("filter_chain") or ""))
-            # Performance
-            s.setValue("perf_force_f32", bool(par.get("force_float32")))
-            attn = par.get("rel_pos_local_attn") or [768, 768]
-            if isinstance(attn, (list, tuple)) and len(attn) >= 2:
-                s.setValue("perf_attn_left", int(attn[0]))
-                s.setValue("perf_attn_right", int(attn[1]))
-            s.setValue("perf_subsampling_chunk", bool(par.get("subsampling_conv_chunking")))
-            s.setValue("perf_vram_limit", int(par.get("gpu_limit_percent") or 100))
-            s.setValue("perf_low_pri_stream", bool(par.get("use_low_priority_cuda_stream")))
-            s.sync()
-        except Exception:
-            # Persistence should never crash the app.
-            pass
-
-    def _load_persisted_tuning_payload(self) -> Optional[dict]:
-        """Return persisted Advanced/Performance settings as a YAML payload, or None if none exist."""
-        s = self._qsettings
-        # Treat presence of at least one key as "has tuning".
-        if not s.contains("adv_output_dir") and not s.contains("perf_vram_limit"):
-            return None
-        try:
-            gpu_pref = bool(self._basic_options.get("prefer_gpu", True))
-            payload = {
-                "paths": {
-                    "temp_dir": (s.value("adv_temp_dir", "", type=str) or "").strip() or None,
-                    "output_dir": (s.value("adv_output_dir", "", type=str) or "").strip() or None,
-                },
-                "ffmpeg": {
-                    "prefer_center": s.value("adv_ff_prefer_center", False, type=bool),
-                    "filter_chain": s.value("adv_filter_chain", settings.ffmpeg.filter_chain, type=str),
-                },
-                "separation": {
-                    "backend": s.value("adv_sep_backend", settings.separation.backend, type=str),
-                    "sep_hz": int(s.value("adv_sep_hz", settings.separation.sep_hz, type=int)),
-                    "prefer_center": s.value("adv_sep_prefer_center", settings.separation.prefer_center, type=bool),
-                    "prefer_gpu": gpu_pref,
-                    "allow_untagged_english": s.value("adv_allow_untagged", settings.separation.allow_untagged_english, type=bool),
-                },
-                "parakeet": {
-                    "force_float32": s.value("perf_force_f32", settings.parakeet.force_float32, type=bool),
-                    "prefer_gpu": gpu_pref,
-                    "rel_pos_local_attn": [
-                        int(s.value("perf_attn_left", 768, type=int)),
-                        int(s.value("perf_attn_right", 768, type=int)),
-                    ],
-                    "subsampling_conv_chunking": s.value("perf_subsampling_chunk", False, type=bool),
-                    "gpu_limit_percent": int(s.value("perf_vram_limit", 100, type=int)),
-                    "use_low_priority_cuda_stream": s.value("perf_low_pri_stream", False, type=bool),
-                },
-            }
-            return payload
-        except Exception:
-            return None
 
     # ---- runtime helpers ---------------------------------------------------------
     def _update_tool_status(self) -> None:
@@ -5228,11 +5306,6 @@ class MainWindow(QtWidgets.QMainWindow):
             self._worker.request_stop()
             self._worker.wait(2000)
         self._save_persistent_options()
-        if self._runtime_config_path:
-            try:
-                os.unlink(self._runtime_config_path)
-            except OSError:
-                pass
         super().closeEvent(event)
 
     def _open_options_dialog(self) -> None:
@@ -5241,10 +5314,10 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # The Options dialog should reflect the *current* session configuration.
         #
-        # We write a session YAML (self._runtime_config_path) whenever the user
-        # clicks OK in Options and also when restoring persisted tuning settings.
-        # When re-opening Options we must load from that YAML so Advanced/Performance
-        # controls don't snap back to global defaults (e.g. GPU limit -> 100%).
+        # We keep a single persistent YAML (srtforge.config) that stores both GUI
+        # state and Advanced/Performance tuning. When re-opening Options we must
+        # load from that file so controls don't snap back to shipped defaults
+        # (e.g. GPU limit -> 100%).
         if self._runtime_config_path:
             try:
                 runtime_path = Path(self._runtime_config_path)
@@ -5262,14 +5335,17 @@ class MainWindow(QtWidgets.QMainWindow):
         basic = dialog.basic_values()
         self._basic_options = basic
         payload = dialog.settings_payload(prefer_gpu=basic["prefer_gpu"])
-        if self._runtime_config_path:
-            try:
-                os.unlink(self._runtime_config_path)
-            except OSError:
-                pass
-        self._runtime_config_path = self._write_runtime_yaml(payload)
-        self._append_log(f"Using custom options for this session ({self._runtime_config_path})")
-        self._persist_tuning_settings(payload)
+        # Persist *both* GUI and pipeline settings into the single srtforge.config file.
+        gui_payload = dict(basic)
+        gui_payload["last_media_dir"] = str(getattr(self, "_last_media_dir", "") or "")
+        gui_payload["dark_mode"] = bool(getattr(self, "_dark_mode", False))
+        self._update_persistent_config(pipeline=payload, gui=gui_payload)
+        try:
+            cfg_path = Path(self._config_path)
+            self._runtime_config_path = str(cfg_path) if cfg_path.exists() else None
+        except Exception:
+            self._runtime_config_path = None
+        self._append_log(f"Using persistent options file ({str(self._config_path)})")
 
         if reset_eta:
             try:
@@ -5279,11 +5355,21 @@ class MainWindow(QtWidgets.QMainWindow):
                 self._append_log(f"Failed to reset ETA training data: {exc}")
 
     def _write_runtime_yaml(self, payload: dict) -> str:
-        fd, path = tempfile.mkstemp(prefix="srtforge_gui_", suffix=".yaml")
-        os.close(fd)
-        with open(path, "w", encoding="utf-8") as handle:
-            yaml.safe_dump(payload, handle, sort_keys=False, allow_unicode=True)
-        return path
+        """Legacy helper.
+
+        Older builds wrote a random per-session YAML into %TEMP% (e.g.
+        ``srtforge_gui_xxxxx.yaml``). The GUI now persists everything into a
+        single ``srtforge.config`` file, so this helper simply updates that file
+        and returns its path.
+        """
+
+        self._update_persistent_config(pipeline=payload)
+        try:
+            cfg_path = Path(self._config_path)
+            self._runtime_config_path = str(cfg_path) if cfg_path.exists() else None
+        except Exception:
+            self._runtime_config_path = None
+        return self._runtime_config_path or str(self._config_path)
 
     def _set_eta(self, seconds: float) -> None:
         self._eta_total = float(seconds)

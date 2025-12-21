@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import sys
 from dataclasses import dataclass, field, fields, is_dataclass
 from pathlib import Path
 from typing import Any, Optional, Union, get_args, get_origin
@@ -13,6 +14,12 @@ from .config import FV4_CONFIG, FV4_MODEL, PACKAGE_ROOT, PROJECT_ROOT
 
 CONFIG_ENV_VAR = "SRTFORGE_CONFIG"
 DEFAULT_CONFIG_FILENAME = "config.yaml"
+
+# Single persistent config file used by the GUI (and optionally the CLI).
+#
+# Note: despite the ".config" extension, this file still contains YAML.
+PERSISTENT_CONFIG_FILENAME = "srtforge.config"
+PERSISTENT_CONFIG_ENV_VAR = "SRTFORGE_PERSISTENT_CONFIG"
 
 
 def _resolve_path(value: str | Path | None) -> Optional[Path]:
@@ -30,6 +37,64 @@ def _unwrap_optional(type_hint: Any) -> Any:
         args = [arg for arg in get_args(type_hint) if arg is not type(None)]
         return args[0] if args else Any
     return type_hint
+
+
+def get_persistent_config_path() -> Path:
+    """Return the default on-disk config file used for persisting GUI/CLI settings.
+
+    Selection order:
+      1) $SRTFORGE_PERSISTENT_CONFIG (explicit override)
+      2) If running as a frozen executable (PyInstaller), next to the executable
+      3) PROJECT_ROOT/srtforge.config (dev checkout / portable runs)
+      4) OS user config dir (~/.config/srtforge/srtforge.config or %APPDATA%\\srtforge\\srtforge.config)
+
+    This function does not create files/directories; it only chooses a path.
+    """
+
+    override = os.environ.get(PERSISTENT_CONFIG_ENV_VAR)
+    if override:
+        return Path(override).expanduser().resolve()
+
+    candidates: list[Path] = []
+
+    # PyInstaller / frozen builds: keep config next to the executable for portability.
+    if getattr(sys, "frozen", False):  # pragma: no cover
+        try:
+            candidates.append(Path(sys.executable).resolve().with_name(PERSISTENT_CONFIG_FILENAME))
+        except Exception:
+            pass
+
+    # Dev checkout / portable folder: write alongside the project root.
+    candidates.append((PROJECT_ROOT / PERSISTENT_CONFIG_FILENAME).resolve())
+
+    # User config dir fallback (non-temp, user-writable).
+    home = Path.home()
+    if os.name == "nt":
+        base = os.environ.get("APPDATA") or os.environ.get("LOCALAPPDATA")
+        base_path = Path(base) if base else home
+        candidates.append(base_path / "srtforge" / PERSISTENT_CONFIG_FILENAME)
+    else:
+        base = os.environ.get("XDG_CONFIG_HOME")
+        base_path = Path(base) if base else (home / ".config")
+        candidates.append(base_path / "srtforge" / PERSISTENT_CONFIG_FILENAME)
+
+    # Prefer an existing config file if present.
+    for p in candidates:
+        try:
+            if p.exists():
+                return p
+        except Exception:
+            continue
+
+    # Otherwise choose the first whose parent looks writable; else last fallback.
+    for p in candidates:
+        try:
+            if p.parent.exists() and os.access(str(p.parent), os.W_OK):
+                return p
+        except Exception:
+            continue
+
+    return candidates[-1]
 
 
 @dataclass(slots=True)
@@ -156,7 +221,11 @@ def load_settings(path: Optional[Path] = None) -> AppSettings:
         if env_value:
             config_path = Path(env_value).expanduser()
         else:
-            config_path = PACKAGE_ROOT / DEFAULT_CONFIG_FILENAME
+            persistent = get_persistent_config_path()
+            if persistent.exists():
+                config_path = persistent
+            else:
+                config_path = PACKAGE_ROOT / DEFAULT_CONFIG_FILENAME
     config = AppSettings()
     missing_low_pri_key = True
     if config_path and Path(config_path).exists():
@@ -189,6 +258,9 @@ __all__ = [
     "PathsSettings",
     "SeparationSettings",
     "FV4Settings",
+    "PERSISTENT_CONFIG_FILENAME",
+    "PERSISTENT_CONFIG_ENV_VAR",
+    "get_persistent_config_path",
     "load_settings",
     "settings",
 ]
