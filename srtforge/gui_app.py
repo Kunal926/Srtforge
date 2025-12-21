@@ -2376,16 +2376,27 @@ class MainWindow(QtWidgets.QMainWindow):
         eta_width = fm.horizontalAdvance("0:00:00") + 24
 
         # Metadata: three chips (sr, ch, fps). Estimate a safe default width so
-        # common values like "23.976 FPS" don't get clipped.
+        # common values like "44.1 kHz" / "23.976 FPS" don't get clipped.
         chip_pad = 16  # QSS: padding: 2px 8px (left+right)
         chip_gap = 6   # layout spacing between chips
+        # Sample rates/FPS often include decimals (44.1 kHz / 23.976 FPS),
+        # which are wider than the integer examples used in the original
+        # estimate and can cause the last chip to clip.
+        sr_samples = ("44.1 kHz", "48 kHz", "96 kHz", "176.4 kHz", "192 kHz")
+        ch_samples = ("2 Ch", "6 Ch", "8 Ch")
+        fps_samples = ("23.976 FPS", "29.97 FPS", "59.94 FPS", "119.88 FPS")
+
+        sr_w = max(fm.horizontalAdvance(s) for s in sr_samples)
+        ch_w = max(fm.horizontalAdvance(s) for s in ch_samples)
+        fps_w = max(fm.horizontalAdvance(s) for s in fps_samples)
+
         meta_width = (
-            fm.horizontalAdvance("48 kHz")
-            + fm.horizontalAdvance("2 Ch")
-            + fm.horizontalAdvance("23.976 FPS")
+            sr_w
+            + ch_w
+            + fps_w
             + (chip_pad * 3)
             + (chip_gap * 2)
-            + 18  # slack for borders/rounding
+            + 24  # slack for borders/rounding/HiDPI
         )
 
         header.resizeSection(2, max(72, duration_width))
