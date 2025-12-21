@@ -2358,7 +2358,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # Roughly ~60 characters is a good balance for 1200px wide layouts.
         fm = self.queue_list.fontMetrics()
         avg_char = max(1, fm.averageCharWidth())
-        name_width = max(320, avg_char * 55)
+        name_width = max(315, avg_char * 52)
         header.resizeSection(0, name_width)
 
         # Status column: keep it fixed so it doesn't jump between Queued/
