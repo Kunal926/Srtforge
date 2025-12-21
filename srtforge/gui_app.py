@@ -3106,7 +3106,7 @@ class MainWindow(QtWidgets.QMainWindow):
             }}
             #QueueList QHeaderView::section {{
                 background-color: transparent;
-                color: {text_secondary};
+                color: #E3E3E6;
                 border: none;
                 border-right: 1px solid {border_hairline};
                 padding: 4px 8px;
