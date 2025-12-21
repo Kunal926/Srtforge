@@ -2125,15 +2125,15 @@ class MainWindow(QtWidgets.QMainWindow):
         # Single source of truth for user options (kept only in the Options dialog)
         self._basic_options = {
             "prefer_gpu": True,
-            "embed_subtitles": False,
+            "embed_subtitles": True,
             "burn_subtitles": False,
-            "cleanup_gpu": False,
+            "cleanup_gpu": True,
             "soft_embed_method": "auto",
-            "soft_embed_overwrite_source": False,  # NEW
+            "soft_embed_overwrite_source": True,  # NEW
             "srt_title": "Srtforge (English)",
             "srt_language": "eng",
-            "srt_default": False,
-            "srt_forced": False,
+            "srt_default": True,
+            "srt_forced": True,
             # NEW
             "srt_next_to_media": False,
         }
