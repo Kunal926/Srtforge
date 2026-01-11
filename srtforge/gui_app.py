@@ -1905,9 +1905,25 @@ class OptionsDialog(QtWidgets.QDialog):
         form.addRow("Allow untagged English fallback", self.allow_untagged)
 
         # FFmpeg
-        self.ff_prefer_center = QtWidgets.QCheckBox()
-        self.ff_prefer_center.setChecked(bool(initial_settings.ffmpeg.prefer_center))
-        form.addRow("Prefer center channel (FFmpeg pan)", self.ff_prefer_center)
+        self.ff_extraction_mode = QtWidgets.QComboBox()
+        self.ff_extraction_mode.addItem("Stereo Mix (Default)", "stereo_mix")
+        self.ff_extraction_mode.addItem("Dual Mono (Center Isolation)", "dual_mono_center")
+        current_mode = (getattr(initial_settings.ffmpeg, "extraction_mode", "stereo_mix") or "stereo_mix")
+        current_mode = str(current_mode).strip().lower()
+        idx = self.ff_extraction_mode.findData(current_mode)
+        if idx < 0:
+            idx = self.ff_extraction_mode.findData("stereo_mix")
+        self.ff_extraction_mode.setCurrentIndex(max(0, idx))
+        self.ff_extraction_mode.setToolTip(
+            "Stereo Mix: standard downmix of all channels (safest).\n"
+            "Dual Mono: if the source has a Center (FC) channel, extract it and map to L/R."
+        )
+        form.addRow("Audio extraction mode", self.ff_extraction_mode)
+        # Keep the Windows 11 popup chrome fixes consistent.
+        try:
+            self._combo_popup_fixers.append(_ComboPopupFixer(self.ff_extraction_mode, radius=12))
+        except Exception:
+            pass
 
         self.filter_chain = QtWidgets.QPlainTextEdit(initial_settings.ffmpeg.filter_chain or "")
         self.filter_chain.setMinimumHeight(80)
@@ -1975,7 +1991,7 @@ class OptionsDialog(QtWidgets.QDialog):
                 "output_dir": self.output_dir.text().strip() or None,
             },
             "ffmpeg": {
-                "prefer_center": self.ff_prefer_center.isChecked(),
+                "extraction_mode": str(self.ff_extraction_mode.currentData() or "stereo_mix"),
                 "filter_chain": self.filter_chain.toPlainText().strip(),
             },
             "separation": {
@@ -2090,7 +2106,16 @@ class OptionsDialog(QtWidgets.QDialog):
             bool(getattr(settings.separation, "allow_untagged_english", False))
         )
 
-        self.ff_prefer_center.setChecked(bool(getattr(settings.ffmpeg, "prefer_center", False)))
+        # FFmpeg extraction mode (dropdown)
+        try:
+            default_mode = getattr(settings.ffmpeg, "extraction_mode", "stereo_mix") or "stereo_mix"
+            default_mode = str(default_mode).strip().lower()
+            idx = self.ff_extraction_mode.findData(default_mode)
+            if idx < 0:
+                idx = self.ff_extraction_mode.findData("stereo_mix")
+            self.ff_extraction_mode.setCurrentIndex(max(0, idx))
+        except Exception:
+            self.ff_extraction_mode.setCurrentIndex(max(0, self.ff_extraction_mode.findData("stereo_mix")))
         self.filter_chain.setPlainText(
             str(getattr(settings.ffmpeg, "filter_chain", "") or "")
         )
@@ -4026,8 +4051,9 @@ class MainWindow(QtWidgets.QMainWindow):
                         "temp_dir": (legacy.value("adv_temp_dir", "", type=str) or "").strip() or None,
                         "output_dir": (legacy.value("adv_output_dir", "", type=str) or "").strip() or None,
                     }
+                    legacy_ff_prefer_center = legacy.value("adv_ff_prefer_center", False, type=bool)
                     base["ffmpeg"] = {
-                        "prefer_center": legacy.value("adv_ff_prefer_center", False, type=bool),
+                        "extraction_mode": "dual_mono_center" if legacy_ff_prefer_center else "stereo_mix",
                         "filter_chain": legacy.value("adv_filter_chain", settings.ffmpeg.filter_chain, type=str),
                     }
                     base["separation"] = {

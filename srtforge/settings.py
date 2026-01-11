@@ -15,6 +15,14 @@ from .config import FV4_CONFIG, FV4_MODEL, PACKAGE_ROOT, PROJECT_ROOT
 CONFIG_ENV_VAR = "SRTFORGE_CONFIG"
 DEFAULT_CONFIG_FILENAME = "config.yaml"
 
+# FFmpeg audio extraction mode values.
+#
+# - "stereo_mix" (default): standard stereo downmix of all channels.
+# - "dual_mono_center": if the source contains a Center channel (FC), extract
+#   only FC and map it to both L/R in the output WAV.
+EXTRACTION_MODE_STEREO_MIX = "stereo_mix"
+EXTRACTION_MODE_DUAL_MONO_CENTER = "dual_mono_center"
+
 # Single persistent config file used by the GUI (and optionally the CLI).
 #
 # Note: despite the ".config" extension, this file still contains YAML.
@@ -109,7 +117,8 @@ class PathsSettings:
 class FFmpegSettings:
     """Controls applied to FFmpeg processing steps."""
 
-    prefer_center: bool = False
+    # See EXTRACTION_MODE_* constants above.
+    extraction_mode: str = EXTRACTION_MODE_STEREO_MIX
     filter_chain: str = (
         "highpass=f=60,lowpass=f=10000,aformat=sample_fmts=flt,"
         "aresample=resampler=soxr:osf=flt:osr=16000"
@@ -232,6 +241,25 @@ def load_settings(path: Optional[Path] = None) -> AppSettings:
         with open(config_path, "r", encoding="utf8") as handle:
             loaded = yaml.safe_load(handle) or {}
         if isinstance(loaded, dict):
+            # Backward compatibility: older configs used ffmpeg.prefer_center (bool).
+            # Map to ffmpeg.extraction_mode.
+            ffmpeg_payload = loaded.get("ffmpeg") if isinstance(loaded.get("ffmpeg"), dict) else {}
+            if (
+                ffmpeg_payload
+                and "extraction_mode" not in ffmpeg_payload
+                and "prefer_center" in ffmpeg_payload
+            ):
+                prefer_center_value = _coerce_value(ffmpeg_payload.get("prefer_center"), bool)
+                migrated_mode = (
+                    EXTRACTION_MODE_DUAL_MONO_CENTER
+                    if bool(prefer_center_value)
+                    else EXTRACTION_MODE_STEREO_MIX
+                )
+                patched_ffmpeg = dict(ffmpeg_payload)
+                patched_ffmpeg["extraction_mode"] = migrated_mode
+                loaded = dict(loaded)
+                loaded["ffmpeg"] = patched_ffmpeg
+
             parakeet_payload = loaded.get("parakeet") if isinstance(loaded.get("parakeet"), dict) else {}
             missing_low_pri_key = not bool(parakeet_payload and "use_low_priority_cuda_stream" in parakeet_payload)
             _merge_dataclass(config, loaded)
@@ -253,6 +281,8 @@ settings = load_settings()
 
 __all__ = [
     "AppSettings",
+    "EXTRACTION_MODE_DUAL_MONO_CENTER",
+    "EXTRACTION_MODE_STEREO_MIX",
     "FFmpegSettings",
     "ParakeetSettings",
     "PathsSettings",
