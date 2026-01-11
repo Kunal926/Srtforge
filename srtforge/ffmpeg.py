@@ -175,10 +175,27 @@ class FFmpegTooling:
         output: Path,
         sample_rate: int = 44100,
         channels: int = 2,
+        *,
+        extraction_mode: str = "stereo_mix",
     ) -> Path:
-        """Extract an audio stream to PCM float at ``sample_rate`` and ``channels``."""
+        """Extract an audio stream to PCM float at ``sample_rate``.
 
-        filter_chain = f"aresample=resampler=soxr:osf=flt:osr={sample_rate}:precision=33"
+        ``extraction_mode`` controls how multi-channel sources are handled:
+
+        - ``stereo_mix`` (default): Standard stereo downmix of all source channels.
+        - ``dual_mono_center``: Extract only the Center (FC) channel and map it to
+          both Left and Right (dual-mono stereo). This requires the input stream to
+          have a Center channel; callers should probe and fall back to ``stereo_mix``
+          when no Center channel is present.
+        """
+
+        base_chain = f"aresample=resampler=soxr:osf=flt:osr={sample_rate}:precision=33"
+        mode = (extraction_mode or "stereo_mix").strip().lower()
+        if mode == "dual_mono_center":
+            # Map center (FC) to both L/R.
+            filter_chain = f"pan=stereo|c0=FC|c1=FC,{base_chain}"
+        else:
+            filter_chain = base_chain
         command = [
             self.ffmpeg_bin,
             "-y",

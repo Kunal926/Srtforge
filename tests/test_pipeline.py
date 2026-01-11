@@ -22,8 +22,17 @@ class DummyTools:
             )
         ]
 
-    def extract_audio_stream(self, media: Path, stream_index: int, output: Path, sample_rate: int, channels: int):
-        self.calls.append(("extract", stream_index, sample_rate, channels))
+    def extract_audio_stream(
+        self,
+        media: Path,
+        stream_index: int,
+        output: Path,
+        sample_rate: int,
+        channels: int,
+        *,
+        extraction_mode: str = "stereo_mix",
+    ):
+        self.calls.append(("extract", stream_index, sample_rate, channels, extraction_mode))
         output.write_bytes(b"pcm")
         return output
 
@@ -98,6 +107,7 @@ def test_pipeline_executes_parakeet_steps(tmp_path, monkeypatch):
         prefer_gpu=False,
         separation_prefer_gpu=False,
         output_path=output_path,
+        ffmpeg_extraction_mode="stereo_mix",
     )
     result = Pipeline(config).run()
 
@@ -111,13 +121,58 @@ def test_pipeline_executes_parakeet_steps(tmp_path, monkeypatch):
     isolate_call = tools.calls[1]
     assert isolate_call[-1] is False
     preprocess_call = tools.calls[-1]
-    if config.ffmpeg_prefer_center:
-        assert preprocess_call[2].startswith("pan=mono")
-        assert preprocess_call[2].endswith(config.ffmpeg_filter_chain)
-    else:
-        assert preprocess_call[2] == config.ffmpeg_filter_chain
+    assert preprocess_call[2] == config.ffmpeg_filter_chain
+    extract_call = tools.calls[0]
+    assert extract_call[-1] == "stereo_mix"
     assert result.output_path == output_path
     assert result.output_path.exists()
     assert not result.skipped
     assert result.run_id
     assert result.output_path.read_text().startswith("1\n00:00:00,000")
+
+
+def test_pipeline_falls_back_when_dual_mono_requested_without_center_channel(tmp_path, monkeypatch):
+    media = tmp_path / "episode.mkv"
+    media.write_bytes(b"video")
+
+    tools = DummyTools()
+
+    monkeypatch.setattr("srtforge.pipeline.probe_video_fps", lambda _: 23.976)
+
+    def fake_parakeet(
+        preprocessed: Path,
+        srt_path: Path,
+        *,
+        fps: float,
+        nemo_local,
+        force_float32: bool,
+        prefer_gpu: bool,
+        rel_pos_local_attn,
+        subsampling_conv_chunking: bool,
+        gpu_limit_percent: int,
+        use_low_priority_cuda_stream: bool,
+        run_logger=None,
+    ):
+        srt_path.write_text("1\n00:00:00,000 --> 00:00:01,000\nHello\n\n")
+        return [{"start": 0.0, "end": 1.0, "text": "Hello"}]
+
+    monkeypatch.setattr("srtforge.pipeline.parakeet_to_srt", fake_parakeet)
+
+    output_path = media.with_suffix(".srt")
+    config = PipelineConfig(
+        media_path=media,
+        tools=tools,
+        prefer_gpu=False,
+        separation_prefer_gpu=False,
+        output_path=output_path,
+        ffmpeg_extraction_mode="dual_mono_center",
+    )
+
+    result = Pipeline(config).run()
+
+    # Dummy stream is stereo (no center); pipeline should fall back to stereo_mix.
+    extract_call = tools.calls[0]
+    assert extract_call[0] == "extract"
+    assert extract_call[-1] == "stereo_mix"
+    assert result.output_path == output_path
+    assert result.output_path.exists()
