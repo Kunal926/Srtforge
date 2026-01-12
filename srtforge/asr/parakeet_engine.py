@@ -308,13 +308,23 @@ def parakeet_to_srt(
     step = run_logger.step if run_logger else None
 
     with (step("ASR: model load") if step else nullcontext()):
-        asr, _, use_cuda = load_parakeet(
+        asr, dtype, use_cuda = load_parakeet(
             nemo_local=nemo_local,
             force_float32=force_float32,
             prefer_gpu=prefer_gpu,
             gpu_limit_percent=gpu_limit_percent,
             run_logger=run_logger,
         )
+
+    # NeMo mutators (e.g. change_attention_model) may create new layers in fp32.
+    # If we requested bf16/fp16, re-apply the dtype after such mutations.
+    def _reapply_model_dtype() -> None:
+        nonlocal asr, dtype
+        if not use_cuda or torch is None or dtype is None:
+            return
+        if dtype == torch.float32:
+            return
+        asr = asr.to(dtype=dtype)
     if run_logger:
         device = "GPU" if use_cuda else "CPU"
         run_logger.log(f"ASR device: {device}")
@@ -327,6 +337,7 @@ def parakeet_to_srt(
                 try:
                     asr.change_subsampling_conv_chunking_factor(1)
                     setattr(asr, "_parakeet_subsampling_conv_chunking_factor", 1)
+                    _reapply_model_dtype()
                     _log_event(run_logger, "Applied Parakeet subsampling conv chunking factor=1")
                 except Exception as exc:
                     _log_event(run_logger, f"Failed to apply subsampling conv chunking factor=1 ({exc})")
@@ -369,6 +380,7 @@ def parakeet_to_srt(
                 long_audio_settings_applied = True
                 setattr(asr, "_parakeet_long_audio_applied", True)
                 setattr(asr, "_parakeet_rel_pos_local_attn_window", desired_local_attn_window)
+                _reapply_model_dtype()
                 success_message = "Long audio settings applied: Local Attention."
                 print(success_message, file=sys.stderr)
                 _log_event(run_logger, success_message)
