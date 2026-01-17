@@ -7,7 +7,7 @@ QWidget {
 
 #HeaderLabel {
     font-size: 22px;
-    font-weight: 500;
+    font-weight: 600;
     padding: 12px 0;
 }
 
@@ -75,7 +75,7 @@ QPlainTextEdit {
 
 QComboBox QAbstractItemView {
     border-radius: 12px;
-    border: 1px solid #cbd5f5;
+    border: 1px solid #E2E8F0;
     selection-background-color: {ACCENT_COLOR};
 }
 
@@ -101,4 +101,19 @@ QScrollBar::handle:vertical:hover {
 QScrollBar::add-line:vertical,
 QScrollBar::sub-line:vertical {
     height: 0;
+}
+
+QToolButton#QueueOpenButton {
+    border: none;
+    padding: 2px 8px;
+    border-radius: 999px;
+    color: {ACCENT_COLOR};
+}
+
+QToolButton#QueueOpenButton:disabled {
+    color: #9CA3AF;
+}
+
+QToolButton#QueueOpenButton:hover:!disabled {
+    background-color: rgba(22, 163, 74, 0.08);
 }

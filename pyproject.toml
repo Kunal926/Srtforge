@@ -14,7 +14,12 @@ license = {text = "MIT"}
 [project.scripts]
 srtforge = "srtforge.cli:app"
 srtforge-sonarr = "srtforge.sonarr_hook:main"
+srtforge-gui = "srtforge.gui_app:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["srtforge*"]
+
+[tool.setuptools.package-data]
+"srtforge.assets.styles" = ["win11.qss"]
+"srtforge.assets.images" = ["*.png", "*.gif"]

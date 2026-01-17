@@ -2,7 +2,7 @@ paths:
   temp_dir: ./tmp
   output_dir: ./output
 ffmpeg:
-  prefer_center: true
+  extraction_mode: stereo_mix
   filter_chain: "highpass=f=60,lowpass=f=10000,aformat=sample_fmts=flt,aresample=resampler=soxr:osf=flt:osr=16000"
 separation:
   backend: fv4
@@ -15,3 +15,7 @@ separation:
 parakeet:
   force_float32: true
   prefer_gpu: true
+  rel_pos_local_attn: [768, 768]
+  subsampling_conv_chunking: false
+  gpu_limit_percent: 100
+  use_low_priority_cuda_stream: false
