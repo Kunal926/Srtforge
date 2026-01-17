@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from threading import Thread
 from time import monotonic
 from typing import Iterator, Optional
 from uuid import uuid4
@@ -61,11 +61,11 @@ def _cleanup_old_logs_task(max_age_hours: int) -> None:
 
 def cleanup_old_logs(max_age_hours: int = 24) -> None:
     """Remove ``*.log`` files in :data:`LOGS_DIR` older than ``max_age_hours`` (non-blocking)."""
-    # Use a single-thread executor for the cleanup task to avoid blocking startup.
-    # We fire and forget, not waiting for the result.
-    executor = ThreadPoolExecutor(max_workers=1)
-    executor.submit(_cleanup_old_logs_task, max_age_hours)
-    executor.shutdown(wait=False)
+    # Use a daemon thread for fire-and-forget cleanup to avoid blocking startup.
+    # Daemon threads don't prevent the application from exiting, but they ensure
+    # the task can complete if the application continues running.
+    thread = Thread(target=_cleanup_old_logs_task, args=(max_age_hours,), daemon=True)
+    thread.start()
 
 
 @dataclass(slots=True)
