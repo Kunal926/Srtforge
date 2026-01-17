@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import atexit
+import logging
 from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeoutError
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -16,6 +19,23 @@ from rich.console import Console
 from .config import PROJECT_ROOT
 
 _console = Console()
+_cleanup_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="log-cleanup")
+
+
+def _shutdown_executor() -> None:
+    """Shutdown the executor on module unload.
+    
+    Note: Uses wait=True to ensure cleanup completes, but since cleanup tasks
+    are designed to be fast (simple file deletion), this should not cause
+    significant delays during interpreter shutdown.
+    """
+    _cleanup_executor.shutdown(wait=True)
+
+
+# Ensure executor is properly shutdown when module is unloaded
+atexit.register(_shutdown_executor)
+
+logger = logging.getLogger(__name__)
 
 LOGS_DIR = PROJECT_ROOT / "logs"
 LATEST_LOG = LOGS_DIR / "srtforge.log"
@@ -56,16 +76,36 @@ def _cleanup_old_logs_task(max_age_hours: int) -> None:
                 except OSError:
                     continue
     except Exception as e:
-        _console.log(f"[yellow]Warning[/yellow] Failed to cleanup old logs: {e}")
+        # Use standard logging for thread-safe error reporting
+        logger.warning("Failed to cleanup old logs: %s", e)
 
 
-def cleanup_old_logs(max_age_hours: int = 24) -> None:
-    """Remove ``*.log`` files in :data:`LOGS_DIR` older than ``max_age_hours`` (non-blocking)."""
-    # Use a single-thread executor for the cleanup task to avoid blocking startup.
-    # We fire and forget, not waiting for the result.
-    executor = ThreadPoolExecutor(max_workers=1)
-    executor.submit(_cleanup_old_logs_task, max_age_hours)
-    executor.shutdown(wait=False)
+def cleanup_old_logs(max_age_hours: int = 24, *, wait: bool = True, timeout: float = 30.0) -> None:
+    """Remove ``*.log`` files in :data:`LOGS_DIR` older than ``max_age_hours``.
+    
+    This function submits a cleanup task to a background thread. By default,
+    it waits for the cleanup to complete to avoid race conditions with concurrent
+    log file creation. Set ``wait=False`` for fire-and-forget cleanup.
+    
+    Args:
+        max_age_hours: Maximum age in hours for log files to keep
+        wait: If True, blocks until cleanup completes. If False, returns immediately.
+        timeout: Maximum time in seconds to wait for cleanup when wait=True.
+            Ignored when wait=False. (default: 30s)
+    
+    Note:
+        If timeout occurs while waiting, the cleanup task continues running in the
+        background. The timeout only affects how long this function blocks, not the
+        cleanup task itself.
+    """
+    # Use a module-level executor to avoid resource leaks
+    future = _cleanup_executor.submit(_cleanup_old_logs_task, max_age_hours)
+    if wait:
+        try:
+            # Wait for cleanup to complete to avoid race conditions
+            future.result(timeout=timeout)
+        except FutureTimeoutError:
+            logger.warning("Log cleanup timed out after %s seconds (task continues in background)", timeout)
 
 
 @dataclass(slots=True)
