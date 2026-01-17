@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import atexit
 import logging
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -22,7 +22,12 @@ _cleanup_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="log-cl
 
 
 def _shutdown_executor() -> None:
-    """Shutdown the executor with a timeout to prevent hanging on exit."""
+    """Shutdown the executor on module unload.
+    
+    Note: Uses wait=True to ensure cleanup completes, but since cleanup tasks
+    are designed to be fast (simple file deletion), this should not cause
+    significant delays during interpreter shutdown.
+    """
     _cleanup_executor.shutdown(wait=True, cancel_futures=False)
 
 
@@ -84,7 +89,8 @@ def cleanup_old_logs(max_age_hours: int = 24, wait: bool = True, timeout: float 
     Args:
         max_age_hours: Maximum age in hours for log files to keep
         wait: If True, blocks until cleanup completes. If False, returns immediately.
-        timeout: Maximum time in seconds to wait for cleanup when wait=True (default: 30s)
+        timeout: Maximum time in seconds to wait for cleanup when wait=True.
+            Ignored when wait=False. (default: 30s)
     
     Note:
         If timeout occurs while waiting, the cleanup task continues running in the
@@ -97,7 +103,7 @@ def cleanup_old_logs(max_age_hours: int = 24, wait: bool = True, timeout: float 
         try:
             # Wait for cleanup to complete to avoid race conditions
             future.result(timeout=timeout)
-        except TimeoutError:
+        except FutureTimeoutError:
             logger.warning("Log cleanup timed out after %s seconds (task continues in background)", timeout)
 
 
