@@ -20,8 +20,14 @@ from .config import PROJECT_ROOT
 _console = Console()
 _cleanup_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="log-cleanup")
 
+
+def _shutdown_executor() -> None:
+    """Shutdown the executor with a timeout to prevent hanging on exit."""
+    _cleanup_executor.shutdown(wait=True, cancel_futures=False)
+
+
 # Ensure executor is properly shutdown when module is unloaded
-atexit.register(_cleanup_executor.shutdown, wait=True)
+atexit.register(_shutdown_executor)
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +85,11 @@ def cleanup_old_logs(max_age_hours: int = 24, wait: bool = True, timeout: float 
         max_age_hours: Maximum age in hours for log files to keep
         wait: If True, blocks until cleanup completes. If False, returns immediately.
         timeout: Maximum time in seconds to wait for cleanup when wait=True (default: 30s)
+    
+    Note:
+        If timeout occurs while waiting, the cleanup task continues running in the
+        background. The timeout only affects how long this function blocks, not the
+        cleanup task itself.
     """
     # Use a module-level executor to avoid resource leaks
     future = _cleanup_executor.submit(_cleanup_old_logs_task, max_age_hours)
@@ -87,7 +98,7 @@ def cleanup_old_logs(max_age_hours: int = 24, wait: bool = True, timeout: float 
             # Wait for cleanup to complete to avoid race conditions
             future.result(timeout=timeout)
         except TimeoutError:
-            logger.warning("Log cleanup timed out after %s seconds", timeout)
+            logger.warning("Log cleanup timed out after %s seconds (task continues in background)", timeout)
 
 
 @dataclass(slots=True)
