@@ -130,9 +130,11 @@ def write_srt(events: List[Dict[str,Any]], out_path: str, diag_dir: str | None =
 
 # helper: cps of an event
 def _cps_of(ev: Dict[str, Any]) -> float:
-    txt = " ".join((w.get("word", "") or "").strip() for w in (ev.get("words") or []))
+    txt = (ev.get("text") or "")
+    if not txt:
+        txt = " ".join((w.get("word", "") or "").strip() for w in (ev.get("words") or []))
     dur = max(0.001, ev["end"] - ev["start"])
-    return len(txt) / dur
+    return len(txt.replace("\n", " ")) / dur
 
 def _merged_words(a: Dict[str, Any], b: Dict[str, Any]):
     return (a.get("words") or []) + (b.get("words") or [])
