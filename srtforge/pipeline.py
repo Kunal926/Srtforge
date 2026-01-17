@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import shutil
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterable, Optional
@@ -16,7 +16,11 @@ from .asr.parakeet_engine import parakeet_to_srt
 from .config import DEFAULT_OUTPUT_SUFFIX, FV4_CONFIG, FV4_MODEL, MODELS_DIR, PARAKEET_MODEL
 from .ffmpeg import DEFAULT_TOOLS, AudioStream, FFmpegTooling
 from .logging import RunLogger, get_console, status
-from .settings import settings
+from .settings import (
+    EXTRACTION_MODE_DUAL_MONO_CENTER,
+    EXTRACTION_MODE_STEREO_MIX,
+    settings,
+)
 from .utils import probe_video_fps
 
 
@@ -53,9 +57,13 @@ class PipelineConfig:
     separation_prefer_center: bool = settings.separation.prefer_center
     separation_prefer_gpu: bool = settings.separation.prefer_gpu
     ffmpeg_filter_chain: str = settings.ffmpeg.filter_chain
-    ffmpeg_prefer_center: bool = settings.ffmpeg.prefer_center
+    ffmpeg_extraction_mode: str = settings.ffmpeg.extraction_mode
     force_float32: bool = settings.parakeet.force_float32
     prefer_gpu: bool = settings.parakeet.prefer_gpu
+    rel_pos_local_attn: list[int] = field(default_factory=lambda: list(settings.parakeet.rel_pos_local_attn))
+    subsampling_conv_chunking: bool = settings.parakeet.subsampling_conv_chunking
+    gpu_limit_percent: int = settings.parakeet.gpu_limit_percent
+    use_low_priority_cuda_stream: bool = settings.parakeet.use_low_priority_cuda_stream
     allow_untagged_english: bool = settings.separation.allow_untagged_english
 
 
@@ -132,12 +140,50 @@ class Pipeline:
                     with status(
                         f"Extracting English audio to PCM f32 {self.config.sample_rate} Hz"
                     ), run_logger.step("Extract English audio"):
+                        # Decide which extraction mode to use. We apply center isolation
+                        # during extraction (not during preprocessing) so we never try to
+                        # pan a 2-channel file for a missing FC channel.
+                        requested_mode = (self.config.ffmpeg_extraction_mode or "").strip().lower()
+                        layout = getattr(english_stream, "channel_layout", None)
+                        channels = english_stream.channels or 0
+                        has_center = _has_center_channel(layout, channels)
+
+                        extraction_mode = requested_mode
+                        if extraction_mode in {"", "default"}:
+                            extraction_mode = EXTRACTION_MODE_STEREO_MIX
+
+                        if extraction_mode not in {
+                            EXTRACTION_MODE_STEREO_MIX,
+                            EXTRACTION_MODE_DUAL_MONO_CENTER,
+                        }:
+                            run_logger.log(
+                                "Warning: Unknown ffmpeg.extraction_mode="
+                                f"{requested_mode!r}; falling back to {EXTRACTION_MODE_STEREO_MIX}."
+                            )
+                            self.console.log(
+                                "[yellow]Warning[/yellow] Unknown ffmpeg.extraction_mode="
+                                f"{requested_mode!r}; falling back to {EXTRACTION_MODE_STEREO_MIX}."
+                            )
+                            extraction_mode = EXTRACTION_MODE_STEREO_MIX
+
+                        if extraction_mode == EXTRACTION_MODE_DUAL_MONO_CENTER and not has_center:
+                            run_logger.log(
+                                "Warning: extraction_mode=dual_mono_center requested, but the selected "
+                                "audio stream has no detectable Center (FC) channel; falling back to stereo_mix."
+                            )
+                            self.console.log(
+                                "[yellow]Warning[/yellow] Dual Mono (Center Isolation) requested, but "
+                                "no Center (FC) channel was detected; falling back to Stereo Mix."
+                            )
+                            extraction_mode = EXTRACTION_MODE_STEREO_MIX
+
                         self.config.tools.extract_audio_stream(
                             media_path,
                             english_stream.index,
                             extracted,
                             sample_rate=self.config.sample_rate,
                             channels=2,
+                            extraction_mode=extraction_mode,
                         )
 
                     separated_source = extracted
@@ -162,19 +208,10 @@ class Pipeline:
                         run_logger.log_error(message)
                         raise ValueError(message)
 
+                    # Preprocessing should never try to "pan" the already-extracted audio.
+                    # It should just apply the filter chain (HPF/LPF + resample) and downmix
+                    # the resulting stereo to mono.
                     filter_chain = self.config.ffmpeg_filter_chain
-                    pan_expr = None
-                    layout = getattr(english_stream, "channel_layout", None)
-                    channels = english_stream.channels or 0
-                    has_center = _has_center_channel(layout, channels)
-                    if (
-                        self.config.ffmpeg_prefer_center
-                        and channels >= 2
-                        and (not filter_chain or "pan=" not in filter_chain)
-                    ):
-                        pan_expr = "pan=mono|c0=FC" if has_center else "pan=mono|c0=0.5*FL+0.5*FR"
-                    if pan_expr:
-                        filter_chain = f"{pan_expr},{filter_chain}" if filter_chain else pan_expr
                     with status("Applying FFmpeg preprocessing filters"), run_logger.step(
                         "FFmpeg preprocessing"
                     ):
@@ -197,6 +234,10 @@ class Pipeline:
                             nemo_local=nemo_local,
                             force_float32=self.config.force_float32,
                             prefer_gpu=self.config.prefer_gpu,
+                            rel_pos_local_attn=self.config.rel_pos_local_attn,
+                            subsampling_conv_chunking=self.config.subsampling_conv_chunking,
+                            gpu_limit_percent=self.config.gpu_limit_percent,
+                            use_low_priority_cuda_stream=self.config.use_low_priority_cuda_stream,
                             run_logger=run_logger,
                         )
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import sys
 from dataclasses import dataclass, field, fields, is_dataclass
 from pathlib import Path
 from typing import Any, Optional, Union, get_args, get_origin
@@ -13,6 +14,20 @@ from .config import FV4_CONFIG, FV4_MODEL, PACKAGE_ROOT, PROJECT_ROOT
 
 CONFIG_ENV_VAR = "SRTFORGE_CONFIG"
 DEFAULT_CONFIG_FILENAME = "config.yaml"
+
+# FFmpeg audio extraction mode values.
+#
+# - "stereo_mix" (default): standard stereo downmix of all channels.
+# - "dual_mono_center": if the source contains a Center channel (FC), extract
+#   only FC and map it to both L/R in the output WAV.
+EXTRACTION_MODE_STEREO_MIX = "stereo_mix"
+EXTRACTION_MODE_DUAL_MONO_CENTER = "dual_mono_center"
+
+# Single persistent config file used by the GUI (and optionally the CLI).
+#
+# Note: despite the ".config" extension, this file still contains YAML.
+PERSISTENT_CONFIG_FILENAME = "srtforge.config"
+PERSISTENT_CONFIG_ENV_VAR = "SRTFORGE_PERSISTENT_CONFIG"
 
 
 def _resolve_path(value: str | Path | None) -> Optional[Path]:
@@ -32,6 +47,64 @@ def _unwrap_optional(type_hint: Any) -> Any:
     return type_hint
 
 
+def get_persistent_config_path() -> Path:
+    """Return the default on-disk config file used for persisting GUI/CLI settings.
+
+    Selection order:
+      1) $SRTFORGE_PERSISTENT_CONFIG (explicit override)
+      2) If running as a frozen executable (PyInstaller), next to the executable
+      3) PROJECT_ROOT/srtforge.config (dev checkout / portable runs)
+      4) OS user config dir (~/.config/srtforge/srtforge.config or %APPDATA%\\srtforge\\srtforge.config)
+
+    This function does not create files/directories; it only chooses a path.
+    """
+
+    override = os.environ.get(PERSISTENT_CONFIG_ENV_VAR)
+    if override:
+        return Path(override).expanduser().resolve()
+
+    candidates: list[Path] = []
+
+    # PyInstaller / frozen builds: keep config next to the executable for portability.
+    if getattr(sys, "frozen", False):  # pragma: no cover
+        try:
+            candidates.append(Path(sys.executable).resolve().with_name(PERSISTENT_CONFIG_FILENAME))
+        except Exception:
+            pass
+
+    # Dev checkout / portable folder: write alongside the project root.
+    candidates.append((PROJECT_ROOT / PERSISTENT_CONFIG_FILENAME).resolve())
+
+    # User config dir fallback (non-temp, user-writable).
+    home = Path.home()
+    if os.name == "nt":
+        base = os.environ.get("APPDATA") or os.environ.get("LOCALAPPDATA")
+        base_path = Path(base) if base else home
+        candidates.append(base_path / "srtforge" / PERSISTENT_CONFIG_FILENAME)
+    else:
+        base = os.environ.get("XDG_CONFIG_HOME")
+        base_path = Path(base) if base else (home / ".config")
+        candidates.append(base_path / "srtforge" / PERSISTENT_CONFIG_FILENAME)
+
+    # Prefer an existing config file if present.
+    for p in candidates:
+        try:
+            if p.exists():
+                return p
+        except Exception:
+            continue
+
+    # Otherwise choose the first whose parent looks writable; else last fallback.
+    for p in candidates:
+        try:
+            if p.parent.exists() and os.access(str(p.parent), os.W_OK):
+                return p
+        except Exception:
+            continue
+
+    return candidates[-1]
+
+
 @dataclass(slots=True)
 class PathsSettings:
     """Filesystem locations used by the pipeline."""
@@ -44,7 +117,8 @@ class PathsSettings:
 class FFmpegSettings:
     """Controls applied to FFmpeg processing steps."""
 
-    prefer_center: bool = False
+    # See EXTRACTION_MODE_* constants above.
+    extraction_mode: str = EXTRACTION_MODE_STEREO_MIX
     filter_chain: str = (
         "highpass=f=60,lowpass=f=10000,aformat=sample_fmts=flt,"
         "aresample=resampler=soxr:osf=flt:osr=16000"
@@ -67,6 +141,7 @@ class SeparationSettings:
     sep_hz: int = 48000
     prefer_center: bool = False
     prefer_gpu: bool = True
+    allow_untagged_english: bool = False
     fv4: FV4Settings = field(default_factory=FV4Settings)
 
 
@@ -74,8 +149,28 @@ class SeparationSettings:
 class ParakeetSettings:
     """Configuration forwarded to the Parakeet ASR stage."""
 
+    # Keep float32 enabled by default for maximum compatibility.
     force_float32: bool = True
+
+    # Prefer CUDA when available (mirrors the GUI Device dropdown / CLI --cpu flag).
     prefer_gpu: bool = True
+
+    # Parakeet long-audio local attention window used when change_attention_model()
+    # is applied. Lower values reduce VRAM usage at the cost of context/accuracy.
+    rel_pos_local_attn: list[int] = field(default_factory=lambda: [768, 768])
+
+    # When enabled, apply asr.change_subsampling_conv_chunking_factor(1) after the
+    # model is loaded. This can reduce memory pressure on long audio.
+    subsampling_conv_chunking: bool = False
+
+    # Best-effort GPU limiting knob. 100 preserves current behavior.
+    # Values < 100 may cap per-process CUDA allocator memory and/or use a lower
+    # priority CUDA stream during inference so the desktop stays responsive.
+    gpu_limit_percent: int = 100
+
+    # When enabled, Parakeet inference runs on a low-priority CUDA stream to improve
+    # desktop responsiveness on display-attached GPUs. This is independent of gpu_limit_percent.
+    use_low_priority_cuda_stream: bool = False
 
 
 @dataclass(slots=True)
@@ -135,18 +230,50 @@ def load_settings(path: Optional[Path] = None) -> AppSettings:
         if env_value:
             config_path = Path(env_value).expanduser()
         else:
-            config_path = PACKAGE_ROOT / DEFAULT_CONFIG_FILENAME
+            persistent = get_persistent_config_path()
+            if persistent.exists():
+                config_path = persistent
+            else:
+                config_path = PACKAGE_ROOT / DEFAULT_CONFIG_FILENAME
     config = AppSettings()
+    missing_low_pri_key = True
     if config_path and Path(config_path).exists():
         with open(config_path, "r", encoding="utf8") as handle:
-            payload = yaml.safe_load(handle) or {}
-        if isinstance(payload, dict):
-            _merge_dataclass(config, payload)
+            loaded = yaml.safe_load(handle) or {}
+        if isinstance(loaded, dict):
+            # Backward compatibility: older configs used ffmpeg.prefer_center (bool).
+            # Map to ffmpeg.extraction_mode.
+            ffmpeg_payload = loaded.get("ffmpeg") if isinstance(loaded.get("ffmpeg"), dict) else {}
+            if (
+                ffmpeg_payload
+                and "extraction_mode" not in ffmpeg_payload
+                and "prefer_center" in ffmpeg_payload
+            ):
+                prefer_center_value = _coerce_value(ffmpeg_payload.get("prefer_center"), bool)
+                migrated_mode = (
+                    EXTRACTION_MODE_DUAL_MONO_CENTER
+                    if bool(prefer_center_value)
+                    else EXTRACTION_MODE_STEREO_MIX
+                )
+                patched_ffmpeg = dict(ffmpeg_payload)
+                patched_ffmpeg["extraction_mode"] = migrated_mode
+                loaded = dict(loaded)
+                loaded["ffmpeg"] = patched_ffmpeg
+
+            parakeet_payload = loaded.get("parakeet") if isinstance(loaded.get("parakeet"), dict) else {}
+            missing_low_pri_key = not bool(parakeet_payload and "use_low_priority_cuda_stream" in parakeet_payload)
+            _merge_dataclass(config, loaded)
+
     # Ensure FV4 paths default to package data when left relative
     config.separation.fv4.cfg = _resolve_path(config.separation.fv4.cfg)
     config.separation.fv4.ckpt = _resolve_path(config.separation.fv4.ckpt)
     config.paths.temp_dir = _resolve_path(config.paths.temp_dir)
     config.paths.output_dir = _resolve_path(config.paths.output_dir)
+
+    # Backward compatibility: older configs coupled gpu_limit_percent<100 to low-priority streams.
+    if missing_low_pri_key and int(getattr(config.parakeet, "gpu_limit_percent", 100) or 100) < 100:
+        config.parakeet.use_low_priority_cuda_stream = True
+
     return config
 
 
@@ -154,11 +281,16 @@ settings = load_settings()
 
 __all__ = [
     "AppSettings",
+    "EXTRACTION_MODE_DUAL_MONO_CENTER",
+    "EXTRACTION_MODE_STEREO_MIX",
     "FFmpegSettings",
     "ParakeetSettings",
     "PathsSettings",
     "SeparationSettings",
     "FV4Settings",
+    "PERSISTENT_CONFIG_FILENAME",
+    "PERSISTENT_CONFIG_ENV_VAR",
+    "get_persistent_config_path",
     "load_settings",
     "settings",
 ]

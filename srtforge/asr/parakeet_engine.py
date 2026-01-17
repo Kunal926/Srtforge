@@ -37,16 +37,45 @@ except Exception as exc:  # pragma: no cover - delay failure until used
     _IMPORT_ERROR = exc
 
 # Cache so we don't repeatedly tear down the Parakeet model
-_MODEL_CACHE = None          # type: ignore[var-annotated]
-_MODEL_CACHE_DTYPE = None    # type: ignore[var-annotated]
-_MODEL_CACHE_USE_CUDA = None # type: ignore[var-annotated]
-_MODEL_CACHE_KEY = None      # type: ignore[var-annotated]
+_MODEL_CACHE: Optional["nemo_asr.models.ASRModel"] = None
+_MODEL_CACHE_DTYPE: Optional[TorchDType] = None
+_MODEL_CACHE_USE_CUDA: Optional[bool] = None
+_MODEL_CACHE_KEY: Optional[Tuple[Optional[str], bool, bool, int]] = None
 
 from ..post.srt_utils import postprocess_segments, write_srt  # noqa: E402
 from ..logging import RunLogger
 
 
 LONG_AUDIO_THRESHOLD_S = 480.0
+DEFAULT_REL_POS_LOCAL_ATTN: tuple[int, int] = (768, 768)
+
+
+def _clamp_percent(value: object, default: int = 100) -> int:
+    try:
+        pct = int(value)  # type: ignore[arg-type]
+    except Exception:
+        return default
+    return max(1, min(100, pct))
+
+
+def _normalize_rel_pos_local_attn_window(value: object) -> list[int]:
+    """
+    Normalize rel_pos_local_attn into [left, right] with sane defaults.
+    Accepts list/tuple; anything else falls back to DEFAULT_REL_POS_LOCAL_ATTN.
+    """
+    if isinstance(value, (list, tuple)) and len(value) >= 2:
+        try:
+            left = int(value[0])
+            right = int(value[1])
+        except Exception:
+            left, right = DEFAULT_REL_POS_LOCAL_ATTN
+    else:
+        left, right = DEFAULT_REL_POS_LOCAL_ATTN
+
+    # Keep values positive and non-zero; otherwise revert.
+    if left <= 0 or right <= 0:
+        left, right = DEFAULT_REL_POS_LOCAL_ATTN
+    return [left, right]
 
 
 def _probe_audio_duration_seconds(path: Path) -> Optional[float]:
@@ -85,6 +114,7 @@ def load_parakeet(
     nemo_local: Optional[Path] = None,
     force_float32: bool = True,
     prefer_gpu: bool = True,
+    gpu_limit_percent: int = 100,
     *,
     run_logger: Optional[RunLogger] = None,
 ) -> Tuple[nemo_asr.models.ASRModel, Optional[TorchDType], bool]:
@@ -98,11 +128,26 @@ def load_parakeet(
 
     global _MODEL_CACHE, _MODEL_CACHE_DTYPE, _MODEL_CACHE_USE_CUDA, _MODEL_CACHE_KEY
 
+    gpu_limit_percent = _clamp_percent(gpu_limit_percent, default=100)
     cache_key = (
         str(nemo_local.resolve()) if nemo_local else None,
         bool(force_float32),
         bool(prefer_gpu),
+        int(gpu_limit_percent),
     )
+
+    # If settings changed, clear the old cached model to avoid holding VRAM.
+    if _MODEL_CACHE is not None and _MODEL_CACHE_KEY != cache_key:
+        _log_event(run_logger, "Parakeet settings changed; clearing cached model")
+        _MODEL_CACHE = None
+        _MODEL_CACHE_DTYPE = None
+        _MODEL_CACHE_USE_CUDA = None
+        _MODEL_CACHE_KEY = None
+        if torch is not None and torch.cuda.is_available():
+            try:
+                torch.cuda.empty_cache()
+            except Exception:
+                pass
 
     # Reuse an existing model if we're called with the same configuration
     if _MODEL_CACHE is not None and _MODEL_CACHE_KEY == cache_key:
@@ -134,6 +179,21 @@ def load_parakeet(
 
     dtype: Optional[TorchDType] = torch.float32
     if use_cuda:
+        # Best-effort GPU limiter: cap per-process allocator memory fraction.
+        # (This is not a strict compute-usage cap; it mainly helps leave headroom
+        # for other GPU workloads like desktop/video.)
+        if gpu_limit_percent < 100 and hasattr(torch.cuda, "set_per_process_memory_fraction"):
+            try:
+                torch.cuda.set_per_process_memory_fraction(float(gpu_limit_percent) / 100.0)
+                _log_event(run_logger, f"GPU limit active: {gpu_limit_percent}% (CUDA allocator memory fraction)")
+            except Exception as exc:
+                _log_event(run_logger, f"GPU limit: failed to set per-process memory fraction ({exc})")
+        elif gpu_limit_percent < 100:
+            _log_event(
+                run_logger,
+                "GPU limit requested but torch.cuda.set_per_process_memory_fraction() is unavailable; skipping",
+            )
+
         asr = asr.cuda()
         if force_float32:
             asr = asr.to(dtype=torch.float32)
@@ -226,6 +286,10 @@ def parakeet_to_srt(
     *,
     force_float32: bool = True,
     prefer_gpu: bool = True,
+    rel_pos_local_attn: Optional[List[int]] = None,
+    subsampling_conv_chunking: bool = False,
+    gpu_limit_percent: int = 100,
+    use_low_priority_cuda_stream: bool = False,
     run_logger: Optional[RunLogger] = None,
     max_chars_per_line: int = 42,
     pause_ms: int = 240,
@@ -244,18 +308,49 @@ def parakeet_to_srt(
     step = run_logger.step if run_logger else None
 
     with (step("ASR: model load") if step else nullcontext()):
-        asr, _, use_cuda = load_parakeet(
+        asr, dtype, use_cuda = load_parakeet(
             nemo_local=nemo_local,
             force_float32=force_float32,
             prefer_gpu=prefer_gpu,
+            gpu_limit_percent=gpu_limit_percent,
             run_logger=run_logger,
         )
+
+    # NeMo mutators (e.g. change_attention_model) may create new layers in fp32.
+    # If we requested bf16/fp16, re-apply the dtype after such mutations.
+    def _reapply_model_dtype() -> None:
+        nonlocal asr, dtype
+        if not use_cuda or torch is None or dtype is None:
+            return
+        if dtype == torch.float32:
+            return
+        asr = asr.to(dtype=dtype)
     if run_logger:
         device = "GPU" if use_cuda else "CPU"
         run_logger.log(f"ASR device: {device}")
 
+    # Optional: enable subsampling conv chunking to reduce memory pressure on long audio.
+    if subsampling_conv_chunking:
+        if hasattr(asr, "change_subsampling_conv_chunking_factor"):
+            current_factor = getattr(asr, "_parakeet_subsampling_conv_chunking_factor", None)
+            if current_factor != 1:
+                try:
+                    asr.change_subsampling_conv_chunking_factor(1)
+                    setattr(asr, "_parakeet_subsampling_conv_chunking_factor", 1)
+                    _reapply_model_dtype()
+                    _log_event(run_logger, "Applied Parakeet subsampling conv chunking factor=1")
+                except Exception as exc:
+                    _log_event(run_logger, f"Failed to apply subsampling conv chunking factor=1 ({exc})")
+        else:
+            _log_event(run_logger, "Parakeet model does not support subsampling conv chunking; skipping")
+
     audio_duration_seconds = _probe_audio_duration_seconds(audio_path)
-    long_audio_settings_applied = bool(getattr(asr, "_parakeet_long_audio_applied", False))
+    desired_local_attn_window = tuple(_normalize_rel_pos_local_attn_window(rel_pos_local_attn))
+    applied_local_attn_window = getattr(asr, "_parakeet_rel_pos_local_attn_window", None)
+    # Backward-compat: older runs may only set the boolean flag.
+    if applied_local_attn_window is None and getattr(asr, "_parakeet_long_audio_applied", False):
+        applied_local_attn_window = DEFAULT_REL_POS_LOCAL_ATTN
+    long_audio_settings_applied = applied_local_attn_window == desired_local_attn_window
     if (
         audio_duration_seconds is not None
         and audio_duration_seconds > LONG_AUDIO_THRESHOLD_S
@@ -263,8 +358,9 @@ def parakeet_to_srt(
     ):
         _log_event(
             run_logger,
-            f"Audio duration {audio_duration_seconds:.2f}s exceeded long audio threshold "
-            f"{LONG_AUDIO_THRESHOLD_S}s. Applying local attention settings.",
+            "Audio duration "
+            f"{audio_duration_seconds:.1f}s > {LONG_AUDIO_THRESHOLD_S}s; applying long-audio Parakeet settings "
+            f"(rel_pos_local_attn={list(desired_local_attn_window)})",
         )
         print(
             f"Audio duration ({audio_duration_seconds:.2f}s) > {LONG_AUDIO_THRESHOLD_S}s. "
@@ -273,7 +369,7 @@ def parakeet_to_srt(
         )
         if hasattr(asr, "change_attention_model"):
             try:
-                asr.change_attention_model("rel_pos_local_attn", [768, 768])
+                asr.change_attention_model("rel_pos_local_attn", list(desired_local_attn_window))
             except Exception as exc:  # pragma: no cover - defensive logging
                 warning = (
                     f"Warning: Failed to apply long audio settings: {exc}. Proceeding without them."
@@ -283,6 +379,8 @@ def parakeet_to_srt(
             else:
                 long_audio_settings_applied = True
                 setattr(asr, "_parakeet_long_audio_applied", True)
+                setattr(asr, "_parakeet_rel_pos_local_attn_window", desired_local_attn_window)
+                _reapply_model_dtype()
                 success_message = "Long audio settings applied: Local Attention."
                 print(success_message, file=sys.stderr)
                 _log_event(run_logger, success_message)
@@ -328,8 +426,30 @@ def parakeet_to_srt(
             f"signature: {sig_repr}"
         )
 
+    # Best-effort GPU limiter: run inference on a low-priority CUDA stream when enabled.
+# This does not guarantee an exact utilization cap, but can improve desktop responsiveness on
+# display-attached GPUs.
+    inference_ctx = nullcontext()
+    inference_stream = None
+    gpu_limit_percent = _clamp_percent(gpu_limit_percent, default=100)
+    if use_cuda and torch is not None and bool(use_low_priority_cuda_stream):
+        try:
+            least_priority, _greatest_priority = torch.cuda.get_stream_priority_range()
+            inference_stream = torch.cuda.Stream(priority=least_priority)
+            inference_ctx = torch.cuda.stream(inference_stream)
+            _log_event(run_logger, "Using low-priority CUDA stream for Parakeet inference")
+        except Exception as exc:
+            _log_event(run_logger, f"GPU limit: unable to create low-priority CUDA stream ({exc})")
+            inference_ctx = nullcontext()
+
     with (step("ASR: inference") if step else nullcontext()):
-        results = _attempt_transcribe()
+        with inference_ctx:
+            results = _attempt_transcribe()
+        if inference_stream is not None:
+            try:
+                inference_stream.synchronize()
+            except Exception:
+                pass
     if not results or not results[0]:
         raise RuntimeError("Parakeet ASR did not return any hypotheses")
 
