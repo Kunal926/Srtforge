@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import atexit
+import logging
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeoutError
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -15,6 +19,23 @@ from rich.console import Console
 from .config import PROJECT_ROOT
 
 _console = Console()
+_cleanup_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="log-cleanup")
+
+
+def _shutdown_executor() -> None:
+    """Shutdown the executor on module unload.
+    
+    Note: Uses wait=True to ensure cleanup completes, but since cleanup tasks
+    are designed to be fast (simple file deletion), this should not cause
+    significant delays during interpreter shutdown.
+    """
+    _cleanup_executor.shutdown(wait=True)
+
+
+# Ensure executor is properly shutdown when module is unloaded
+atexit.register(_shutdown_executor)
+
+logger = logging.getLogger(__name__)
 
 LOGS_DIR = PROJECT_ROOT / "logs"
 LATEST_LOG = LOGS_DIR / "srtforge.log"
@@ -34,26 +55,57 @@ def status(message: str) -> Iterator[None]:
         yield
 
 
-def cleanup_old_logs(max_age_hours: int = 24) -> None:
-    """Remove ``*.log`` files in :data:`LOGS_DIR` older than ``max_age_hours``."""
+def _cleanup_old_logs_task(max_age_hours: int) -> None:
+    """Background task to remove old log files."""
+    try:
+        if not LOGS_DIR.exists():
+            return
 
-    if not LOGS_DIR.exists():
-        return
-
-    cutoff = datetime.now(timezone.utc) - timedelta(hours=max_age_hours)
-    for candidate in LOGS_DIR.glob("*.log"):
-        if candidate == LATEST_LOG:
-            # ``LATEST_LOG`` is recreated on every run and handled separately.
-            continue
-        try:
-            modified = datetime.fromtimestamp(candidate.stat().st_mtime, tz=timezone.utc)
-        except OSError:
-            continue
-        if modified < cutoff:
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=max_age_hours)
+        for candidate in LOGS_DIR.glob("*.log"):
+            if candidate == LATEST_LOG:
+                # ``LATEST_LOG`` is recreated on every run and handled separately.
+                continue
             try:
-                candidate.unlink()
+                modified = datetime.fromtimestamp(candidate.stat().st_mtime, tz=timezone.utc)
             except OSError:
                 continue
+            if modified < cutoff:
+                try:
+                    candidate.unlink()
+                except OSError:
+                    continue
+    except Exception as e:
+        # Use standard logging for thread-safe error reporting
+        logger.warning("Failed to cleanup old logs: %s", e)
+
+
+def cleanup_old_logs(max_age_hours: int = 24, *, wait: bool = True, timeout: float = 30.0) -> None:
+    """Remove ``*.log`` files in :data:`LOGS_DIR` older than ``max_age_hours``.
+    
+    This function submits a cleanup task to a background thread. By default,
+    it waits for the cleanup to complete to avoid race conditions with concurrent
+    log file creation. Set ``wait=False`` for fire-and-forget cleanup.
+    
+    Args:
+        max_age_hours: Maximum age in hours for log files to keep
+        wait: If True, blocks until cleanup completes. If False, returns immediately.
+        timeout: Maximum time in seconds to wait for cleanup when wait=True.
+            Ignored when wait=False. (default: 30s)
+    
+    Note:
+        If timeout occurs while waiting, the cleanup task continues running in the
+        background. The timeout only affects how long this function blocks, not the
+        cleanup task itself.
+    """
+    # Use a module-level executor to avoid resource leaks
+    future = _cleanup_executor.submit(_cleanup_old_logs_task, max_age_hours)
+    if wait:
+        try:
+            # Wait for cleanup to complete to avoid race conditions
+            future.result(timeout=timeout)
+        except FutureTimeoutError:
+            logger.warning("Log cleanup timed out after %s seconds (task continues in background)", timeout)
 
 
 @dataclass(slots=True)
