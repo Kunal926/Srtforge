@@ -1,4 +1,5 @@
 from __future__ import annotations
+from functools import lru_cache
 from typing import List, Dict, Any, Tuple, Optional
 import logging, re
 
@@ -17,6 +18,7 @@ def _norm(t: str) -> str:
 def _wtext(w: Dict[str,Any]) -> str:
     return (w.get("word") or "").strip()
 
+@lru_cache(maxsize=1)
 def _load_spacy(model="en_core_web_sm"):
     try:
         import spacy
