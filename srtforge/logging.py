@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import atexit
 import logging
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
@@ -18,6 +19,9 @@ from .config import PROJECT_ROOT
 
 _console = Console()
 _cleanup_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="log-cleanup")
+
+# Ensure executor is properly shutdown when module is unloaded
+atexit.register(_cleanup_executor.shutdown, wait=True)
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +68,7 @@ def _cleanup_old_logs_task(max_age_hours: int) -> None:
         logger.warning("Failed to cleanup old logs: %s", e)
 
 
-def cleanup_old_logs(max_age_hours: int = 24, wait: bool = True) -> None:
+def cleanup_old_logs(max_age_hours: int = 24, wait: bool = True, timeout: float = 30.0) -> None:
     """Remove ``*.log`` files in :data:`LOGS_DIR` older than ``max_age_hours``.
     
     This function submits a cleanup task to a background thread. By default,
@@ -74,12 +78,16 @@ def cleanup_old_logs(max_age_hours: int = 24, wait: bool = True) -> None:
     Args:
         max_age_hours: Maximum age in hours for log files to keep
         wait: If True, blocks until cleanup completes. If False, returns immediately.
+        timeout: Maximum time in seconds to wait for cleanup when wait=True (default: 30s)
     """
     # Use a module-level executor to avoid resource leaks
     future = _cleanup_executor.submit(_cleanup_old_logs_task, max_age_hours)
     if wait:
-        # Wait for cleanup to complete to avoid race conditions
-        future.result()
+        try:
+            # Wait for cleanup to complete to avoid race conditions
+            future.result(timeout=timeout)
+        except TimeoutError:
+            logger.warning("Log cleanup timed out after %s seconds", timeout)
 
 
 @dataclass(slots=True)
