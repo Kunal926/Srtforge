@@ -1,7 +1,7 @@
 from __future__ import annotations
 from typing import List, Dict, Any, Tuple
 import math, sys, os, time, re, csv, json
-from segmenter import segment_by_pause_and_phrase, shape_words_into_two_lines_balanced
+from .segmenter import segment_by_pause_and_phrase, shape_words_into_two_lines_balanced
 
 # ---------- tiny helpers ----------
 def _trace(msg: str) -> None:

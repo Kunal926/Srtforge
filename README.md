@@ -143,6 +143,72 @@ srtforge series "/shows/My Anime/Season 1" --glob "**/*.mkv"
 Sonarr integration is available through `srtforge sonarr-hook`, which reads the
 standard Sonarr environment variables and invokes the same pipeline.
 
+## Windows 11 desktop GUI
+
+The repository now ships with a PySide6-powered Windows 11-style front-end
+(`srtforge-gui`) that wraps the same transcription pipeline in an approachable
+desktop experience:
+
+* Drag-and-drop one or more videos **anywhere in the window** to populate the
+  queue. You can also use **Add files…**, **Remove selected**, and **Clear queue**
+  to curate the list manually.
+* Pick CPU or GPU execution from the **Device** dropdown—this mirrors the CLI
+  `--cpu` toggle by enabling/disabling Parakeet and FV4 GPU usage for the entire
+  batch.
+* Optional checkboxes enable **Embed subtitles** (soft subtitle track muxed into
+  the video via FFmpeg without re-encoding) and **Burn subtitles** (hard-coded
+  overlay produced by FFmpeg’s `subtitles` filter).
+* The log console and toast-style messages keep you informed about each file’s
+  status. **Stop** halts the current job immediately by
+  terminating the pipeline/FFmpeg subprocesses, and an optional toggle clears
+  CUDA caches via `torch.cuda.empty_cache()` once the worker shuts down.
+
+Run the GUI once the virtual environment is activated:
+
+```bash
+srtforge-gui
+```
+
+The app automatically looks for bundled FFmpeg binaries in `./ffmpeg`, next to
+the executable (for PyInstaller builds), or in the directory pointed to
+`SRTFORGE_FFMPEG_DIR`. When neither exists the embed/burn checkboxes are
+disabled until FFmpeg is available.
+
+### Building a standalone Windows executable
+
+PyInstaller can bundle the GUI into a redistributable `.exe` that contains the
+Python interpreter, PySide6 runtime, and the rest of the project code. The
+provided spec file assumes you are running on Windows with the virtual
+environment created by `install.ps1`:
+
+1. Run `install.ps1` (or `install.sh` on WSL) at least once. The installer now
+   adds PyInstaller to the managed virtual environment, downloads a known-good
+   FFmpeg build from the BtbN GitHub mirror (with a legacy gyan.dev fallback)
+   into `packaging/windows/ffmpeg/bin`, and registers `SRTFORGE_FFMPEG_DIR` so
+   the spec automatically bundles `ffmpeg.exe` and `ffprobe.exe`.
+2. Activate the environment before building:
+   ```powershell
+   .\.venv\Scripts\Activate.ps1
+   ```
+3. (Optional) If you are building on a machine that has **not** run the
+   installer—such as a clean CI agent—place the trained model files inside
+   `models/` before building. When `install.ps1` has already been executed on the
+   workstation this step is automatically satisfied because the script stores
+   `parakeet-tdt-0.6b-v2.nemo` and `voc_fv4.ckpt` there for you.
+4. Run PyInstaller with the provided spec:
+   ```powershell
+   pyinstaller packaging/windows/srtforge_gui.spec --noconfirm
+   ```
+5. Ship the contents of `dist/SrtforgeGUI/` to end users. Keep the `models/`
+   directory alongside `SrtforgeGUI.exe`; the binary looks up Parakeet/Nemo
+   assets there at runtime. The build now also outputs `SrtforgeCLI.exe` in the
+   same folder—the GUI shells out to this console companion to execute the
+   transcription pipeline, so be sure to distribute both executables together.
+
+The resulting application boots straight into the GUI and requires no system-wide
+Python installation. FFmpeg stays inside the bundle, fulfilling the requirement
+that embed/burn operations only depend on the packaged binaries.
+
 ## Sonarr custom script integration
 
 Add srtforge as a [Sonarr custom script](https://wiki.servarr.com/sonarr/settings#connect)

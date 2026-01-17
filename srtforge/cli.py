@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Optional
 
@@ -34,6 +35,7 @@ def run(
     if result.skipped:
         raise typer.Exit(code=2)
     console.log(f"[green]SRT written to[/green] {result.output_path}")
+    typer.echo(json.dumps({"event": "srt_written", "path": str(result.output_path)}))
 
 
 @app.command()
@@ -56,7 +58,9 @@ def series(
             prefer_gpu=gpu_pref,
             separation_prefer_gpu=gpu_pref,
         )
-        run_pipeline(config)
+        result = run_pipeline(config)
+        if not result.skipped and result.output_path:
+            typer.echo(json.dumps({"event": "srt_written", "path": str(result.output_path)}))
 
 
 @app.command("sonarr-hook")

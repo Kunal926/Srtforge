@@ -5,7 +5,8 @@ rich>=13.7.1
 tqdm>=4.66.4
 pyyaml>=6.0.1
 requests>=2.32.3
-ffmpeg-python>=0.2.0
+# GUI runtime
+PySide6>=6.7.0
 # audio-separator>=0.39.0 requires numpy>=2.0.0. Bump the lower bound to
 # ensure compatibility and prevent pip resolver conflicts.
 numpy>=2.0.0

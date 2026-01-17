@@ -55,7 +55,8 @@ function Invoke-CommandWithScript {
 
     try {
         Invoke-WithArgs -Command $Command -Args @($tempScript)
-    } finally {
+    }
+    finally {
         Remove-Item -Path $tempScript -ErrorAction SilentlyContinue
         Remove-Item -Path $tempBase -ErrorAction SilentlyContinue
     }
@@ -76,7 +77,8 @@ except Exception as e:
         $out = Invoke-CommandWithScript -Command @($PythonExe) -ScriptContent $probe
         $txt = ($out | Out-String).Trim()
         return $txt -like 'OK*'
-    } catch {
+    }
+    catch {
         return $false
     }
 }
@@ -97,7 +99,8 @@ function Install-Cuda12Runtime {
             '--extra-index-url','https://pypi.ngc.nvidia.com',
             'cuda-toolkit[cudart]==12.9.*'
         )
-    } catch {
+    }
+    catch {
         $ok = $false
         Write-Warning "cuda-toolkit[cudart]==12.9.* installation failed, falling back to nvidia-cuda-runtime-cu12"
     }
@@ -110,7 +113,8 @@ function Install-Cuda12Runtime {
                 'nvidia-cuda-runtime-cu12==12.9.*'
             )
             $ok = $true
-        } catch {
+        }
+        catch {
             $ok = $false
         }
     }
@@ -177,9 +181,11 @@ function Get-PythonInfo {
             Executable  = $data.executable
             IsCompatible = $isCompatible
         }
-    } catch {
+    }
+    catch {
         return $null
-    } finally {
+    }
+    finally {
         Remove-Item -Path $tempScript -ErrorAction SilentlyContinue
         Remove-Item -Path $tempBase -ErrorAction SilentlyContinue
     }
@@ -286,7 +292,8 @@ function Resolve-PythonCommand {
                         }
                     }
                 }
-            } catch {
+            }
+            catch {
                 # Ignore py launcher enumeration failures and fall back to manual guesses.
             }
         }
@@ -413,8 +420,164 @@ if (-not (Test-Path $venvDir)) {
 $venvPython = Join-Path $venvDir "Scripts/python.exe"
 $venvPip = Join-Path $venvDir "Scripts/pip.exe"
 
-& $venvPython -m pip install --upgrade pip wheel
-& $venvPip install -r requirements.txt
+Invoke-WithArgs -Command @($venvPython) -Args @('-m', 'pip', 'install', '--upgrade', 'pip', 'wheel')
+Invoke-WithArgs -Command @($venvPip) -Args @('install', '-r', 'requirements.txt')
+
+Write-Host 'Installing PyInstaller so Windows bundles can be produced immediately'
+Invoke-WithArgs -Command @($venvPip) -Args @('install', 'pyinstaller')
+
+$global:ffmpegDownloadUrls = @(
+    # GitHub-hosted nightly build maintained by BtbN. Stable URL that always
+    # serves the most recent GPL-configured Win64 build with ffmpeg/ffprobe
+    # binaries in the ./bin directory.
+    'https://github.com/BtbN/FFmpeg-Builds/releases/latest/download/ffmpeg-master-latest-win64-gpl.zip',
+    # Legacy mirror (gyan.dev). This site occasionally responds with 404s, so
+    # keep it as a fallback instead of the primary source.
+    'https://www.gyan.dev/ffmpeg/builds/packages/ffmpeg-6.1.1-essentials_build.zip'
+)
+
+function Ensure-Directory {
+    param([string]$Path)
+
+    if (-not (Test-Path $Path)) {
+        New-Item -ItemType Directory -Path $Path -Force | Out-Null
+    }
+}
+
+function Ensure-FfmpegBinaries {
+    $ffmpegBaseDir = Join-Path (Get-Location) 'packaging'
+    $ffmpegBaseDir = Join-Path $ffmpegBaseDir 'windows'
+    $ffmpegBaseDir = Join-Path $ffmpegBaseDir 'ffmpeg'
+    $ffmpegBinDir = Join-Path $ffmpegBaseDir 'bin'
+
+    Ensure-Directory $ffmpegBinDir
+
+    $ffmpegExe = Join-Path $ffmpegBinDir 'ffmpeg.exe'
+    $ffprobeExe = Join-Path $ffmpegBinDir 'ffprobe.exe'
+
+    if ((Test-Path $ffmpegExe) -and (Test-Path $ffprobeExe)) {
+        Write-Host "FFmpeg already present in $ffmpegBinDir"
+        $env:SRTFORGE_FFMPEG_DIR = $ffmpegBinDir
+        try {
+            [Environment]::SetEnvironmentVariable('SRTFORGE_FFMPEG_DIR', $ffmpegBinDir, 'User')
+        }
+        catch {
+            Write-Warning 'Unable to persist SRTFORGE_FFMPEG_DIR user environment variable.'
+        }
+        return
+    }
+
+    $tempBase = [System.IO.Path]::GetTempFileName()
+    $tempZip = [System.IO.Path]::ChangeExtension($tempBase, '.zip')
+    Move-Item -Path $tempBase -Destination $tempZip -Force
+
+    Write-Host "Downloading FFmpeg build to support the GUI bundler"
+    $downloaded = $false
+    foreach ($url in $global:ffmpegDownloadUrls) {
+        Write-Host "Attempting download from $url"
+        try {
+            Invoke-WebRequest -Uri $url -OutFile $tempZip -UseBasicParsing
+            $downloaded = $true
+            break
+        }
+        catch {
+            Write-Warning "FFmpeg download failed from $url - $_"
+        }
+    }
+
+    if (-not $downloaded) {
+        throw 'Unable to download FFmpeg binaries from any configured mirror.'
+    }
+
+    $tempExtract = Join-Path ([System.IO.Path]::GetTempPath()) ([System.IO.Path]::GetRandomFileName())
+    Ensure-Directory $tempExtract
+    Expand-Archive -LiteralPath $tempZip -DestinationPath $tempExtract -Force
+
+    $expandedRoot = Get-ChildItem -Directory -Path $tempExtract | Select-Object -First 1
+    if (-not $expandedRoot) {
+        throw 'FFmpeg archive structure unexpected; bin directory not found.'
+    }
+
+    $sourceBin = Join-Path $expandedRoot.FullName 'bin'
+    $sourceFfmpeg = Join-Path $sourceBin 'ffmpeg.exe'
+    $sourceFfprobe = Join-Path $sourceBin 'ffprobe.exe'
+    if (-not ((Test-Path $sourceFfmpeg) -and (Test-Path $sourceFfprobe))) {
+        throw 'Downloaded FFmpeg package is missing ffmpeg.exe/ffprobe.exe.'
+    }
+
+    Copy-Item -Path $sourceFfmpeg -Destination $ffmpegExe -Force
+    Copy-Item -Path $sourceFfprobe -Destination $ffprobeExe -Force
+
+    Remove-Item -Path $tempZip -ErrorAction SilentlyContinue
+    Remove-Item -Path $tempExtract -Recurse -Force -ErrorAction SilentlyContinue
+
+    $env:SRTFORGE_FFMPEG_DIR = $ffmpegBinDir
+    try {
+        [Environment]::SetEnvironmentVariable('SRTFORGE_FFMPEG_DIR', $ffmpegBinDir, 'User')
+    }
+    catch {
+        Write-Warning 'Unable to persist SRTFORGE_FFMPEG_DIR user environment variable.'
+    }
+
+    Write-Host "FFmpeg binaries downloaded to $ffmpegBinDir"
+}
+
+function Install-MKVToolNix {
+  param(
+    [string]$InstallRoot = (Join-Path $PSScriptRoot 'packaging\windows\mkvtoolnix')
+  )
+
+  # Already on PATH?
+  $mkvmerge = Get-Command mkvmerge -ErrorAction SilentlyContinue
+  if ($mkvmerge) {
+    $dir = Split-Path -Parent $mkvmerge.Path
+    [Environment]::SetEnvironmentVariable('SRTFORGE_MKV_DIR', $dir, 'User')
+    Write-Host "MKVToolNix found at $dir"
+    return
+  }
+
+  # Default Program Files location after winget/installer
+  $pf = Join-Path ${env:ProgramFiles} 'MKVToolNix\mkvmerge.exe'
+  if (Test-Path $pf) {
+    [Environment]::SetEnvironmentVariable('SRTFORGE_MKV_DIR', (Split-Path -Parent $pf), 'User')
+    Write-Host "MKVToolNix found at $((Split-Path -Parent $pf))"
+    return
+  }
+
+  # Try winget first (most reliable unattended path)
+  if (Get-Command winget -ErrorAction SilentlyContinue) {
+    winget install --id MoritzBunkus.MKVToolNix -e --silent `
+      --accept-package-agreements --accept-source-agreements
+    if (Test-Path $pf) {
+      [Environment]::SetEnvironmentVariable('SRTFORGE_MKV_DIR', (Split-Path -Parent $pf), 'User')
+      Write-Host "MKVToolNix installed via winget."
+      return
+    }
+  }
+
+  # Portable fallback: download the latest x64 ZIP directly and unpack
+  $downloads = Invoke-WebRequest -UseBasicParsing 'https://mkvtoolnix.download/downloads.html'
+  $m = [regex]::Match($downloads.Content, 'current version v(?<ver>\d+\.\d+)')
+  if (-not $m.Success) { throw "Unable to determine latest MKVToolNix version from downloads page." }
+  $ver = $m.Groups['ver'].Value
+  $zipUrl = "https://mkvtoolnix.download/windows/releases/$ver/mkvtoolnix-64-bit-$ver.zip"
+  $tmpDir = Join-Path $env:TEMP "srtforge-mkvtoolnix-$ver"
+  New-Item -ItemType Directory -Force -Path $tmpDir | Out-Null
+  $zipPath = Join-Path $tmpDir "mkvtoolnix-$ver.zip"
+  Invoke-WebRequest $zipUrl -OutFile $zipPath -UseBasicParsing
+  $dstRoot = Join-Path $InstallRoot 'bin'
+  New-Item -ItemType Directory -Force -Path $dstRoot | Out-Null
+  Expand-Archive -Path $zipPath -DestinationPath $dstRoot -Force
+  $exe = Get-ChildItem $dstRoot -Recurse -Filter mkvmerge.exe -File | Select-Object -First 1
+  if ($exe -and ($exe.Directory.FullName -ne $dstRoot)) {
+    Move-Item $exe.Directory.FullName\* $dstRoot -Force
+  }
+  [Environment]::SetEnvironmentVariable('SRTFORGE_MKV_DIR', $dstRoot, 'User')
+  Write-Host "MKVToolNix extracted to $dstRoot"
+}
+
+Ensure-FfmpegBinaries
+Install-MKVToolNix
 
 $torchInfoScript = @'
 import json
@@ -450,7 +613,8 @@ function Get-TorchCudaInfo {
         }
 
         return $json | ConvertFrom-Json
-    } catch {
+    }
+    catch {
         return $null
     }
 }
@@ -487,7 +651,11 @@ function Install-Torch($device) {
         }
     } else {
         Write-Host "Installing Torch CPU wheels"
-        & $venvPip install --index-url https://download.pytorch.org/whl/cpu torch torchvision torchaudio
+        Invoke-WithArgs -Command @($venvPip) -Args @(
+            'install',
+            '--index-url', 'https://download.pytorch.org/whl/cpu',
+            'torch', 'torchvision', 'torchaudio'
+        )
     }
 }
 
@@ -495,16 +663,17 @@ function Install-OnnxRuntime($device) {
     if ($device -eq 'gpu') {
         Write-Host "Installing ONNX Runtime GPU package"
         try {
-            & $venvPip install "onnxruntime-gpu>=1.23.2"
+            Invoke-WithArgs -Command @($venvPip) -Args @('install', 'onnxruntime-gpu>=1.23.2')
             return $true
-        } catch {
+        }
+        catch {
             Write-Warning "Failed to install onnxruntime-gpu. Ensure a compatible NVIDIA driver is available if you expect GPU vocal separation. Falling back to the CPU build."
-            & $venvPip install "onnxruntime>=1.23.2"
+            Invoke-WithArgs -Command @($venvPip) -Args @('install', 'onnxruntime>=1.23.2')
             return $false
         }
     } else {
         Write-Host "Installing ONNX Runtime CPU package"
-        & $venvPip install "onnxruntime>=1.23.2"
+        Invoke-WithArgs -Command @($venvPip) -Args @('install', 'onnxruntime>=1.23.2')
         return $true
     }
 }
@@ -555,9 +724,10 @@ function Ensure-CudaToolkit {
             $arguments += '--silent'
         }
 
-        & winget.exe @arguments
+        Invoke-WithArgs -Command @('winget.exe') -Args $arguments
         return $true
-    } catch {
+    }
+    catch {
         Write-Warning "Failed to install CUDA toolkit automatically. Install it manually from NVIDIA's website."
         return $false
     }
@@ -595,36 +765,37 @@ Invoke-WithArgs -Command @($venvPython) -Args @('-m', 'pip', 'install', 'cuda-py
 # Ensure cudart64_12*.dll is available inside the venv for cuda-python 12.9
 Install-Cuda12Runtime -PythonExe $venvPython -PipExe $venvPip
 
-Invoke-WithArgs -Command @($venvPython) -Args @('-m', 'pip', 'install', 'nemo_toolkit[asr]>=2.5.1,<2.6')
+$nemoRequirement = 'nemo_toolkit[asr]~=2.5.1'
+Invoke-WithArgs -Command @($venvPython) -Args @(
+    '-m','pip','install',$nemoRequirement
+)
 
-$verifyNeMoScript = @'
-import importlib
-import signal
-import sys
-
-if not hasattr(signal, "SIGKILL"):
-    _sigkill_fallback = getattr(signal, "SIGTERM", getattr(signal, "SIGABRT", 9))
-    setattr(signal, "SIGKILL", _sigkill_fallback)
-
-try:
-    importlib.import_module("nemo.collections.asr")
-except Exception as exc:
-    print(
-        "ERROR: NVIDIA NeMo ASR components failed to import after installation. "
-        "This usually means one of its dependencies (such as numpy, pyarrow or matplotlib) "
-        "was not installed correctly.",
-        file=sys.stderr,
-    )
-    print(f"       Original import error: {exc}", file=sys.stderr)
-    sys.exit(1)
-else:
-    print("Verified NVIDIA NeMo ASR modules are importable.")
+# --- Build the NeMo verification script via Base64 (exact Python content from your comments) ---
+$verifyNeMoScriptB64 = @'
+aW1wb3J0IGltcG9ydGxpYiwgc2lnbmFsLCBzeXMKaWYgbm90IGhhc2F0dHIoc2lnbmFsLCAiU0lHS0lM
+TCIpOgogICAgc2V0YXR0cihzaWduYWwsICJTSUdLSUxMIiwgZ2V0YXR0cihzaWduYWwsICJTSUdURVJN
+IiwgZ2V0YXR0cihzaWduYWwsICJTSUdBQlJUIiwgOSkpKQp0cnk6CiAgICBpbXBvcnRsaWIuaW1wb3J0
+X21vZHVsZSgibmVtby5jb2xsZWN0aW9ucy5hc3IiKQpleGNlcHQgRXhjZXB0aW9uIGFzIGV4YzoKICAg
+IHByaW50KCJFUlJPUjogTlZJRElBIE5lTW8gQVNSIGNvbXBvbmVudHMgZmFpbGVkIHRvIGltcG9ydCBh
+ZnRlciBpbnN0YWxsYXRpb24uIFRoaXMgdXN1YWxseSBtZWFucyBvbmUgb2YgaXRzIGRlcGVuZGVuY2ll
+cyAoc3VjaCBhcyBudW1weSwgcHlhcnJvdyBvciBtYXRwbG90bGliKSB3YXMgbm90IGluc3RhbGxlZCBj
+b3JyZWN0bHkuIiwgZmlsZT1zeXMuc3RkZXJyKQogICAgcHJpbnQoZiIgICAgICAgT3JpZ2luYWwgaW1w
+b3J0IGVycm9yOiB7ZXhjfSIsIGZpbGU9c3lzLnN0ZGVycikKICAgIHN5cy5leGl0KDEpCmVsc2U6CiAg
+ICBwcmludCgiVmVyaWZpZWQgTlZJRElBIE5lTW8gQVNSIG1vZHVsZXMgYXJlIGltcG9ydGFibGUuIikK
 '@
+
+$verifyNeMoScript = [System.Text.Encoding]::UTF8.GetString(
+    [System.Convert]::FromBase64String($verifyNeMoScriptB64)
+)
 
 Invoke-CommandWithScript -Command @($venvPython) -ScriptContent $verifyNeMoScript
 
-& $venvPip install -e .
+# Install the local package in editable mode
+Invoke-WithArgs -Command @($venvPip) -Args @('install', '-e', '.')
 
+# ----------------------------------------------------------------------
+# Models
+# ----------------------------------------------------------------------
 $modelsDir = Join-Path (Get-Location) 'models'
 if (-not (Test-Path $modelsDir)) {
     New-Item -ItemType Directory -Path $modelsDir | Out-Null
@@ -635,7 +806,7 @@ $downloads = @(
     @{ Url = 'https://huggingface.co/nvidia/parakeet-tdt-0.6b-v2/resolve/main/parakeet-tdt-0.6b-v2.nemo?download=1'; File = 'parakeet-tdt-0.6b-v2.nemo' }
 )
 
-function Download-Model($item) {
+function Download-Model([hashtable]$item) {
     $target = Join-Path $modelsDir $item.File
     if (Test-Path $target -PathType Leaf) {
         $existingFile = Get-Item $target -ErrorAction SilentlyContinue
@@ -653,8 +824,9 @@ function Download-Model($item) {
     Write-Host "Downloading $($item.File)"
     try {
         Invoke-WebRequest -Uri $item.Url -Headers $headers -OutFile $target -UseBasicParsing
-    } catch {
-        if ($_.Exception.Response.StatusCode.Value__ -eq 401) {
+    }
+    catch {
+        if ($_.Exception.Response -and $_.Exception.Response.StatusCode.Value__ -eq 401) {
             Write-Error "Authorization required for $($item.Url). Set HF_TOKEN with a valid Hugging Face token."
         }
         throw
@@ -665,4 +837,5 @@ foreach ($item in $downloads) {
     Download-Model $item
 }
 
-Write-Host 'Installation complete. Activate the virtual environment with ''.\.venv\Scripts\Activate.ps1''.'
+# Final message - NOTE: no extra quote at the end of this line
+Write-Host "Installation complete. Activate the virtual environment with '.\.venv\Scripts\Activate.ps1'."
