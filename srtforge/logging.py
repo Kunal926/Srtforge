@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -34,26 +35,37 @@ def status(message: str) -> Iterator[None]:
         yield
 
 
-def cleanup_old_logs(max_age_hours: int = 24) -> None:
-    """Remove ``*.log`` files in :data:`LOGS_DIR` older than ``max_age_hours``."""
+def _cleanup_old_logs_task(max_age_hours: int) -> None:
+    """Background task to remove old log files."""
+    try:
+        if not LOGS_DIR.exists():
+            return
 
-    if not LOGS_DIR.exists():
-        return
-
-    cutoff = datetime.now(timezone.utc) - timedelta(hours=max_age_hours)
-    for candidate in LOGS_DIR.glob("*.log"):
-        if candidate == LATEST_LOG:
-            # ``LATEST_LOG`` is recreated on every run and handled separately.
-            continue
-        try:
-            modified = datetime.fromtimestamp(candidate.stat().st_mtime, tz=timezone.utc)
-        except OSError:
-            continue
-        if modified < cutoff:
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=max_age_hours)
+        for candidate in LOGS_DIR.glob("*.log"):
+            if candidate == LATEST_LOG:
+                # ``LATEST_LOG`` is recreated on every run and handled separately.
+                continue
             try:
-                candidate.unlink()
+                modified = datetime.fromtimestamp(candidate.stat().st_mtime, tz=timezone.utc)
             except OSError:
                 continue
+            if modified < cutoff:
+                try:
+                    candidate.unlink()
+                except OSError:
+                    continue
+    except Exception as e:
+        _console.log(f"[yellow]Warning[/yellow] Failed to cleanup old logs: {e}")
+
+
+def cleanup_old_logs(max_age_hours: int = 24) -> None:
+    """Remove ``*.log`` files in :data:`LOGS_DIR` older than ``max_age_hours`` (non-blocking)."""
+    # Use a single-thread executor for the cleanup task to avoid blocking startup.
+    # We fire and forget, not waiting for the result.
+    executor = ThreadPoolExecutor(max_workers=1)
+    executor.submit(_cleanup_old_logs_task, max_age_hours)
+    executor.shutdown(wait=False)
 
 
 @dataclass(slots=True)
