@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import atexit
 import logging
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeoutError
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -28,7 +29,7 @@ def _shutdown_executor() -> None:
     are designed to be fast (simple file deletion), this should not cause
     significant delays during interpreter shutdown.
     """
-    _cleanup_executor.shutdown(wait=True, cancel_futures=False)
+    _cleanup_executor.shutdown(wait=True)
 
 
 # Ensure executor is properly shutdown when module is unloaded
@@ -79,7 +80,7 @@ def _cleanup_old_logs_task(max_age_hours: int) -> None:
         logger.warning("Failed to cleanup old logs: %s", e)
 
 
-def cleanup_old_logs(max_age_hours: int = 24, wait: bool = True, timeout: float = 30.0) -> None:
+def cleanup_old_logs(max_age_hours: int = 24, *, wait: bool = True, timeout: float = 30.0) -> None:
     """Remove ``*.log`` files in :data:`LOGS_DIR` older than ``max_age_hours``.
     
     This function submits a cleanup task to a background thread. By default,
