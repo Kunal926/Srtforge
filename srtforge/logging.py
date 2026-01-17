@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -16,6 +17,9 @@ from rich.console import Console
 from .config import PROJECT_ROOT
 
 _console = Console()
+_cleanup_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="log-cleanup")
+
+logger = logging.getLogger(__name__)
 
 LOGS_DIR = PROJECT_ROOT / "logs"
 LATEST_LOG = LOGS_DIR / "srtforge.log"
@@ -56,16 +60,26 @@ def _cleanup_old_logs_task(max_age_hours: int) -> None:
                 except OSError:
                     continue
     except Exception as e:
-        _console.log(f"[yellow]Warning[/yellow] Failed to cleanup old logs: {e}")
+        # Use standard logging for thread-safe error reporting
+        logger.warning("Failed to cleanup old logs: %s", e)
 
 
-def cleanup_old_logs(max_age_hours: int = 24) -> None:
-    """Remove ``*.log`` files in :data:`LOGS_DIR` older than ``max_age_hours`` (non-blocking)."""
-    # Use a single-thread executor for the cleanup task to avoid blocking startup.
-    # We fire and forget, not waiting for the result.
-    executor = ThreadPoolExecutor(max_workers=1)
-    executor.submit(_cleanup_old_logs_task, max_age_hours)
-    executor.shutdown(wait=False)
+def cleanup_old_logs(max_age_hours: int = 24, wait: bool = True) -> None:
+    """Remove ``*.log`` files in :data:`LOGS_DIR` older than ``max_age_hours``.
+    
+    This function submits a cleanup task to a background thread. By default,
+    it waits for the cleanup to complete to avoid race conditions with concurrent
+    log file creation. Set ``wait=False`` for fire-and-forget cleanup.
+    
+    Args:
+        max_age_hours: Maximum age in hours for log files to keep
+        wait: If True, blocks until cleanup completes. If False, returns immediately.
+    """
+    # Use a module-level executor to avoid resource leaks
+    future = _cleanup_executor.submit(_cleanup_old_logs_task, max_age_hours)
+    if wait:
+        # Wait for cleanup to complete to avoid race conditions
+        future.result()
 
 
 @dataclass(slots=True)
