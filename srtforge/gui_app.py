@@ -13,6 +13,7 @@ import tempfile
 import threading
 import time
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from shutil import which
 from typing import Callable, Iterable, List, Optional, TextIO
@@ -33,6 +34,20 @@ from .settings import (
     settings,
 )
 from .win11_backdrop import apply_win11_look, get_windows_accent_qcolor
+
+_STARTUP_T0 = time.perf_counter()
+
+
+def _startup_trace(msg: str) -> None:
+    if os.getenv("SRTFORGE_STARTUP_TRACE") != "1":
+        return
+    try:
+        LOGS_DIR.mkdir(parents=True, exist_ok=True)
+        dt = time.perf_counter() - _STARTUP_T0
+        with (LOGS_DIR / "startup_trace.log").open("a", encoding="utf-8") as f:
+            f.write(f"{dt:8.3f}s  {msg}\n")
+    except Exception:
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -2132,15 +2147,19 @@ class OptionsDialog(QtWidgets.QDialog):
 class MainWindow(QtWidgets.QMainWindow):
     """Main application window."""
 
-    def __init__(self) -> None:
+    def __init__(self, app_icon: Optional[QtGui.QIcon] = None) -> None:
+        _startup_trace("MainWindow: enter")
         super().__init__()
+        if os.getenv("SRTFORGE_STARTUP_TRACE") == "1":
+            self._boot_t0 = time.perf_counter()
         # Capitalize brand and open at the size in the screenshot
         self.setWindowTitle("Srtforge Studio")
         self.resize(1200, 720)
         self.setMinimumSize(960, 640)
         self.setObjectName("MainWindow")
 
-        icon = _load_app_icon()
+        icon = app_icon or _load_app_icon()
+        _startup_trace("MainWindow: _load_app_icon done")
         self._app_icon = icon  # store for reuse
         if not icon.isNull():
             self.setWindowIcon(icon)
@@ -2159,7 +2178,9 @@ class MainWindow(QtWidgets.QMainWindow):
         # Single source of truth for user options (kept only in the Options dialog)
         self._basic_options = dict(DEFAULT_BASIC_OPTIONS)
         self.ffmpeg_paths = locate_ffmpeg_binaries()
+        _startup_trace("MainWindow: locate_ffmpeg_binaries done")
         self.mkv_paths = locate_mkvmerge_binary()
+        _startup_trace("MainWindow: locate_mkvmerge_binary done")
         self._qsettings = QtCore.QSettings("srtforge", "SrtforgeStudio")
         # Persist the last folder used in the "Add files…" dialog across app restarts.
         # (Qt remembers it only for the current process by default.)
@@ -2207,12 +2228,26 @@ class MainWindow(QtWidgets.QMainWindow):
         # Async stream probing fills the Metadata column without blocking the UI.
         self._stream_probe = _StreamProbeEmitter(self)
         self._stream_probe.streamReady.connect(self._on_stream_probed)
+        self._boot_mark("_build_ui: start")
         self._build_ui()  # builds a page widget; we wrap it in a scroll area below
+        _startup_trace("MainWindow: _build_ui done")
+        self._boot_mark("_build_ui: end")
         self._log_tailer = LogTailer(self._append_log, self)
         self._load_persistent_options()
+        _startup_trace("MainWindow: _load_persistent_options done")
         self._apply_styles()
+        _startup_trace("MainWindow: _apply_styles done")
         self._update_tool_status()
+        _startup_trace("MainWindow: _update_tool_status done")
         apply_win11_look(self)
+        _startup_trace("MainWindow: apply_win11_look done")
+
+    def _boot_mark(self, label: str) -> None:
+        t0 = getattr(self, "_boot_t0", None)
+        if t0 is None:
+            return
+        dt = time.perf_counter() - t0
+        print(f"{dt:8.3f}s  {label}", flush=True)
 
     # ---- UI construction ---------------------------------------------------------
     def _build_ui(self) -> None:
@@ -2376,6 +2411,7 @@ class MainWindow(QtWidgets.QMainWindow):
         actions_widget = QtWidgets.QWidget()
         actions_widget.setLayout(actions_row)
         header_layout.addWidget(actions_widget, 0, 2, alignment=QtCore.Qt.AlignRight)
+        self._boot_mark("_build_ui: header built")
 
         # --- Queue card ------------------------------------------------------
         queue_card = QtWidgets.QFrame()
@@ -2609,6 +2645,7 @@ class MainWindow(QtWidgets.QMainWindow):
         #       self.queue_list to avoid the crash when files are added.
 
         self.queue_stack.addWidget(self.queue_list)
+        self._boot_mark("_build_ui: queue_list built")
 
         # Let the queue/table area grow and shrink with the window.
         card_layout.addWidget(self.queue_stack, 1)
@@ -2688,6 +2725,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # look depressed/inset.
         # Keep the log drawer close to the footer without clipped shadow edges.
         add_shadow(self.log_container, blur_radius=12, offset=(0, 4))
+        self._boot_mark("_build_ui: shadows applied")
 
         # Start hidden; user can reveal via the terminal icon in the status bar
         self.log_container.setVisible(False)
@@ -2828,6 +2866,7 @@ class MainWindow(QtWidgets.QMainWindow):
         console_trigger.mousePressEvent = _toggle_console_from_mouse  # type: ignore[assignment]
 
         status_bar.addPermanentWidget(console_trigger)
+        self._boot_mark("_build_ui: status bar built")
 
         self._update_start_state()
 
@@ -5993,6 +6032,7 @@ def _trim_transparent_pixmap(pixmap: QtGui.QPixmap) -> QtGui.QPixmap:
     return QtGui.QPixmap.fromImage(cropped)
 
 
+@lru_cache(maxsize=1)
 def _load_app_icon() -> QtGui.QIcon:
     """Return the application logo as a QIcon, trimming transparent padding."""
 
@@ -6018,27 +6058,18 @@ def _load_app_icon() -> QtGui.QIcon:
         if pixmap.isNull():
             continue
 
+        # Bound the work: icons don’t need multi-megapixel source images at runtime.
+        max_dim = max(pixmap.width(), pixmap.height())
+        if max_dim > 512:
+            pixmap = pixmap.scaled(
+                512,
+                512,
+                QtCore.Qt.AspectRatioMode.KeepAspectRatio,
+                QtCore.Qt.TransformationMode.SmoothTransformation,
+            )
+
         # Trim fully transparent rows/columns so we get rid of big borders.
-        img = pixmap.toImage()
-        rect = img.rect()
-        left, right = rect.right(), rect.left()
-        top, bottom = rect.bottom(), rect.top()
-
-        for y in range(rect.top(), rect.bottom() + 1):
-            for x in range(rect.left(), rect.right() + 1):
-                if img.pixelColor(x, y).alpha() > 0:
-                    if x < left:
-                        left = x
-                    if x > right:
-                        right = x
-                    if y < top:
-                        top = y
-                    if y > bottom:
-                        bottom = y
-
-        if left <= right and top <= bottom:
-            img = img.copy(left, top, right - left + 1, bottom - top + 1)
-            pixmap = QtGui.QPixmap.fromImage(img)
+        pixmap = _trim_transparent_pixmap(pixmap)
 
         return QtGui.QIcon(pixmap)
 
@@ -6048,7 +6079,9 @@ def _load_app_icon() -> QtGui.QIcon:
 def main() -> None:
     """Entry point used by ``srtforge-gui``."""
 
+    _startup_trace("main: enter")
     QtCore.QCoreApplication.setAttribute(QtCore.Qt.ApplicationAttribute.AA_EnableHighDpiScaling)
+    _startup_trace("main: AA_EnableHighDpiScaling set")
     # Optional: nicer HiDPI rounding on recent Qt builds
     try:
         QtCore.QCoreApplication.setHighDpiScaleFactorRoundingPolicy(
@@ -6056,14 +6089,20 @@ def main() -> None:
         )
     except Exception:
         pass
+    _startup_trace("main: dpi rounding policy set")
     app = QtWidgets.QApplication(sys.argv)
+    _startup_trace("main: QApplication created")
     app.setStyle("Fusion")
+    _startup_trace("main: style set")
     icon = _load_app_icon()
+    _startup_trace("main: _load_app_icon done")
     if not icon.isNull():
         app.setWindowIcon(icon)
 
-    window = MainWindow()
+    window = MainWindow(app_icon=icon)
+    _startup_trace("main: MainWindow constructed")
     window.show()
+    _startup_trace("main: window.show() returned")
     sys.exit(app.exec())
 
 
