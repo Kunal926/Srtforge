@@ -2307,12 +2307,6 @@ class MainWindow(QtWidgets.QMainWindow):
         if icon and not icon.isNull():
             # Keep the logo at the same visual size, but with no extra border
             logo_pix = icon.pixmap(LOGO_SIZE, LOGO_SIZE)
-            # QIcon.pixmap() can re-introduce transparent padding when scaling.
-            # Trim again so the visible logo sits closer to the title text.
-            try:
-                logo_pix = _trim_transparent_pixmap(logo_pix)
-            except Exception:
-                pass
             logo_label.setPixmap(logo_pix)
 
             has_logo = True
@@ -5771,104 +5765,12 @@ def _asset_candidates(filename: str) -> list[Path]:
 
 
 
-def _trim_command_prompt_pixmap(pixmap: QtGui.QPixmap) -> QtGui.QPixmap:
-    """Trim the stray light vertical strip some Command_Prompt.png exports include.
-
-    A handful of Windows-sourced captures of the Command Prompt icon include a
-    pale vertical bar on the right edge (usually from a selection highlight /
-    screenshot artifact). When rendered at 30×30 in the console pill it shows
-    up as a distracting white line.
-
-    This trims consecutive right-edge columns that are consistently much lighter
-    than the icon's baseline background colour.
-    """
-
-    try:
-        img = pixmap.toImage()
-        if img.isNull():
-            return pixmap
-
-        # Work in a predictable pixel format.
-        try:
-            fmt = QtGui.QImage.Format.Format_ARGB32
-        except Exception:
-            fmt = QtGui.QImage.Format_ARGB32  # type: ignore[attr-defined]
-        img = img.convertToFormat(fmt)
-
-        w = int(img.width())
-        h = int(img.height())
-        if w < 4 or h < 4:
-            return pixmap
-
-        # Estimate the "baseline" background colour from a small grid sample of
-        # the left ~75% of the image (avoids the right-edge artifact skewing the
-        # baseline).
-        sample_x_max = max(1, int(w * 0.75))
-        step_x = max(1, sample_x_max // 16)
-        step_y = max(1, h // 16)
-
-        rs: list[int] = []
-        gs: list[int] = []
-        bs: list[int] = []
-
-        for y in range(0, h, step_y):
-            for x in range(0, sample_x_max, step_x):
-                c = img.pixelColor(x, y)
-                if c.alpha() < 10:
-                    continue
-                rs.append(int(c.red()))
-                gs.append(int(c.green()))
-                bs.append(int(c.blue()))
-
-        if not rs:
-            return pixmap
-
-        rs.sort()
-        gs.sort()
-        bs.sort()
-        mid = len(rs) // 2
-        r_med, g_med, b_med = rs[mid], gs[mid], bs[mid]
-
-        # A column is considered "stray" if it's consistently much lighter than
-        # the baseline colour.
-        def is_stray_column(x: int) -> bool:
-            opaque = 0
-            light = 0
-            for y in range(h):
-                c = img.pixelColor(x, y)
-                if c.alpha() < 10:
-                    continue
-                opaque += 1
-                if (
-                    int(c.red()) >= r_med + 12
-                    and int(c.green()) >= g_med + 12
-                    and int(c.blue()) >= b_med + 12
-                ):
-                    light += 1
-            return opaque > 0 and (light / opaque) >= 0.95
-
-        crop_right = w - 1
-        while crop_right > 0 and is_stray_column(crop_right):
-            crop_right -= 1
-
-        new_w = crop_right + 1
-        if new_w >= w:
-            return pixmap
-
-        trimmed = img.copy(0, 0, new_w, h)
-        return QtGui.QPixmap.fromImage(trimmed)
-    except Exception:
-        return pixmap
-
-
 def _load_asset_pixmap(filename: str) -> Optional[QtGui.QPixmap]:
     """Load a pixmap for ``filename`` from our assets folder, if available."""
     for path in _asset_candidates(filename):
         if path.exists():
             pixmap = QtGui.QPixmap(str(path))
             if not pixmap.isNull():
-                if filename.lower() == "command_prompt.png":
-                    pixmap = _trim_command_prompt_pixmap(pixmap)
                 return pixmap
     return None
 
@@ -5995,46 +5897,9 @@ def _load_asset_movie(filename: str) -> Optional[QtGui.QMovie]:
     return None
 
 
-def _trim_transparent_pixmap(pixmap: QtGui.QPixmap) -> QtGui.QPixmap:
-    """Trim fully transparent rows/columns from a pixmap.
-
-    Useful because QIcon.pixmap() can add transparent padding when scaling.
-    """
-    if pixmap.isNull():
-        return pixmap
-
-    img = pixmap.toImage()
-    if img.isNull():
-        return pixmap
-
-    rect = img.rect()
-    left, right = rect.right(), rect.left()
-    top, bottom = rect.bottom(), rect.top()
-    found = False
-
-    for y in range(rect.top(), rect.bottom() + 1):
-        for x in range(rect.left(), rect.right() + 1):
-            if img.pixelColor(x, y).alpha() > 0:
-                found = True
-                if x < left:
-                    left = x
-                if x > right:
-                    right = x
-                if y < top:
-                    top = y
-                if y > bottom:
-                    bottom = y
-
-    if not found or left > right or top > bottom:
-        return pixmap
-
-    cropped = img.copy(left, top, right - left + 1, bottom - top + 1)
-    return QtGui.QPixmap.fromImage(cropped)
-
-
 @lru_cache(maxsize=1)
 def _load_app_icon() -> QtGui.QIcon:
-    """Return the application logo as a QIcon, trimming transparent padding."""
+    """Return the application logo as a QIcon."""
 
     candidates: list[Path] = []
 
@@ -6067,9 +5932,6 @@ def _load_app_icon() -> QtGui.QIcon:
                 QtCore.Qt.AspectRatioMode.KeepAspectRatio,
                 QtCore.Qt.TransformationMode.SmoothTransformation,
             )
-
-        # Trim fully transparent rows/columns so we get rid of big borders.
-        pixmap = _trim_transparent_pixmap(pixmap)
 
         return QtGui.QIcon(pixmap)
 
