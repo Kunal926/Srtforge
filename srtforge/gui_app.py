@@ -34,6 +34,20 @@ from .settings import (
 )
 from .win11_backdrop import apply_win11_look, get_windows_accent_qcolor
 
+_STARTUP_T0 = time.perf_counter()
+
+
+def _startup_trace(msg: str) -> None:
+    if os.getenv("SRTFORGE_STARTUP_TRACE") != "1":
+        return
+    try:
+        LOGS_DIR.mkdir(parents=True, exist_ok=True)
+        dt = time.perf_counter() - _STARTUP_T0
+        with (LOGS_DIR / "startup_trace.log").open("a", encoding="utf-8") as f:
+            f.write(f"{dt:8.3f}s  {msg}\n")
+    except Exception:
+        pass
+
 
 # ---------------------------------------------------------------------------
 # GUI Basic-tab factory defaults (single source of truth).
@@ -2133,6 +2147,7 @@ class MainWindow(QtWidgets.QMainWindow):
     """Main application window."""
 
     def __init__(self) -> None:
+        _startup_trace("MainWindow: enter")
         super().__init__()
         # Capitalize brand and open at the size in the screenshot
         self.setWindowTitle("Srtforge Studio")
@@ -2141,6 +2156,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.setObjectName("MainWindow")
 
         icon = _load_app_icon()
+        _startup_trace("MainWindow: _load_app_icon done")
         self._app_icon = icon  # store for reuse
         if not icon.isNull():
             self.setWindowIcon(icon)
@@ -2159,7 +2175,9 @@ class MainWindow(QtWidgets.QMainWindow):
         # Single source of truth for user options (kept only in the Options dialog)
         self._basic_options = dict(DEFAULT_BASIC_OPTIONS)
         self.ffmpeg_paths = locate_ffmpeg_binaries()
+        _startup_trace("MainWindow: locate_ffmpeg_binaries done")
         self.mkv_paths = locate_mkvmerge_binary()
+        _startup_trace("MainWindow: locate_mkvmerge_binary done")
         self._qsettings = QtCore.QSettings("srtforge", "SrtforgeStudio")
         # Persist the last folder used in the "Add files…" dialog across app restarts.
         # (Qt remembers it only for the current process by default.)
@@ -2208,11 +2226,16 @@ class MainWindow(QtWidgets.QMainWindow):
         self._stream_probe = _StreamProbeEmitter(self)
         self._stream_probe.streamReady.connect(self._on_stream_probed)
         self._build_ui()  # builds a page widget; we wrap it in a scroll area below
+        _startup_trace("MainWindow: _build_ui done")
         self._log_tailer = LogTailer(self._append_log, self)
         self._load_persistent_options()
+        _startup_trace("MainWindow: _load_persistent_options done")
         self._apply_styles()
+        _startup_trace("MainWindow: _apply_styles done")
         self._update_tool_status()
+        _startup_trace("MainWindow: _update_tool_status done")
         apply_win11_look(self)
+        _startup_trace("MainWindow: apply_win11_look done")
 
     # ---- UI construction ---------------------------------------------------------
     def _build_ui(self) -> None:
@@ -6048,7 +6071,9 @@ def _load_app_icon() -> QtGui.QIcon:
 def main() -> None:
     """Entry point used by ``srtforge-gui``."""
 
+    _startup_trace("main: enter")
     QtCore.QCoreApplication.setAttribute(QtCore.Qt.ApplicationAttribute.AA_EnableHighDpiScaling)
+    _startup_trace("main: AA_EnableHighDpiScaling set")
     # Optional: nicer HiDPI rounding on recent Qt builds
     try:
         QtCore.QCoreApplication.setHighDpiScaleFactorRoundingPolicy(
@@ -6056,14 +6081,20 @@ def main() -> None:
         )
     except Exception:
         pass
+    _startup_trace("main: dpi rounding policy set")
     app = QtWidgets.QApplication(sys.argv)
+    _startup_trace("main: QApplication created")
     app.setStyle("Fusion")
+    _startup_trace("main: style set")
     icon = _load_app_icon()
+    _startup_trace("main: _load_app_icon done")
     if not icon.isNull():
         app.setWindowIcon(icon)
 
     window = MainWindow()
+    _startup_trace("main: MainWindow constructed")
     window.show()
+    _startup_trace("main: window.show() returned")
     sys.exit(app.exec())
 
 
