@@ -134,7 +134,7 @@ class RunLogger:
         self.run_id = run_id
         self.path = log_path
         LOGS_DIR.mkdir(parents=True, exist_ok=True)
-        cleanup_old_logs()
+        cleanup_old_logs(wait=False)
         self._handle = log_path.open("w", encoding="utf8")
         self._latest_handle = LATEST_LOG.open("w", encoding="utf8")
         now = datetime.now(timezone.utc)
