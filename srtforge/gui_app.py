@@ -2203,7 +2203,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # Async duration probing avoids blocking the main thread when adding files.
         self._duration_probe = _DurationProbeEmitter(self)
         self._duration_probe.durationReady.connect(self._on_duration_probed)
-        
+
         # Async stream probing fills the Metadata column without blocking the UI.
         self._stream_probe = _StreamProbeEmitter(self)
         self._stream_probe.streamReady.connect(self._on_stream_probed)
