@@ -1,6 +1,6 @@
 # Srtforge – Master Architecture Document (“The Vision”)
 Status: In Progress  
-Last updated: 2025-12-01  
+Last updated: 2026-01-19  
 Owner: <TBD_OWNER>
 
 ---
@@ -749,6 +749,14 @@ Conflicts are resolved by the later layer overriding earlier ones. GUI must **mi
 ## 9. Phase / Step Log (Implementation History)
 
 > Note: Commit hashes below use short Git SHAs (e.g. `a8cf382`) referencing commits in the `main` branch history.
+
+### Recent Commits (Summary)
+
+- `d14d49b` – Refresh MAD header metadata (update Last updated date).
+- `93a1f63` – Remove pixmap trimming helper utilities now that trimming paths are unused.
+- `e4bb712` – Merge PR #183 removing unused trimming functions and references.
+- `9218bc6` – Merge PR #182 optimizing GUI app icon loading.
+- `321ed8d` – Add uploaded files for the codebase (see commit details for assets list).
 
 ### Phase 1 – Foundational Pipeline & CLI
 
