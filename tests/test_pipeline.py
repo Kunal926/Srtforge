@@ -1,8 +1,6 @@
 from __future__ import annotations
 from pathlib import Path
 
-import pytest
-
 from srtforge.ffmpeg import AudioStream
 from srtforge.pipeline import Pipeline, PipelineConfig
 
@@ -55,50 +53,30 @@ class DummyTools:
         return destination
 
 
-def test_pipeline_executes_parakeet_steps(tmp_path, monkeypatch):
+def test_pipeline_executes_whisper_steps(tmp_path, monkeypatch):
     media = tmp_path / "episode.mkv"
     media.write_bytes(b"video")
 
     tools = DummyTools()
 
-    monkeypatch.setattr("srtforge.pipeline.probe_video_fps", lambda _: 23.976)
-
     outputs = []
 
-    def fake_parakeet(
-        preprocessed: Path,
-        srt_path: Path,
-        *,
-        fps: float,
-        nemo_local,
-        force_float32: bool,
-        prefer_gpu: bool,
-        rel_pos_local_attn,
-        subsampling_conv_chunking: bool,
-        gpu_limit_percent: int,
-        use_low_priority_cuda_stream: bool,
-        run_logger=None,
-    ):
+    def fake_generate(preprocessed: str, *, model_name: str, language: str, prefer_gpu: bool):
         outputs.append(
             {
                 "preprocessed": preprocessed,
-                "srt_path": srt_path,
-                "fps": fps,
-                "nemo_local": nemo_local,
-                "force_float32": force_float32,
+                "model_name": model_name,
+                "language": language,
                 "prefer_gpu": prefer_gpu,
-                "rel_pos_local_attn": rel_pos_local_attn,
-                "subsampling_conv_chunking": subsampling_conv_chunking,
-                "gpu_limit_percent": gpu_limit_percent,
-                "use_low_priority_cuda_stream": use_low_priority_cuda_stream,
             }
         )
-        if run_logger is not None:
-            run_logger.log("fake_parakeet invoked")
-        srt_path.write_text("1\n00:00:00,000 --> 00:00:01,000\nHello\n\n")
-        return [{"start": 0.0, "end": 1.0, "text": "Hello"}]
+        return [{"start": 0.0, "end": 1.0, "text": "Hello", "words": []}]
 
-    monkeypatch.setattr("srtforge.pipeline.parakeet_to_srt", fake_parakeet)
+    def fake_write_srt(events, srt_path: str) -> None:
+        Path(srt_path).write_text("1\n00:00:00,000 --> 00:00:01,000\nHello\n\n")
+
+    monkeypatch.setattr("srtforge.engine_whisper.generate_optimized_events", fake_generate)
+    monkeypatch.setattr("srtforge.engine_whisper.write_srt", fake_write_srt)
 
     output_path = media.with_suffix(".srt")
     config = PipelineConfig(
@@ -112,12 +90,9 @@ def test_pipeline_executes_parakeet_steps(tmp_path, monkeypatch):
     result = Pipeline(config).run()
 
     assert [name for name, *_ in tools.calls] == ["extract", "isolate", "preprocess"]
-    assert outputs and outputs[0]["fps"] == pytest.approx(23.976)
-    assert outputs[0]["force_float32"] is config.force_float32
+    assert outputs and outputs[0]["model_name"] == config.whisper_model
+    assert outputs[0]["language"] == config.whisper_language
     assert outputs[0]["prefer_gpu"] is False
-    assert outputs[0]["rel_pos_local_attn"] == config.rel_pos_local_attn
-    assert outputs[0]["subsampling_conv_chunking"] is config.subsampling_conv_chunking
-    assert outputs[0]["gpu_limit_percent"] == config.gpu_limit_percent
     isolate_call = tools.calls[1]
     assert isolate_call[-1] is False
     preprocess_call = tools.calls[-1]
@@ -137,26 +112,14 @@ def test_pipeline_falls_back_when_dual_mono_requested_without_center_channel(tmp
 
     tools = DummyTools()
 
-    monkeypatch.setattr("srtforge.pipeline.probe_video_fps", lambda _: 23.976)
+    def fake_generate(preprocessed: str, *, model_name: str, language: str, prefer_gpu: bool):
+        return [{"start": 0.0, "end": 1.0, "text": "Hello", "words": []}]
 
-    def fake_parakeet(
-        preprocessed: Path,
-        srt_path: Path,
-        *,
-        fps: float,
-        nemo_local,
-        force_float32: bool,
-        prefer_gpu: bool,
-        rel_pos_local_attn,
-        subsampling_conv_chunking: bool,
-        gpu_limit_percent: int,
-        use_low_priority_cuda_stream: bool,
-        run_logger=None,
-    ):
-        srt_path.write_text("1\n00:00:00,000 --> 00:00:01,000\nHello\n\n")
-        return [{"start": 0.0, "end": 1.0, "text": "Hello"}]
+    def fake_write_srt(events, srt_path: str) -> None:
+        Path(srt_path).write_text("1\n00:00:00,000 --> 00:00:01,000\nHello\n\n")
 
-    monkeypatch.setattr("srtforge.pipeline.parakeet_to_srt", fake_parakeet)
+    monkeypatch.setattr("srtforge.engine_whisper.generate_optimized_events", fake_generate)
+    monkeypatch.setattr("srtforge.engine_whisper.write_srt", fake_write_srt)
 
     output_path = media.with_suffix(".srt")
     config = PipelineConfig(
