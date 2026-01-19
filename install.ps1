@@ -62,74 +62,6 @@ function Invoke-CommandWithScript {
     }
 }
 
-function Test-CudartImport {
-    param([string]$PythonExe)
-
-    $probe = @'
-try:
-    import importlib
-    import cuda.cudart  # legacy import expected by NeMo 2.5.x
-    print("OK")
-except Exception as e:
-    print("FAIL:", type(e).__name__, str(e))
-'@
-    try {
-        $out = Invoke-CommandWithScript -Command @($PythonExe) -ScriptContent $probe
-        $txt = ($out | Out-String).Trim()
-        return $txt -like 'OK*'
-    }
-    catch {
-        return $false
-    }
-}
-
-function Install-Cuda12Runtime {
-    param([string]$PythonExe, [string]$PipExe)
-
-    if (Test-CudartImport -PythonExe $PythonExe) {
-        Write-Host 'cuda.cudart is already importable'
-        return
-    }
-
-    Write-Host 'Installing CUDA 12 runtime (cudart) into the venv'
-    $ok = $true
-    try {
-        Invoke-WithArgs -Command @($PipExe) -Args @(
-            'install',
-            '--extra-index-url','https://pypi.ngc.nvidia.com',
-            'cuda-toolkit[cudart]==12.9.*'
-        )
-    }
-    catch {
-        $ok = $false
-        Write-Warning "cuda-toolkit[cudart]==12.9.* installation failed, falling back to nvidia-cuda-runtime-cu12"
-    }
-
-    if (-not $ok) {
-        try {
-            Invoke-WithArgs -Command @($PipExe) -Args @(
-                'install',
-                '--extra-index-url','https://pypi.ngc.nvidia.com',
-                'nvidia-cuda-runtime-cu12==12.9.*'
-            )
-            $ok = $true
-        }
-        catch {
-            $ok = $false
-        }
-    }
-
-    if ($ok) {
-        if (Test-CudartImport -PythonExe $PythonExe) {
-            Write-Host 'CUDA 12 runtime present: cuda.cudart import OK'
-        } else {
-            Write-Warning 'CUDA 12 runtime was installed but cuda.cudart still does not import. NeMo CUDA graphs may remain disabled.'
-        }
-    } else {
-        Write-Warning 'Failed to install CUDA 12 runtime. NeMo CUDA graphs may remain disabled.'
-    }
-}
-
 $pythonInfoScript = @'
 import json
 import pathlib
@@ -759,37 +691,6 @@ if (-not $onnxGpuInstalled -and $selectedDevice -eq 'gpu') {
     Write-Warning "Vocal separation is falling back to the CPU build of ONNX Runtime. Re-run the installer after fixing your CUDA driver to re-enable GPU separation."
 }
 
-Write-Host 'Installing cuda-python==12.9.* for NeMo CUDA Graphs compatibility'
-Invoke-WithArgs -Command @($venvPython) -Args @('-m', 'pip', 'install', 'cuda-python==12.9.*')
-
-# Ensure cudart64_12*.dll is available inside the venv for cuda-python 12.9
-Install-Cuda12Runtime -PythonExe $venvPython -PipExe $venvPip
-
-$nemoRequirement = 'nemo_toolkit[asr]~=2.5.1'
-Invoke-WithArgs -Command @($venvPython) -Args @(
-    '-m','pip','install',$nemoRequirement
-)
-
-# --- Build the NeMo verification script via Base64 (exact Python content from your comments) ---
-$verifyNeMoScriptB64 = @'
-aW1wb3J0IGltcG9ydGxpYiwgc2lnbmFsLCBzeXMKaWYgbm90IGhhc2F0dHIoc2lnbmFsLCAiU0lHS0lM
-TCIpOgogICAgc2V0YXR0cihzaWduYWwsICJTSUdLSUxMIiwgZ2V0YXR0cihzaWduYWwsICJTSUdURVJN
-IiwgZ2V0YXR0cihzaWduYWwsICJTSUdBQlJUIiwgOSkpKQp0cnk6CiAgICBpbXBvcnRsaWIuaW1wb3J0
-X21vZHVsZSgibmVtby5jb2xsZWN0aW9ucy5hc3IiKQpleGNlcHQgRXhjZXB0aW9uIGFzIGV4YzoKICAg
-IHByaW50KCJFUlJPUjogTlZJRElBIE5lTW8gQVNSIGNvbXBvbmVudHMgZmFpbGVkIHRvIGltcG9ydCBh
-ZnRlciBpbnN0YWxsYXRpb24uIFRoaXMgdXN1YWxseSBtZWFucyBvbmUgb2YgaXRzIGRlcGVuZGVuY2ll
-cyAoc3VjaCBhcyBudW1weSwgcHlhcnJvdyBvciBtYXRwbG90bGliKSB3YXMgbm90IGluc3RhbGxlZCBj
-b3JyZWN0bHkuIiwgZmlsZT1zeXMuc3RkZXJyKQogICAgcHJpbnQoZiIgICAgICAgT3JpZ2luYWwgaW1w
-b3J0IGVycm9yOiB7ZXhjfSIsIGZpbGU9c3lzLnN0ZGVycikKICAgIHN5cy5leGl0KDEpCmVsc2U6CiAg
-ICBwcmludCgiVmVyaWZpZWQgTlZJRElBIE5lTW8gQVNSIG1vZHVsZXMgYXJlIGltcG9ydGFibGUuIikK
-'@
-
-$verifyNeMoScript = [System.Text.Encoding]::UTF8.GetString(
-    [System.Convert]::FromBase64String($verifyNeMoScriptB64)
-)
-
-Invoke-CommandWithScript -Command @($venvPython) -ScriptContent $verifyNeMoScript
-
 # Install the local package in editable mode
 Invoke-WithArgs -Command @($venvPip) -Args @('install', '-e', '.')
 
@@ -802,8 +703,7 @@ if (-not (Test-Path $modelsDir)) {
 }
 
 $downloads = @(
-    @{ Url = 'https://github.com/StiensGate928/Srtforge/releases/download/v1.0.0/voc_fv4.ckpt'; File = 'voc_fv4.ckpt' },
-    @{ Url = 'https://huggingface.co/nvidia/parakeet-tdt-0.6b-v2/resolve/main/parakeet-tdt-0.6b-v2.nemo?download=1'; File = 'parakeet-tdt-0.6b-v2.nemo' }
+    @{ Url = 'https://huggingface.co/audio-separator/melband-roformer-fv4/resolve/main/voc_fv4.ckpt?download=1'; File = 'voc_fv4.ckpt' }
 )
 
 function Download-Model([hashtable]$item) {
