@@ -12,6 +12,7 @@ import sys
 import tempfile
 import threading
 import time
+import uuid
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -56,6 +57,7 @@ def _startup_trace(msg: str) -> None:
 # ---------------------------------------------------------------------------
 DEFAULT_BASIC_OPTIONS: dict[str, object] = {
     "prefer_gpu": True,
+    "gemini_enabled": False,
     "embed_subtitles": True,
     "burn_subtitles": False,
     "cleanup_gpu": True,
@@ -88,7 +90,13 @@ class MKVToolNixBinaries:
 class WorkerOptions:
     """Options that control how the transcription worker runs."""
 
+    config_path: Optional[Path]
     prefer_gpu: bool
+    whisper_model: str
+    whisper_language: str
+    gemini_enabled: bool
+    gemini_model_id: str
+    gemini_api_key: Optional[str]
     embed_subtitles: bool
     burn_subtitles: bool
     cleanup_gpu: bool
@@ -104,7 +112,6 @@ class WorkerOptions:
     soft_embed_overwrite_source: bool = False
     # NEW: override global output_dir and put the .srt next to the media file
     place_srt_next_to_media: bool = False
-    config_path: Optional[str] = None
 
 
 def add_shadow(
@@ -372,6 +379,15 @@ class TranscriptionWorker(QtCore.QThread):
         self._timer_origin: float = time.perf_counter()
         self._file_start_ts: float = 0.0
         self._file_media_duration: float = 0.0
+        self._worker_ready: bool = False
+        self._awaiting_worker_ready_loop: Optional[QtCore.QEventLoop] = None
+        self._awaiting_job_loop: Optional[QtCore.QEventLoop] = None
+        self._current_job_id: Optional[str] = None
+        self._worker_job_error: Optional[str] = None
+        self._worker_stdout_parts: deque[str] = deque(maxlen=250)
+        self._worker_stderr_parts: deque[str] = deque(maxlen=250)
+        self._worker_stdout_buffer: str = ""
+        self._worker_stderr_buffer: str = ""
 
     _RUN_ID_PATTERN = re.compile(r"Run ID[:\s]+([0-9A-Za-z-]+)")
 
@@ -581,6 +597,15 @@ class TranscriptionWorker(QtCore.QThread):
         total = len(self.files)
         self._timer_origin = time.perf_counter()
         self._log_timing("queue started")
+        try:
+            self._start_persistent_worker()
+        except Exception as exc:
+            msg = f"Failed to start ASR worker: {exc}"
+            self.logMessage.emit(msg)
+            for media_path in self.files:
+                self.fileFailed.emit(str(media_path), msg)
+            self.queueFinished.emit(True)
+            return
         for index, media_path in enumerate(self.files, start=1):
             if self._stop_event.is_set():
                 break
@@ -670,26 +695,23 @@ class TranscriptionWorker(QtCore.QThread):
             except Exception as exc:  # pragma: no cover - defensive safeguard
                 self.fileFailed.emit(str(media_path), str(exc))
         stopped = self._stop_event.is_set()
+        try:
+            self._shutdown_persistent_worker()
+        except Exception:
+            pass
         self.queueFinished.emit(stopped)
 
     # ---- helpers -----------------------------------------------------------------
-    def _prepare_cli_invocation(self, media: Path) -> tuple[list[str], dict[str, str]]:
+    def _prepare_worker_invocation(self) -> tuple[list[str], dict[str, str]]:
         cli_binary = locate_cli_executable()
         if cli_binary:
-            command = [str(cli_binary), "run", str(media)]
+            command = [str(cli_binary), "worker"]
         else:
-            # -u => unbuffered stdout/stderr so the GUI can read lines as they appear (Python docs)
-            command = [sys.executable, "-u", "-m", "srtforge", "run", str(media)]
-
-        # NEW: force the SRT to live next to the media file, matching the Lua script
-        if getattr(self.options, "place_srt_next_to_media", False):
-            output_path = media.with_suffix(DEFAULT_OUTPUT_SUFFIX)
-            command.extend(["--output", str(output_path)])
+            command = [sys.executable, "-u", "-m", "srtforge", "worker"]
 
         if not self.options.prefer_gpu:
             command.append("--cpu")
         env = os.environ.copy()
-        # Also request unbuffered output via env for robustness (Python docs: PYTHONUNBUFFERED)
         env["PYTHONUNBUFFERED"] = "1"
         env.setdefault("PYTHONIOENCODING", "UTF-8")
         env.setdefault("PYTHONUTF8", "1")
@@ -700,6 +722,127 @@ class TranscriptionWorker(QtCore.QThread):
             env_path = env.get("PATH", "")
             env["PATH"] = os.pathsep.join(str(part) for part in (ffmpeg_dir, env_path) if part)
         return command, env
+
+    def _start_persistent_worker(self) -> None:
+        if self._cli_qprocess and self._cli_qprocess.state() != QtCore.QProcess.ProcessState.NotRunning:
+            return
+
+        self._worker_ready = False
+        self._worker_stdout_parts.clear()
+        self._worker_stderr_parts.clear()
+        self._worker_stdout_buffer = ""
+        self._worker_stderr_buffer = ""
+
+        command, env = self._prepare_worker_invocation()
+        self.logMessage.emit(f"Starting ASR worker: {' '.join(command)}")
+
+        process = QtCore.QProcess()
+        environment = QtCore.QProcessEnvironment()
+        for key, value in env.items():
+            environment.insert(key, value)
+        process.setProcessEnvironment(environment)
+        process.setProgram(command[0])
+        process.setArguments(command[1:])
+        process.setProcessChannelMode(QtCore.QProcess.ProcessChannelMode.SeparateChannels)
+
+        process.readyReadStandardOutput.connect(self._on_worker_stdout)
+        process.readyReadStandardError.connect(self._on_worker_stderr)
+        process.errorOccurred.connect(self._on_worker_error)
+
+        self._cli_qprocess = process
+        process.start()
+        if not process.waitForStarted(5000):
+            error = process.errorString() or "unable to start transcription worker"
+            self._cli_qprocess = None
+            process.deleteLater()
+            raise RuntimeError(error)
+
+        pid = int(process.processId())
+        self._cli_pid = pid or None
+        loop = QtCore.QEventLoop()
+        self._awaiting_worker_ready_loop = loop
+
+        def _timeout() -> None:
+            if self._awaiting_worker_ready_loop is loop:
+                loop.quit()
+
+        QtCore.QTimer.singleShot(15000, _timeout)
+        loop.exec()
+        self._awaiting_worker_ready_loop = None
+
+        if not self._worker_ready:
+            self._shutdown_persistent_worker()
+            raise RuntimeError("ASR worker did not report ready state")
+
+    def _shutdown_persistent_worker(self) -> None:
+        qprocess = self._cli_qprocess
+        if not qprocess or qprocess.state() == QtCore.QProcess.ProcessState.NotRunning:
+            return
+        try:
+            payload = json.dumps({"action": "shutdown"}) + "\n"
+            qprocess.write(payload.encode("utf-8"))
+            qprocess.closeWriteChannel()
+        except Exception:
+            pass
+
+        if not qprocess.waitForFinished(5000):
+            try:
+                qprocess.terminate()
+            except Exception:
+                pass
+            if not qprocess.waitForFinished(2000):
+                try:
+                    qprocess.kill()
+                except Exception:
+                    pass
+                qprocess.waitForFinished(2000)
+
+        qprocess.deleteLater()
+        self._cli_qprocess = None
+        self._cli_pid = None
+        self._worker_ready = False
+
+    def _flush_worker_lines(self, buffer: str) -> str:
+        if not buffer:
+            return ""
+        segments = buffer.splitlines(keepends=True)
+        remainder = ""
+        if segments and not segments[-1].endswith(("\n", "\r")):
+            remainder = segments.pop()
+        for segment in segments:
+            text = segment.rstrip("\r\n")
+            if text:
+                self._process_cli_line(text)
+                self.logMessage.emit(text)
+        return remainder
+
+    def _on_worker_stdout(self) -> None:
+        qprocess = self._cli_qprocess
+        if not qprocess:
+            return
+        data = qprocess.readAllStandardOutput()
+        if not data:
+            return
+        chunk = bytes(data).decode("utf-8", errors="replace")
+        self._worker_stdout_parts.append(chunk)
+        self._worker_stdout_buffer += chunk
+        self._worker_stdout_buffer = self._flush_worker_lines(self._worker_stdout_buffer)
+
+    def _on_worker_stderr(self) -> None:
+        qprocess = self._cli_qprocess
+        if not qprocess:
+            return
+        data = qprocess.readAllStandardError()
+        if not data:
+            return
+        chunk = bytes(data).decode("utf-8", errors="replace")
+        self._worker_stderr_parts.append(chunk)
+        self._worker_stderr_buffer += chunk
+        self._worker_stderr_buffer = self._flush_worker_lines(self._worker_stderr_buffer)
+
+    def _on_worker_error(self, error: QtCore.QProcess.ProcessError) -> None:
+        message = self._cli_qprocess.errorString() if self._cli_qprocess else str(error)
+        self.logMessage.emit(f"Worker process error: {message}")
 
     def _process_cli_line(self, text: str) -> None:
         if not text:
@@ -714,159 +857,92 @@ class TranscriptionWorker(QtCore.QThread):
             payload = json.loads(text)
         except Exception:
             return
-        if isinstance(payload, dict) and payload.get("event") == "srt_written":
+        if not isinstance(payload, dict):
+            return
+        event = payload.get("event")
+        if event == "worker_ready":
+            self._worker_ready = True
+            if self._awaiting_worker_ready_loop:
+                self._awaiting_worker_ready_loop.quit()
+        elif event == "worker_preload_failed":
+            error = payload.get("error")
+            if error:
+                self.logMessage.emit(f"Worker preload failed: {error}")
+        elif event == "job_failed":
+            if str(payload.get("id") or "") == str(self._current_job_id or ""):
+                self._worker_job_error = str(payload.get("error") or "worker job failed")
+                if self._awaiting_job_loop:
+                    self._awaiting_job_loop.quit()
+        elif event == "srt_written":
             candidate = Path(str(payload.get("path", ""))).expanduser()
             if candidate.exists() and candidate != self._last_srt_path:
                 self._last_srt_path = candidate
                 self.logMessage.emit(f"SRT ready: {candidate}")
+            if str(payload.get("id") or "") == str(self._current_job_id or ""):
+                if self._awaiting_job_loop:
+                    self._awaiting_job_loop.quit()
 
-    def _run_pipeline_qprocess(self, media: Path) -> tuple[int, str, str]:
-        command, env = self._prepare_cli_invocation(media)
-        self.logMessage.emit(f"Transcription: {' '.join(command)}")
-        process = QtCore.QProcess()
-        environment = QtCore.QProcessEnvironment()
-        for key, value in env.items():
-            environment.insert(key, value)
-        process.setProcessEnvironment(environment)
-        process.setProgram(command[0])
-        process.setArguments(command[1:])
-        process.setProcessChannelMode(QtCore.QProcess.ProcessChannelMode.SeparateChannels)
-
-        # Keep only a bounded tail of output to avoid unbounded memory growth
-        # when ffmpeg/NeMo emits lots of logs.
-        stdout_parts = deque(maxlen=250)  # type: ignore[var-annotated]
-        stderr_parts = deque(maxlen=250)  # type: ignore[var-annotated]
-        stdout_buffer = ""
-        stderr_buffer = ""
-
-        def _flush_lines(buffer: str) -> str:
-            if not buffer:
-                return ""
-            segments = buffer.splitlines(keepends=True)
-            remainder = ""
-            if segments and not segments[-1].endswith(("\n", "\r")):
-                remainder = segments.pop()
-            for segment in segments:
-                text = segment.rstrip("\r\n")
-                if text:
-                    self._process_cli_line(text)
-                    self.logMessage.emit(text)
-            return remainder
-
-        def _handle_stdout() -> None:
-            nonlocal stdout_buffer
-            data = process.readAllStandardOutput()
-            if not data:
-                return
-            chunk = bytes(data).decode("utf-8", errors="replace")
-            stdout_parts.append(chunk)
-            stdout_buffer += chunk
-            stdout_buffer = _flush_lines(stdout_buffer)
-
-        def _handle_stderr() -> None:
-            nonlocal stderr_buffer
-            data = process.readAllStandardError()
-            if not data:
-                return
-            chunk = bytes(data).decode("utf-8", errors="replace")
-            stderr_parts.append(chunk)
-            stderr_buffer += chunk
-            stderr_buffer = _flush_lines(stderr_buffer)
-
-        process.readyReadStandardOutput.connect(_handle_stdout)  # Qt docs: readyRead* fire as new data arrives
-        process.readyReadStandardError.connect(_handle_stderr)
-
-        loop = QtCore.QEventLoop()
-        process.finished.connect(loop.quit)
-        self._cli_qprocess = process
-        try:
-            process.start()
-            if not process.waitForStarted(5000):
-                error = process.errorString() or "unable to start transcription process"
-                raise RuntimeError(error)
-            pid = int(process.processId())
-            self._cli_pid = pid or None
-            if process.state() != QtCore.QProcess.ProcessState.NotRunning:
-                loop.exec()
-            _handle_stdout()
-            _handle_stderr()
-        finally:
-            self._cli_qprocess = None
-            self._cli_pid = None
-            process.deleteLater()
-
-        if stdout_buffer:
-            text = stdout_buffer.rstrip("\r\n")
-            if text:
-                self._process_cli_line(text)
-                self.logMessage.emit(text)
-        if stderr_buffer:
-            text = stderr_buffer.rstrip("\r\n")
-            if text:
-                self._process_cli_line(text)
-                self.logMessage.emit(text)
-
-        stdout = "".join(list(stdout_parts))
-        stderr = "".join(list(stderr_parts))
-        return process.exitCode(), stdout, stderr
-
-    def _run_pipeline_subprocess(self, media: Path) -> Path:
+    def _run_pipeline_via_worker(self, media: Path) -> Path:
         self._last_srt_path = None
         self._current_run_id = None
-        use_qprocess = os.getenv("SRTFORGE_USE_QPROCESS", "1") != "0"
-        if use_qprocess:
-            return_code, stdout, stderr = self._run_pipeline_qprocess(media)
-        else:
-            command, env = self._prepare_cli_invocation(media)
-            return_code, stdout, stderr = self._run_command(
-                command,
-                "Transcription",
-                env=env,
-                check=False,
-            )
-        if return_code == 0:
-            if self._last_srt_path and self._last_srt_path.exists():
-                return self._last_srt_path
-            import re as _re
+        self._worker_job_error = None
+        self._current_job_id = uuid.uuid4().hex
 
-            # Prefer a structured event line emitted by the CLI
-            for line in (stdout or "").splitlines():
-                text = line.strip()
-                if not text:
-                    continue
-                try:
-                    payload = json.loads(text)
-                except Exception:
-                    pass
-                else:
-                    if isinstance(payload, dict) and payload.get("event") == "srt_written":
-                        candidate = Path(str(payload.get("path", ""))).expanduser()
-                        if candidate.exists():
-                            return candidate
+        qprocess = self._cli_qprocess
+        if not qprocess or qprocess.state() == QtCore.QProcess.ProcessState.NotRunning:
+            raise RuntimeError("ASR worker is not running")
 
-            # Fallback to legacy human-readable log lines
-            for line in (stdout or "").splitlines():
-                m = _re.search(r"SRT written to\s+(?P<path>.*?\.srt)\s*$", line)
-                if m:
-                    candidate = Path(m.group("path")).expanduser()
-                    if candidate.exists():
-                        return candidate
-            # NEW: Fallback – either use media location or the configured output_dir
-            if getattr(self.options, "place_srt_next_to_media", False):
-                output_path = media.with_suffix(DEFAULT_OUTPUT_SUFFIX)
-            else:
-                # Existing behavior: derive from settings.paths.output_dir
-                output_path = _expected_srt_path(media)
-            if output_path.exists():
-                return output_path
-            raise RuntimeError("SRT output missing")
-        if self._stop_event.is_set():
-            raise StopRequested
-        if return_code == 2:
-            reason = (stderr or stdout or "Pipeline skipped").strip()
-            raise RuntimeError(reason or "Pipeline skipped")
-        message = (stderr or stdout or f"Pipeline exited with code {return_code}").strip()
-        raise RuntimeError(message)
+        output_path = None
+        if getattr(self.options, "place_srt_next_to_media", False):
+            output_path = media.with_suffix(DEFAULT_OUTPUT_SUFFIX)
+
+        payload = {
+            "action": "transcribe",
+            "id": self._current_job_id,
+            "file": str(media),
+            "output": str(output_path) if output_path else None,
+            "config": {
+                "prefer_gpu": bool(self.options.prefer_gpu),
+                "separation_prefer_gpu": bool(self.options.prefer_gpu),
+                "whisper": {
+                    "model": self.options.whisper_model,
+                    "language": self.options.whisper_language,
+                },
+                "gemini": {
+                    "enabled": bool(self.options.gemini_enabled),
+                    "model_id": self.options.gemini_model_id,
+                    "api_key": self.options.gemini_api_key,
+                },
+            },
+        }
+
+        qprocess.write((json.dumps(payload) + "\n").encode("utf-8"))
+        qprocess.waitForBytesWritten(2000)
+
+        loop = QtCore.QEventLoop()
+        self._awaiting_job_loop = loop
+
+        def _timeout() -> None:
+            if self._awaiting_job_loop is loop:
+                loop.quit()
+
+        QtCore.QTimer.singleShot(60 * 60 * 1000, _timeout)
+        loop.exec()
+        self._awaiting_job_loop = None
+
+        if self._worker_job_error:
+            raise RuntimeError(self._worker_job_error)
+
+        if self._last_srt_path and self._last_srt_path.exists():
+            return self._last_srt_path
+
+        fallback = output_path or _expected_srt_path(media)
+        if fallback.exists():
+            return fallback
+        raise RuntimeError("SRT output missing")
+
+    def _run_pipeline_subprocess(self, media: Path) -> Path:
+        return self._run_pipeline_via_worker(media)
 
     def _embed_subtitles_ffmpeg(self, media: Path, subtitles: Path) -> Path:
         overwrite_source = bool(getattr(self.options, "soft_embed_overwrite_source", False))
@@ -1748,6 +1824,15 @@ class OptionsDialog(QtWidgets.QDialog):
         grid.addWidget(self.cleanup_cb, row, 0, 1, 2)
         row += 1
 
+        self.gemini_cb = QtWidgets.QCheckBox("Enable Gemini text correction")
+        self.gemini_cb.setChecked(bool(initial_basic.get("gemini_enabled", False)))
+        self.gemini_cb.setToolTip(
+            "Applies a text-only correction pass using Gemini after Whisper segmentation.\n"
+            "API key can be provided in the Performance tab or via SRTFORGE_GEMINI_API_KEY."
+        )
+        grid.addWidget(self.gemini_cb, row, 0, 1, 2)
+        row += 1
+
         # Compact "Clear ETA" action (aligned like dialog buttons)
         self.reset_eta_button = QtWidgets.QPushButton("Clear ETA history")
         self.reset_eta_button.setObjectName("ResetEtaButton")
@@ -1777,87 +1862,26 @@ class OptionsDialog(QtWidgets.QDialog):
         grid.setColumnStretch(1, 1)
         self.tabs.addTab(basic, "Basic")
 
-        # ----- Performance tab (hardware tuning; defaults preserve existing behavior) ---
+        # ----- Performance tab (Whisper + Gemini configuration) -------------
         perf = QtWidgets.QWidget()
         perf_form = QtWidgets.QFormLayout(perf)
 
-        # Force float32 (moved from Advanced -> Performance)
-        self.force_f32 = QtWidgets.QCheckBox()
-        self.force_f32.setChecked(bool(initial_settings.parakeet.force_float32))
-        self.force_f32.setToolTip(
-            "Force float32 for Parakeet inference. Helps stability on some GPUs, but may be slower."
-        )
-        perf_form.addRow("Force float32 (Parakeet)", self.force_f32)
+        self.whisper_model = QtWidgets.QLineEdit(str(initial_settings.whisper.model))
+        self.whisper_model.setPlaceholderText("large-v3-turbo")
+        perf_form.addRow("Whisper model", self.whisper_model)
 
-        # Local attention window (rel_pos_local_attn)
-        rel_attn = getattr(initial_settings.parakeet, "rel_pos_local_attn", [768, 768]) or [768, 768]
-        try:
-            left_default = int(rel_attn[0]) if len(rel_attn) > 0 else 768
-            right_default = int(rel_attn[1]) if len(rel_attn) > 1 else 768
-        except Exception:
-            left_default, right_default = 768, 768
+        self.whisper_language = QtWidgets.QLineEdit(str(initial_settings.whisper.language))
+        self.whisper_language.setPlaceholderText("en")
+        perf_form.addRow("Whisper language", self.whisper_language)
 
-        self.local_attn_left = QtWidgets.QSpinBox()
-        self.local_attn_left.setRange(32, 4096)
-        self.local_attn_left.setSingleStep(32)
-        self.local_attn_left.setValue(left_default)
+        self.gemini_model_id = QtWidgets.QLineEdit(str(initial_settings.gemini.model_id))
+        self.gemini_model_id.setPlaceholderText("gemini-3-flash-preview")
+        perf_form.addRow("Gemini model id", self.gemini_model_id)
 
-        self.local_attn_right = QtWidgets.QSpinBox()
-        self.local_attn_right.setRange(32, 4096)
-        self.local_attn_right.setSingleStep(32)
-        self.local_attn_right.setValue(right_default)
-
-        attn_row = QtWidgets.QHBoxLayout()
-        attn_widget = QtWidgets.QWidget()
-        attn_widget.setLayout(attn_row)
-        attn_row.addWidget(QtWidgets.QLabel("Left"))
-        attn_row.addWidget(self.local_attn_left)
-        attn_row.addWidget(QtWidgets.QLabel("Right"))
-        attn_row.addWidget(self.local_attn_right)
-        attn_row.addStretch(1)
-
-        attn_widget.setToolTip(
-            "Local attention window used when Parakeet applies long-audio settings (rel_pos_local_attn). "
-            "Lower values can reduce VRAM usage on weaker GPUs for long inputs. "
-            "Default: 768, 768 (matches current behaviour)."
-        )
-        perf_form.addRow("Local attention window", attn_widget)
-
-        # Subsampling conv chunking (factor=1)
-        self.subsampling_conv_chunking = QtWidgets.QCheckBox("Enable (factor=1)")
-        self.subsampling_conv_chunking.setChecked(
-            bool(getattr(initial_settings.parakeet, "subsampling_conv_chunking", False))
-        )
-        self.subsampling_conv_chunking.setToolTip(
-            "Enable Parakeet subsampling conv chunking (factor=1). "
-            "Can reduce memory pressure on long audio, but may reduce throughput. "
-            "Default: Off."
-        )
-        perf_form.addRow("Subsampling conv chunking", self.subsampling_conv_chunking)
-
-        # GPU limiter (%)
-        self.gpu_limit_spin = QtWidgets.QSpinBox()
-        self.gpu_limit_spin.setRange(10, 100)
-        self.gpu_limit_spin.setSingleStep(5)
-        self.gpu_limit_spin.setValue(int(getattr(initial_settings.parakeet, "gpu_limit_percent", 100) or 100))
-        self.gpu_limit_spin.setSuffix("%")
-        self.gpu_limit_spin.setToolTip(
-            "Best-effort GPU limiter. 100% preserves current behaviour. "
-            "When set below 100%, Srtforge will attempt to keep the desktop responsive by limiting the CUDA allocator "
-            "memory fraction and running inference on a low-priority CUDA stream."
-        )
-        perf_form.addRow("VRAM limit (best effort)", self.gpu_limit_spin)
-
-        # Low-priority CUDA stream (independent of VRAM limit)
-        self.low_pri_cuda_stream = QtWidgets.QCheckBox()
-        self.low_pri_cuda_stream.setChecked(
-            bool(getattr(initial_settings.parakeet, "use_low_priority_cuda_stream", False))
-        )
-        self.low_pri_cuda_stream.setToolTip(
-            "Run Parakeet inference on a low-priority CUDA stream so the desktop stays responsive. "
-            "This is independent of the VRAM limit. Default: Off."
-        )
-        perf_form.addRow("Low-priority CUDA stream", self.low_pri_cuda_stream)
+        self.gemini_api_key = QtWidgets.QLineEdit(str(initial_settings.gemini.api_key or ""))
+        self.gemini_api_key.setEchoMode(QtWidgets.QLineEdit.EchoMode.Password)
+        self.gemini_api_key.setPlaceholderText("Leave blank to use SRTFORGE_GEMINI_API_KEY")
+        perf_form.addRow("Gemini API key", self.gemini_api_key)
 
         self.tabs.addTab(perf, "Performance")
 
@@ -1984,7 +2008,8 @@ class OptionsDialog(QtWidgets.QDialog):
 
     def basic_values(self) -> dict:
         return {
-            "prefer_gpu": bool(self.device_combo.currentData()),
+            "prefer_gpu": self.device_combo.currentData() is True,
+            "gemini_enabled": self.gemini_cb.isChecked(),
             "embed_subtitles": self.embed_checkbox.isChecked(),
             "burn_subtitles": self.burn_cb.isChecked(),
             "cleanup_gpu": self.cleanup_cb.isChecked(),
@@ -2016,13 +2041,14 @@ class OptionsDialog(QtWidgets.QDialog):
                 "prefer_gpu": gpu_pref,
                 "allow_untagged_english": self.allow_untagged.isChecked(),
             },
-            "parakeet": {
-                "force_float32": self.force_f32.isChecked(),
-                "prefer_gpu": gpu_pref,
-                "rel_pos_local_attn": [int(self.local_attn_left.value()), int(self.local_attn_right.value())],
-                "subsampling_conv_chunking": self.subsampling_conv_chunking.isChecked(),
-                "gpu_limit_percent": int(self.gpu_limit_spin.value()),
-                "use_low_priority_cuda_stream": self.low_pri_cuda_stream.isChecked(),
+            "whisper": {
+                "model": self.whisper_model.text().strip() or "large-v3-turbo",
+                "language": self.whisper_language.text().strip() or "en",
+            },
+            "gemini": {
+                "enabled": bool(self.gemini_cb.isChecked()),
+                "model_id": self.gemini_model_id.text().strip() or "gemini-3-flash-preview",
+                "api_key": (self.gemini_api_key.text().strip() or None),
             },
         }
 
@@ -2084,26 +2110,15 @@ class OptionsDialog(QtWidgets.QDialog):
         self.external_srt_cb.setChecked(bool(default_basic.get("srt_next_to_media", False)))
         self.burn_cb.setChecked(bool(default_basic.get("burn_subtitles", False)))
         self.cleanup_cb.setChecked(bool(default_basic.get("cleanup_gpu", False)))
+        self.gemini_cb.setChecked(bool(default_basic.get("gemini_enabled", False)))
 
         # ---- Performance defaults (from shipped config.yaml -> `settings`) ---
-        self.force_f32.setChecked(bool(getattr(settings.parakeet, "force_float32", True)))
-
-        rel_attn = getattr(settings.parakeet, "rel_pos_local_attn", [768, 768]) or [768, 768]
-        try:
-            left_default = int(rel_attn[0]) if len(rel_attn) > 0 else 768
-            right_default = int(rel_attn[1]) if len(rel_attn) > 1 else 768
-        except Exception:
-            left_default, right_default = 768, 768
-        self.local_attn_left.setValue(left_default)
-        self.local_attn_right.setValue(right_default)
-
-        self.subsampling_conv_chunking.setChecked(
-            bool(getattr(settings.parakeet, "subsampling_conv_chunking", False))
+        self.whisper_model.setText(str(getattr(settings.whisper, "model", "large-v3-turbo") or "large-v3-turbo"))
+        self.whisper_language.setText(str(getattr(settings.whisper, "language", "en") or "en"))
+        self.gemini_model_id.setText(
+            str(getattr(settings.gemini, "model_id", "gemini-3-flash-preview") or "gemini-3-flash-preview")
         )
-        self.gpu_limit_spin.setValue(int(getattr(settings.parakeet, "gpu_limit_percent", 100) or 100))
-        self.low_pri_cuda_stream.setChecked(
-            bool(getattr(settings.parakeet, "use_low_priority_cuda_stream", False))
-        )
+        self.gemini_api_key.setText(str(getattr(settings.gemini, "api_key", "") or ""))
 
         # ---- Advanced defaults (paths + separation + ffmpeg) ----------------
         try:
@@ -4100,22 +4115,14 @@ class MainWindow(QtWidgets.QMainWindow):
                             "adv_allow_untagged", settings.separation.allow_untagged_english, type=bool
                         ),
                     }
-                    base["parakeet"] = {
-                        "force_float32": legacy.value(
-                            "perf_force_f32", settings.parakeet.force_float32, type=bool
-                        ),
-                        "prefer_gpu": gpu_pref,
-                        "rel_pos_local_attn": [
-                            int(legacy.value("perf_attn_left", 768, type=int)),
-                            int(legacy.value("perf_attn_right", 768, type=int)),
-                        ],
-                        "subsampling_conv_chunking": legacy.value(
-                            "perf_subsampling_chunk", False, type=bool
-                        ),
-                        "gpu_limit_percent": int(legacy.value("perf_vram_limit", 100, type=int)),
-                        "use_low_priority_cuda_stream": legacy.value(
-                            "perf_low_pri_stream", False, type=bool
-                        ),
+                    base["whisper"] = {
+                        "model": settings.whisper.model,
+                        "language": settings.whisper.language,
+                    }
+                    base["gemini"] = {
+                        "enabled": False,
+                        "model_id": settings.gemini.model_id,
+                        "api_key": None,
                     }
         except Exception:
             # Migration should never crash the app.
@@ -4143,6 +4150,9 @@ class MainWindow(QtWidgets.QMainWindow):
         gui = cfg.get("gui") if isinstance(cfg.get("gui"), dict) else {}
 
         self._basic_options["prefer_gpu"] = bool(gui.get("prefer_gpu", self._basic_options["prefer_gpu"]))
+        self._basic_options["gemini_enabled"] = bool(
+            gui.get("gemini_enabled", self._basic_options["gemini_enabled"])
+        )
         self._basic_options["embed_subtitles"] = bool(gui.get("embed_subtitles", self._basic_options["embed_subtitles"]))
         self._basic_options["burn_subtitles"] = bool(gui.get("burn_subtitles", self._basic_options["burn_subtitles"]))
         self._basic_options["cleanup_gpu"] = bool(gui.get("cleanup_gpu", self._basic_options["cleanup_gpu"]))
@@ -5235,8 +5245,17 @@ class MainWindow(QtWidgets.QMainWindow):
 
         basic = dict(self._basic_options)
         prefer_gpu = bool(basic.get("prefer_gpu", True))
+        pipeline_settings = load_settings(
+            Path(self._runtime_config_path) if self._runtime_config_path else None
+        )
         options = WorkerOptions(
+            config_path=Path(self._runtime_config_path) if self._runtime_config_path else None,
             prefer_gpu=prefer_gpu,
+            whisper_model=str(getattr(pipeline_settings, "whisper").model),
+            whisper_language=str(getattr(pipeline_settings, "whisper").language),
+            gemini_enabled=bool(basic.get("gemini_enabled", False)),
+            gemini_model_id=str(getattr(pipeline_settings, "gemini").model_id),
+            gemini_api_key=getattr(pipeline_settings, "gemini").api_key,
             embed_subtitles=bool(basic.get("embed_subtitles", False)),
             burn_subtitles=bool(basic.get("burn_subtitles", False)),
             cleanup_gpu=bool(basic.get("cleanup_gpu", False)),
@@ -5253,7 +5272,6 @@ class MainWindow(QtWidgets.QMainWindow):
             ),
             # NEW
             place_srt_next_to_media=bool(basic.get("srt_next_to_media", False)),
-            config_path=self._runtime_config_path,
         )
         self._last_worker_options = options
         self._worker = TranscriptionWorker(files, options)

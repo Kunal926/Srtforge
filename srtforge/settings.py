@@ -174,6 +174,23 @@ class ParakeetSettings:
 
 
 @dataclass(slots=True)
+class WhisperSettings:
+    """Configuration for Faster-Whisper transcription."""
+
+    model: str = "large-v3-turbo"
+    language: str = "en"
+
+
+@dataclass(slots=True)
+class GeminiSettings:
+    """Configuration for optional Gemini correction."""
+
+    enabled: bool = False
+    model_id: str = "gemini-3-flash-preview"
+    api_key: Optional[str] = None
+
+
+@dataclass(slots=True)
 class AppSettings:
     """Top-level settings exposed to the rest of the application."""
 
@@ -181,6 +198,8 @@ class AppSettings:
     ffmpeg: FFmpegSettings = field(default_factory=FFmpegSettings)
     separation: SeparationSettings = field(default_factory=SeparationSettings)
     parakeet: ParakeetSettings = field(default_factory=ParakeetSettings)
+    whisper: WhisperSettings = field(default_factory=WhisperSettings)
+    gemini: GeminiSettings = field(default_factory=GeminiSettings)
 
 
 def _coerce_value(value: Any, target_type: Any) -> Any:
@@ -288,6 +307,8 @@ __all__ = [
     "PathsSettings",
     "SeparationSettings",
     "FV4Settings",
+    "WhisperSettings",
+    "GeminiSettings",
     "PERSISTENT_CONFIG_FILENAME",
     "PERSISTENT_CONFIG_ENV_VAR",
     "get_persistent_config_path",

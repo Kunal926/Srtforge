@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import shutil
 import tempfile
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterable, Optional
@@ -12,8 +12,7 @@ from typing import Iterable, Optional
 
 from rich.table import Table
 
-from .asr.parakeet_engine import parakeet_to_srt
-from .config import DEFAULT_OUTPUT_SUFFIX, FV4_CONFIG, FV4_MODEL, MODELS_DIR, PARAKEET_MODEL
+from .config import DEFAULT_OUTPUT_SUFFIX, FV4_CONFIG, FV4_MODEL, MODELS_DIR
 from .ffmpeg import DEFAULT_TOOLS, AudioStream, FFmpegTooling
 from .logging import RunLogger, get_console, status
 from .settings import (
@@ -21,7 +20,6 @@ from .settings import (
     EXTRACTION_MODE_STEREO_MIX,
     settings,
 )
-from .utils import probe_video_fps
 
 
 def _has_center_channel(layout: str | None, channels: int | None) -> bool:
@@ -46,7 +44,6 @@ class PipelineConfig:
     media_path: Path
     output_path: Optional[Path] = None
     tools: FFmpegTooling = DEFAULT_TOOLS
-    model_path: Path = PARAKEET_MODEL
     models_dir: Path = MODELS_DIR
     fv4_model: Path = settings.separation.fv4.ckpt or FV4_MODEL
     fv4_config: Path = settings.separation.fv4.cfg or FV4_CONFIG
@@ -58,12 +55,12 @@ class PipelineConfig:
     separation_prefer_gpu: bool = settings.separation.prefer_gpu
     ffmpeg_filter_chain: str = settings.ffmpeg.filter_chain
     ffmpeg_extraction_mode: str = settings.ffmpeg.extraction_mode
-    force_float32: bool = settings.parakeet.force_float32
-    prefer_gpu: bool = settings.parakeet.prefer_gpu
-    rel_pos_local_attn: list[int] = field(default_factory=lambda: list(settings.parakeet.rel_pos_local_attn))
-    subsampling_conv_chunking: bool = settings.parakeet.subsampling_conv_chunking
-    gpu_limit_percent: int = settings.parakeet.gpu_limit_percent
-    use_low_priority_cuda_stream: bool = settings.parakeet.use_low_priority_cuda_stream
+    prefer_gpu: bool = settings.separation.prefer_gpu
+    whisper_model: str = settings.whisper.model
+    whisper_language: str = settings.whisper.language
+    gemini_enabled: bool = settings.gemini.enabled
+    gemini_model_id: str = settings.gemini.model_id
+    gemini_api_key: Optional[str] = settings.gemini.api_key
     allow_untagged_english: bool = settings.separation.allow_untagged_english
 
 
@@ -221,44 +218,34 @@ class Pipeline:
                             filter_chain=filter_chain,
                         )
 
-                    with status("Running Parakeet ASR and subtitle post-processing"), run_logger.step(
+                    with status("Running Faster-Whisper ASR and subtitle post-processing"), run_logger.step(
                         "ASR pipeline"
                     ):
-                        fps = probe_video_fps(media_path)
-                        nemo_local = self._resolve_parakeet_checkpoint()
-                        output_path.parent.mkdir(parents=True, exist_ok=True)
-                        parakeet_to_srt(
-                            preprocessed,
-                            output_path,
-                            fps=fps,
-                            nemo_local=nemo_local,
-                            force_float32=self.config.force_float32,
-                            prefer_gpu=self.config.prefer_gpu,
-                            rel_pos_local_attn=self.config.rel_pos_local_attn,
-                            subsampling_conv_chunking=self.config.subsampling_conv_chunking,
-                            gpu_limit_percent=self.config.gpu_limit_percent,
-                            use_low_priority_cuda_stream=self.config.use_low_priority_cuda_stream,
-                            run_logger=run_logger,
+                        from .engine_whisper import (
+                            correct_text_only_with_gemini,
+                            generate_optimized_events,
+                            write_srt,
                         )
 
-                        # If the SRT is being written next to the media file, avoid
-                        # leaving diagnostic sidecars in the media directory. Move
-                        # them into the per-run temporary directory so they can be
-                        # cleaned up automatically.
-                        if output_path.parent == media_path.parent:
-                            try:
-                                diag_dir = tmp / "diagnostics"
-                                diag_dir.mkdir(exist_ok=True)
-                                for suffix in (".diag.csv", ".diag.json"):
-                                    diag_src = output_path.with_suffix(output_path.suffix + suffix)
-                                    if diag_src.exists():
-                                        diag_dst = diag_dir / diag_src.name
-                                        shutil.move(str(diag_src), str(diag_dst))
-                            except Exception:
-                                # Diagnostics are best-effort; never fail the run if
-                                # moving them fails for any reason (permissions,
-                                # cross-device moves, etc.).
-                                pass
+                        output_path.parent.mkdir(parents=True, exist_ok=True)
+                        events = generate_optimized_events(
+                            str(preprocessed),
+                            model_name=self.config.whisper_model,
+                            language=self.config.whisper_language,
+                            prefer_gpu=self.config.prefer_gpu,
+                        )
+                        run_logger.log(f"Whisper segments: {len(events)}")
+
+                        if self.config.gemini_enabled:
+                            events = correct_text_only_with_gemini(
+                                str(preprocessed),
+                                events,
+                                api_key=self.config.gemini_api_key,
+                                model_id=self.config.gemini_model_id,
+                            )
+                            run_logger.log("Gemini correction enabled")
+
+                        write_srt(events, str(output_path))
                 finally:
                     # Time deletion of the per-run temp directory
                     with run_logger.step("Cleanup run temporary directory"):
@@ -296,23 +283,6 @@ class Pipeline:
             # Pick the first audio stream as a best-effort default
             for stream in streams:
                 return stream
-        return None
-
-    def _resolve_parakeet_checkpoint(self) -> Optional[Path]:
-        """Locate a local Parakeet checkpoint if available."""
-
-        candidate = self.config.model_path
-        if candidate and candidate.exists():
-            return candidate
-
-        nested = self.config.models_dir / "parakeet" / "parakeet-tdt-0.6b-v2.nemo"
-        if nested.exists():
-            return nested
-
-        legacy = self.config.models_dir / "parakeet_tdt_0.6b_v2.nemo"
-        if legacy.exists():
-            return legacy
-
         return None
 
 
