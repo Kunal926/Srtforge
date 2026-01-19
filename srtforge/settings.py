@@ -146,34 +146,6 @@ class SeparationSettings:
 
 
 @dataclass(slots=True)
-class ParakeetSettings:
-    """Configuration forwarded to the Parakeet ASR stage."""
-
-    # Keep float32 enabled by default for maximum compatibility.
-    force_float32: bool = True
-
-    # Prefer CUDA when available (mirrors the GUI Device dropdown / CLI --cpu flag).
-    prefer_gpu: bool = True
-
-    # Parakeet long-audio local attention window used when change_attention_model()
-    # is applied. Lower values reduce VRAM usage at the cost of context/accuracy.
-    rel_pos_local_attn: list[int] = field(default_factory=lambda: [768, 768])
-
-    # When enabled, apply asr.change_subsampling_conv_chunking_factor(1) after the
-    # model is loaded. This can reduce memory pressure on long audio.
-    subsampling_conv_chunking: bool = False
-
-    # Best-effort GPU limiting knob. 100 preserves current behavior.
-    # Values < 100 may cap per-process CUDA allocator memory and/or use a lower
-    # priority CUDA stream during inference so the desktop stays responsive.
-    gpu_limit_percent: int = 100
-
-    # When enabled, Parakeet inference runs on a low-priority CUDA stream to improve
-    # desktop responsiveness on display-attached GPUs. This is independent of gpu_limit_percent.
-    use_low_priority_cuda_stream: bool = False
-
-
-@dataclass(slots=True)
 class WhisperSettings:
     """Configuration for Faster-Whisper transcription."""
 
@@ -197,7 +169,6 @@ class AppSettings:
     paths: PathsSettings = field(default_factory=PathsSettings)
     ffmpeg: FFmpegSettings = field(default_factory=FFmpegSettings)
     separation: SeparationSettings = field(default_factory=SeparationSettings)
-    parakeet: ParakeetSettings = field(default_factory=ParakeetSettings)
     whisper: WhisperSettings = field(default_factory=WhisperSettings)
     gemini: GeminiSettings = field(default_factory=GeminiSettings)
 
@@ -255,7 +226,6 @@ def load_settings(path: Optional[Path] = None) -> AppSettings:
             else:
                 config_path = PACKAGE_ROOT / DEFAULT_CONFIG_FILENAME
     config = AppSettings()
-    missing_low_pri_key = True
     if config_path and Path(config_path).exists():
         with open(config_path, "r", encoding="utf8") as handle:
             loaded = yaml.safe_load(handle) or {}
@@ -279,8 +249,6 @@ def load_settings(path: Optional[Path] = None) -> AppSettings:
                 loaded = dict(loaded)
                 loaded["ffmpeg"] = patched_ffmpeg
 
-            parakeet_payload = loaded.get("parakeet") if isinstance(loaded.get("parakeet"), dict) else {}
-            missing_low_pri_key = not bool(parakeet_payload and "use_low_priority_cuda_stream" in parakeet_payload)
             _merge_dataclass(config, loaded)
 
     # Ensure FV4 paths default to package data when left relative
@@ -288,10 +256,6 @@ def load_settings(path: Optional[Path] = None) -> AppSettings:
     config.separation.fv4.ckpt = _resolve_path(config.separation.fv4.ckpt)
     config.paths.temp_dir = _resolve_path(config.paths.temp_dir)
     config.paths.output_dir = _resolve_path(config.paths.output_dir)
-
-    # Backward compatibility: older configs coupled gpu_limit_percent<100 to low-priority streams.
-    if missing_low_pri_key and int(getattr(config.parakeet, "gpu_limit_percent", 100) or 100) < 100:
-        config.parakeet.use_low_priority_cuda_stream = True
 
     return config
 
@@ -303,7 +267,6 @@ __all__ = [
     "EXTRACTION_MODE_DUAL_MONO_CENTER",
     "EXTRACTION_MODE_STEREO_MIX",
     "FFmpegSettings",
-    "ParakeetSettings",
     "PathsSettings",
     "SeparationSettings",
     "FV4Settings",

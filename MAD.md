@@ -8,7 +8,7 @@ Owner: <TBD_OWNER>
 ## 1. Master Architecture (“The Vision”)
 
 ### 1.1 High‑Level Summary
-- Srtforge is an **offline Windows‑first subtitle generation pipeline** that takes TV/film media files and produces high‑quality English `.srt` subtitles using **FV4 MelBand Roformer** separation and **NVIDIA Parakeet‑TDT‑0.6B‑V2** ASR.
+- Srtforge is an **offline Windows‑first subtitle generation pipeline** that takes TV/film media files and produces high‑quality English `.srt` subtitles using **FV4 MelBand Roformer** separation and **Faster‑Whisper** ASR.
 - It is designed for **Windows 11** with a **CLI**, a **Win11‑style GUI**, and **Sonarr** post‑processing integration, all running fully locally with no cloud calls.
 - The system enforces (as far as practical) **Netflix‑style timing and formatting rules** under tight time constraints (~20–30 min episodes in under ~4 minutes on a 3070 Ti‑class GPU).
 - Outputs are primarily `.srt` files written either to a configured output directory or next to the media; **embedding/burn‑in** is optional and never done by default.
@@ -21,14 +21,14 @@ Owner: <TBD_OWNER>
     - User or Sonarr drops new episodes in a watch folder.
     - Srtforge automatically generates **Netflix‑quality English subtitles** with robust handling for edge‑cases (mixed‑language, noisy audio, music‑only sections) under a predictable latency budget.
     - A polished **Win11 GUI (“Srtforge Studio”)** exposes queue management, ETA estimation, rich logs, and safe tools for soft embedding/burning subtitles, including backup and restore of original subtitles/tracks.
-    - A bundled installer ships **ffmpeg, MKVToolNix, Parakeet, FV4, and all CUDA/NeMo dependencies** in a self‑contained, well‑tested package.
+    - A bundled installer ships **ffmpeg, MKVToolNix, Faster‑Whisper, FV4, and all CUDA dependencies** in a self‑contained, well‑tested package.
     - Config is **single‑source‑of‑truth**: a YAML file mirrored by the GUI “Options” dialog, with a clear reset‑to‑defaults path and no hidden state.
     - Audio separation failures are **non‑fatal**: if FV4 breaks, the system transparently falls back to mixed audio with sensible logging and JSON notifications.
     - The system remains responsive and robust for **very long media (up to ~24 hours)**, including streaming/segmented processing modes.
 
 - **Current State (as of this MAD):**
   - Fully offline pipeline implemented using:
-    - **FV4 MelBand Roformer** separator (via `audio-separator`) and **NVIDIA Parakeet‑TDT‑0.6B‑V2** ASR via NeMo.
+    - **FV4 MelBand Roformer** separator (via `audio-separator`) and **Faster‑Whisper** ASR.
     - A structured `Pipeline` / `PipelineConfig` abstraction with FFmpeg‑based extraction and preprocessing.
     - Netflix‑style SRT post‑processing rules (line length, CPS, gaps, merges/splits) enforced in a single pass where feasible.
   - **CLI** implemented via Typer with three subcommands:
@@ -43,7 +43,7 @@ Owner: <TBD_OWNER>
 
 - **Major gaps between Vision and Current State:**
   - **Installer bundling gaps:**
-    - No fully official, single‑bundle distribution that ships FFmpeg, MKVToolNix, Parakeet `.nemo`, and FV4 checkpoint/config as first‑class artifacts; some pieces rely on external download links.
+    - No fully official, single‑bundle distribution that ships FFmpeg, MKVToolNix, Faster‑Whisper assets, and FV4 checkpoint/config as first‑class artifacts; some pieces rely on external download links.
   - **Separation robustness:**
     - FV4 failures currently behave like “skip/failed pipeline” rather than being treated as “skip separation and continue with mixed audio”; treating these as non‑fatal is a **planned** enhancement.
   - **Queue & scaling model:**
@@ -53,7 +53,7 @@ Owner: <TBD_OWNER>
   - **UX / safety tooling:**
     - Embed/burn features exist but still need more “safety rails” (clear previews, backups, restore options) to fully match the vision.
   - **Advanced language scenarios:**
-    - English‑only ASR backend (Parakeet) is supported; mixed‑language or dual‑subtitle scenarios remain out‑of‑scope for now.
+    - English‑only ASR backend (Faster‑Whisper) is supported; mixed‑language or dual‑subtitle scenarios remain out‑of‑scope for now.
 
 ---
 

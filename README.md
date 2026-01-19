@@ -1,17 +1,17 @@
-# Srtforge (Parakeet‑TDT‑0.6B‑V2)
+# Srtforge (Faster‑Whisper)
 
 Srtforge is an automated subtitle generation toolkit built around the
-Parakeet‑TDT‑0.6B‑V2 speech recognition model. It ingests media files,
-selects the best English audio stream, performs high-fidelity vocal isolation,
-preprocesses the result with FFmpeg, and produces polished subtitles using the
-same Netflix-style segmentation heuristics that power professional workflows.
+Faster‑Whisper speech recognition engine. It ingests media files, selects the
+best English audio stream, performs high-fidelity vocal isolation, preprocesses
+the result with FFmpeg, and produces polished subtitles using the same
+segmentation, shaping, and timing heuristics that power professional workflows.
 The end result is a fast, repeatable path from raw video to high-quality SRT
 files with sensible defaults and minimal manual intervention.
 
 ## Automated setup
 
 The repo ships with platform-specific installers that provision a virtual
-environment, install PyTorch + NeMo, fetch the required Hugging Face assets, and
+environment, install runtime dependencies, fetch the required model assets, and
 register the `srtforge` CLI in editable mode.
 
 ### Linux (and WSL) quick start
@@ -72,15 +72,8 @@ running on a headless machine.
    srtforge --help
    ```
 
-Both installers will download `parakeet-tdt-0.6b-v2.nemo` and
-`voc_fv4.ckpt` from Hugging Face into `./models`. Re-running the script is safe;
-existing files are left untouched.
-
-The virtual environment provisions NeMo `2.5.x` (instead of the older `2.0`
-series) to avoid the NumPy 2.0 compatibility breakages reported with RNNT
-training loss utilities. When a CUDA-capable GPU is detected the installers also
-add the `cuda-python` bindings so NeMo can enable CUDA graph optimizations,
-ensuring the processing pipeline performs optimally on modern hardware.
+Both installers will download FV4 model assets into `./models`. Re-running the
+script is safe; existing files are left untouched.
 
 ## How it works
 
@@ -95,16 +88,11 @@ ensuring the processing pipeline performs optimally on modern hardware.
    install) is run through `audio-separator` to isolate vocals only, matching
    the expectations of the rest of the pipeline.
 4. **Preprocessing filters** – the isolated stem is high/low-pass filtered and
-   resampled with SoXr to 16 kHz mono float to produce the exact waveform that
-   Parakeet expects.
-5. **Parakeet ASR** – `parakeet_to_srt` restores the
-   Parakeet-TDT-0.6B-V2 model from the local `.nemo` (or downloads it if
-   missing), requests timestamps, and reconstructs the segment/word structure
-   expected by the subtitle post-processing stack.
-6. **Netflix-style post processing** – we vendor `segmenter.py` and
-   `srt_utils.py` directly from the reference project. The final SRT is produced
-   by the same `postprocess_segments` routine with matching defaults so that
-   timing, line balancing, and cps constraints behave identically.
+   resampled with SoXr to 16 kHz mono float for consistent ASR input.
+5. **Faster‑Whisper ASR** – the Faster‑Whisper engine transcribes with
+   word-level timestamps, segments the stream, and shapes subtitle lines.
+6. **Timing + shaping fixes** – subtitle timing constraints and line balancing
+   are applied so the final SRT matches the reference heuristics.
 
 The `srtforge` CLI exposes the pipeline for single files (`srtforge run`), bulk
 jobs (`srtforge series`), and the Sonarr custom-script entry point.
@@ -117,8 +105,6 @@ configuration file exposes dedicated toggles:
 
 ```yaml
 separation:
-  prefer_gpu: true
-parakeet:
   prefer_gpu: true
 ```
 
@@ -153,7 +139,7 @@ desktop experience:
   queue. You can also use **Add files…**, **Remove selected**, and **Clear queue**
   to curate the list manually.
 * Pick CPU or GPU execution from the **Device** dropdown—this mirrors the CLI
-  `--cpu` toggle by enabling/disabling Parakeet and FV4 GPU usage for the entire
+  `--cpu` toggle by enabling/disabling Whisper and FV4 GPU usage for the entire
   batch.
 * Optional checkboxes enable **Embed subtitles** (soft subtitle track muxed into
   the video via FFmpeg without re-encoding) and **Burn subtitles** (hard-coded
@@ -194,15 +180,15 @@ environment created by `install.ps1`:
    installer—such as a clean CI agent—place the trained model files inside
    `models/` before building. When `install.ps1` has already been executed on the
    workstation this step is automatically satisfied because the script stores
-   `parakeet-tdt-0.6b-v2.nemo` and `voc_fv4.ckpt` there for you.
+   `voc_fv4.ckpt` there for you.
 4. Run PyInstaller with the provided spec:
    ```powershell
    pyinstaller packaging/windows/srtforge_gui.spec --noconfirm
    ```
 5. Ship the contents of `dist/SrtforgeGUI/` to end users. Keep the `models/`
-   directory alongside `SrtforgeGUI.exe`; the binary looks up Parakeet/Nemo
-   assets there at runtime. The build now also outputs `SrtforgeCLI.exe` in the
-   same folder—the GUI shells out to this console companion to execute the
+   directory alongside `SrtforgeGUI.exe`; the binary looks up FV4 assets there
+   at runtime. The build now also outputs `SrtforgeCLI.exe` in the same
+   folder—the GUI shells out to this console companion to execute the
    transcription pipeline, so be sure to distribute both executables together.
 
 The resulting application boots straight into the GUI and requires no system-wide
