@@ -33,9 +33,15 @@ srtforge = "srtforge.cli:app"
 srtforge-sonarr = "srtforge.sonarr_hook:main"
 srtforge-gui = "srtforge.gui_app:main"
 
-[tool.setuptools.packages.find]
-where = ["."]
-include = ["srtforge*"]
+[tool.setuptools]
+include-package-data = true
+packages = [
+  "srtforge",
+  "srtforge.assets",
+  "srtforge.assets.images",
+  "srtforge.assets.styles",
+  "srtforge.post",
+]
 
 [tool.setuptools.package-data]
 "srtforge.assets.styles" = ["win11.qss"]
