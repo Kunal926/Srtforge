@@ -352,11 +352,78 @@ if (-not (Test-Path $venvDir)) {
 $venvPython = Join-Path $venvDir "Scripts/python.exe"
 $venvPip = Join-Path $venvDir "Scripts/pip.exe"
 
-Invoke-WithArgs -Command @($venvPython) -Args @('-m', 'pip', 'install', '--upgrade', 'pip', 'wheel')
-Invoke-WithArgs -Command @($venvPip) -Args @('install', '-r', 'requirements.txt')
+function Test-PipPackageInstalled {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Name
+    )
 
-Write-Host 'Installing PyInstaller so Windows bundles can be produced immediately'
-Invoke-WithArgs -Command @($venvPip) -Args @('install', 'pyinstaller')
+    try {
+        Invoke-WithArgs -Command @($venvPip) -Args @('show', $Name) | Out-Null
+        return $true
+    }
+    catch {
+        return $false
+    }
+}
+
+function Get-RequirementsPackages {
+    $requirementsPath = Join-Path (Get-Location) 'requirements.txt'
+    if (-not (Test-Path $requirementsPath)) {
+        return @()
+    }
+
+    $packages = @()
+    foreach ($line in Get-Content $requirementsPath) {
+        $trimmed = $line.Trim()
+        if (-not $trimmed -or $trimmed.StartsWith('#')) {
+            continue
+        }
+
+        if ($trimmed -match '^(?<name>[A-Za-z0-9_.-]+)') {
+            $packages += $Matches['name']
+        }
+    }
+
+    return $packages | Sort-Object -Unique
+}
+
+function Ensure-RequirementsInstalled {
+    $requirements = Get-RequirementsPackages
+    if ($requirements.Count -eq 0) {
+        return
+    }
+
+    $missing = @()
+    foreach ($package in $requirements) {
+        if (-not (Test-PipPackageInstalled -Name $package)) {
+            $missing += $package
+        }
+    }
+
+    if ($missing.Count -eq 0) {
+        Write-Host 'Requirements already installed. Skipping reinstall.'
+        return
+    }
+
+    Write-Host "Installing missing requirements: $([string]::Join(', ', $missing))"
+    Invoke-WithArgs -Command @($venvPip) -Args @('install', '-r', 'requirements.txt')
+}
+
+if (-not (Test-PipPackageInstalled -Name 'pip') -or -not (Test-PipPackageInstalled -Name 'wheel')) {
+    Invoke-WithArgs -Command @($venvPython) -Args @('-m', 'pip', 'install', '--upgrade', 'pip', 'wheel')
+} else {
+    Write-Host 'pip and wheel already installed. Skipping upgrade.'
+}
+
+Ensure-RequirementsInstalled
+
+if (-not (Test-PipPackageInstalled -Name 'pyinstaller')) {
+    Write-Host 'Installing PyInstaller so Windows bundles can be produced immediately'
+    Invoke-WithArgs -Command @($venvPip) -Args @('install', 'pyinstaller')
+} else {
+    Write-Host 'PyInstaller already installed. Skipping reinstall.'
+}
 
 $global:ffmpegDownloadUrls = @(
     # GitHub-hosted nightly build maintained by BtbN. Stable URL that always
@@ -552,17 +619,22 @@ function Get-TorchCudaInfo {
 }
 
 function Install-Torch($device) {
+    $torchInstalled = Test-PipPackageInstalled -Name 'torch'
+    $torchInfo = if ($torchInstalled) { Get-TorchCudaInfo } else { $null }
+
     if ($device -eq 'gpu') {
+        if ($torchInstalled -and $torchInfo -and $torchInfo.ok -and $torchInfo.cuda_version) {
+            Write-Host "CUDA-enabled PyTorch already installed (CUDA $($torchInfo.cuda_version)). Skipping reinstall."
+            return
+        }
+
         $cudaTag = if ($Cuda -eq 'auto') { '130' } else { $Cuda }
         Write-Host "Installing Torch with CUDA $cudaTag wheels"
         $packages = @('torch', 'torchvision', 'torchaudio')
-        $uninstallArgs = @('uninstall', '-y') + $packages
-        Invoke-WithArgs -Command @($venvPip) -Args $uninstallArgs | Out-Null
 
         $installArgs = @(
             'install',
             '--upgrade',
-            '--force-reinstall',
             '--no-cache-dir',
             '--index-url', "https://download.pytorch.org/whl/cu$cudaTag",
             '--extra-index-url', 'https://pypi.org/simple'
@@ -582,6 +654,11 @@ function Install-Torch($device) {
             Write-Warning 'Unable to verify the CUDA-enabled PyTorch installation.'
         }
     } else {
+        if ($torchInstalled -and $torchInfo -and $torchInfo.ok -and -not $torchInfo.cuda_version) {
+            Write-Host 'CPU-only PyTorch already installed. Skipping reinstall.'
+            return
+        }
+
         Write-Host "Installing Torch CPU wheels"
         Invoke-WithArgs -Command @($venvPip) -Args @(
             'install',
@@ -593,6 +670,11 @@ function Install-Torch($device) {
 
 function Install-OnnxRuntime($device) {
     if ($device -eq 'gpu') {
+        if (Test-PipPackageInstalled -Name 'onnxruntime-gpu') {
+            Write-Host 'ONNX Runtime GPU package already installed. Skipping reinstall.'
+            return $true
+        }
+
         Write-Host "Installing ONNX Runtime GPU package"
         try {
             Invoke-WithArgs -Command @($venvPip) -Args @('install', 'onnxruntime-gpu>=1.23.2')
@@ -604,6 +686,11 @@ function Install-OnnxRuntime($device) {
             return $false
         }
     } else {
+        if (Test-PipPackageInstalled -Name 'onnxruntime') {
+            Write-Host 'ONNX Runtime CPU package already installed. Skipping reinstall.'
+            return $true
+        }
+
         Write-Host "Installing ONNX Runtime CPU package"
         Invoke-WithArgs -Command @($venvPip) -Args @('install', 'onnxruntime>=1.23.2')
         return $true
