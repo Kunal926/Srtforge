@@ -703,7 +703,8 @@ if (-not (Test-Path $modelsDir)) {
 }
 
 $downloads = @(
-    @{ Url = 'https://huggingface.co/audio-separator/melband-roformer-fv4/resolve/main/voc_fv4.ckpt?download=1'; File = 'voc_fv4.ckpt' }
+    @{ Url = 'https://github.com/StiensGate928/Srtforge/releases/download/v1.0.0/voc_fv4.ckpt'; File = 'voc_fv4.ckpt' }
+    @{ Url = 'https://github.com/StiensGate928/Srtforge/releases/download/v1.0.0/voc_gabox.yaml'; File = 'voc_gabox.yaml' }
 )
 
 function Download-Model([hashtable]$item) {
