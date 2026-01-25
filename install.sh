@@ -146,8 +146,12 @@ import requests
 
 MODELS = [
     (
-        "https://huggingface.co/audio-separator/melband-roformer-fv4/resolve/main/voc_fv4.ckpt?download=1",
+        "https://github.com/StiensGate928/Srtforge/releases/download/v1.0.0/voc_fv4.ckpt",
         "voc_fv4.ckpt",
+    ),
+    (
+        "https://github.com/StiensGate928/Srtforge/releases/download/v1.0.0/voc_gabox.yaml",
+        "voc_gabox.yaml",
     ),
     (
         "https://huggingface.co/nvidia/parakeet-tdt-0.6b-v2/resolve/main/parakeet-tdt-0.6b-v2.nemo?download=1",
