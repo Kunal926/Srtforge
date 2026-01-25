@@ -694,6 +694,35 @@ if (-not $onnxGpuInstalled -and $selectedDevice -eq 'gpu') {
 # Install the local package in editable mode
 Invoke-WithArgs -Command @($venvPip) -Args @('install', '-e', '.')
 
+$importCheckScript = @'
+import importlib
+import sys
+
+try:
+    importlib.import_module("srtforge")
+except Exception as exc:
+    print(f"IMPORT_ERROR: {exc}")
+    sys.exit(1)
+else:
+    print("✔ Verified srtforge is importable.")
+'@
+
+try {
+    Invoke-CommandWithScript -Command @($venvPython) -ScriptContent $importCheckScript
+}
+catch {
+    Write-Warning "Editable install could not import srtforge. Falling back to a legacy editable install."
+    try {
+        Invoke-WithArgs -Command @($venvPip) -Args @('install', '-e', '.', '--config-settings', 'editable_mode=compat')
+    }
+    catch {
+        Write-Warning "Legacy editable install failed. Installing a non-editable build instead."
+        Invoke-WithArgs -Command @($venvPip) -Args @('install', '.')
+    }
+
+    Invoke-CommandWithScript -Command @($venvPython) -ScriptContent $importCheckScript
+}
+
 # ----------------------------------------------------------------------
 # Models
 # ----------------------------------------------------------------------
