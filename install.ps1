@@ -30,11 +30,16 @@ function Invoke-WithArgs {
     }
 
     $global:LASTEXITCODE = 0
-    $result = & $Command[0] @baseArgs @Args
+    $commandLine = [string]::Join(' ', @($Command + $Args))
+    $capturedOutput = @()
+    $result = & $Command[0] @baseArgs @Args 2>&1 | Tee-Object -Variable capturedOutput
     $exitCode = $LASTEXITCODE
     if ($exitCode -ne $null -and $exitCode -ne 0) {
-        $commandLine = [string]::Join(' ', @($Command + $Args))
-        throw "Command '$commandLine' failed with exit code $exitCode."
+        $message = "Command '$commandLine' failed with exit code $exitCode."
+        if ($capturedOutput.Count -gt 0) {
+            $message += "`nOutput:`n$([string]::Join("`n", $capturedOutput))"
+        }
+        throw $message
     }
 
     return $result
