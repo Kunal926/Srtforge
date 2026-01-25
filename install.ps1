@@ -812,7 +812,14 @@ catch {
         Invoke-WithArgs -Command @($venvPip) -Args @('install', '.')
     }
 
-    Invoke-CommandWithScript -Command @($venvPython) -ScriptContent $importCheckScript
+    try {
+        Invoke-CommandWithScript -Command @($venvPython) -ScriptContent $importCheckScript
+    }
+    catch {
+        Write-Warning "Legacy editable install still could not import srtforge. Installing a non-editable build instead."
+        Invoke-WithArgs -Command @($venvPip) -Args @('install', '.')
+        Invoke-CommandWithScript -Command @($venvPython) -ScriptContent $importCheckScript
+    }
 }
 
 # ----------------------------------------------------------------------
