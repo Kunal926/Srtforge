@@ -348,6 +348,7 @@ def load_whisper_model(model_name: str, *, prefer_gpu: bool = True) -> Any:
     compute_type = "float16" if device == "cuda" else "int8"
     cache_key = (model_name, device, compute_type)
 
+    logger.info("ASR device: %s compute: %s model: %s", device, compute_type, model_name)
     if cache_key in _MODEL_CACHE:
         return _MODEL_CACHE[cache_key]
 
