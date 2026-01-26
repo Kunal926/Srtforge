@@ -337,6 +337,13 @@ def _detect_cuda_available() -> bool:
         return False
 
 
+def get_whisper_device_config(*, prefer_gpu: bool = True) -> Tuple[str, str]:
+    """Return the device/compute_type pair used by Faster-Whisper."""
+    device = "cuda" if (prefer_gpu and _detect_cuda_available()) else "cpu"
+    compute_type = "float16" if device == "cuda" else "int8"
+    return device, compute_type
+
+
 def load_whisper_model(model_name: str, *, prefer_gpu: bool = True) -> Any:
     """
     Lazily load and cache a Faster-Whisper WhisperModel instance.
@@ -344,8 +351,7 @@ def load_whisper_model(model_name: str, *, prefer_gpu: bool = True) -> Any:
     Returns an instance of faster_whisper.WhisperModel, but we intentionally type as Any
     to avoid importing faster_whisper at module import time.
     """
-    device = "cuda" if (prefer_gpu and _detect_cuda_available()) else "cpu"
-    compute_type = "float16" if device == "cuda" else "int8"
+    device, compute_type = get_whisper_device_config(prefer_gpu=prefer_gpu)
     cache_key = (model_name, device, compute_type)
 
     logger.info("ASR device: %s compute: %s model: %s", device, compute_type, model_name)
