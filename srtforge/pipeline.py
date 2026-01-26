@@ -224,10 +224,17 @@ class Pipeline:
                         from .engine_whisper import (
                             correct_text_only_with_gemini,
                             generate_optimized_events,
+                            get_whisper_device_config,
                             write_srt,
                         )
 
                         output_path.parent.mkdir(parents=True, exist_ok=True)
+                        device, compute_type = get_whisper_device_config(
+                            prefer_gpu=self.config.prefer_gpu,
+                        )
+                        run_logger.log(
+                            f"ASR device: {device} compute: {compute_type} model: {self.config.whisper_model}"
+                        )
                         events = generate_optimized_events(
                             str(preprocessed),
                             model_name=self.config.whisper_model,
