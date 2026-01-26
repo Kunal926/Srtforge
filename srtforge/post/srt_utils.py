@@ -180,7 +180,7 @@ def pack_into_two_line_blocks(
     events: List[Dict[str, Any]],
     max_chars_per_line: int = 42,
     cps_target: float = 20.0,
-    coalesce_gap_ms: int = 360,
+    coalesce_gap_ms: int = 0,
     two_line_threshold: float = 0.60,
     min_two_line_chars: int = 24,
     max_block_duration_s: float = 7.0,
@@ -1022,7 +1022,7 @@ def postprocess_segments(
     cps_target: float = 20.0,
     snap_fps: float | None = None,
     use_spacy: bool = True,
-    coalesce_gap_ms: int = 360,
+    coalesce_gap_ms: int = 0,
     two_line_threshold: float = 0.60,
     min_readable: float = 1.20,
     min_two_line_chars: int = 24,
@@ -1056,7 +1056,7 @@ def postprocess_segments(
     timed_out = False
 
     # Merge small neighbors into calm 2-line blocks (can be heavy)
-    if os.environ.get("PARAKEET_DISABLE_PACKER") != "1":
+    if coalesce_gap_ms > 0 and os.environ.get("PARAKEET_DISABLE_PACKER") != "1":
         _trace(f"packer in: {len(events)}")
         _e = _with_timeout(5.0, pack_into_two_line_blocks,
                            events,
@@ -1083,6 +1083,8 @@ def postprocess_segments(
                            max_chars_per_line=max_chars_per_line,
                            min_two_line_chars=min_two_line_chars,
                            max_merge_gap_ms=max_merge_gap_ms,
+                           orphan_words=0,
+                           orphan_chars=0,
                            shaper=shape_words_into_two_lines_balanced)
         if _e is not None:
             events = _e
