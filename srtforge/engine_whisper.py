@@ -354,6 +354,7 @@ def load_whisper_model(model_name: str, *, prefer_gpu: bool = True) -> Any:
     # Heavy import is strictly inside this function.
     from faster_whisper import WhisperModel  # type: ignore
 
+    logger.info("ASR device: %s compute: %s model: %s", device, compute_type, model_name)
     logger.info("Loading Faster-Whisper model '%s' (device=%s, compute_type=%s)...", model_name, device, compute_type)
     model = WhisperModel(model_name, device=device, compute_type=compute_type)
     _MODEL_CACHE[cache_key] = model
