@@ -25,6 +25,12 @@ def run(
     media: Path = typer.Argument(..., exists=True, help="Path to the media file to process"),
     output: Optional[Path] = typer.Option(None, "--output", "-o", help="Optional path for the SRT output"),
     cpu: bool = typer.Option(False, help="Force CPU inference even if a GPU is detected"),
+    word_timestamps: bool = typer.Option(False, "--word-timestamps", help="Dump word-level timestamps"),
+    word_timestamps_out: Optional[Path] = typer.Option(
+        None,
+        "--word-timestamps-out",
+        help="Optional output path for dumped word timestamps (run only)",
+    ),
 ) -> None:
     """Execute the pipeline for a single media file."""
 
@@ -40,6 +46,8 @@ def run(
         gemini_enabled=settings.gemini.enabled,
         gemini_model_id=settings.gemini.model_id,
         gemini_api_key=settings.gemini.api_key,
+        dump_word_timestamps=word_timestamps,
+        word_timestamps_path=word_timestamps_out,
     )
     result = run_pipeline(config)
     if result.skipped:
@@ -53,6 +61,7 @@ def series(
     directory: Path = typer.Argument(..., exists=True, file_okay=False, help="Root directory to scan for media"),
     glob: str = typer.Option("**/*.mkv", help="Glob used to locate media files"),
     cpu: bool = typer.Option(False, help="Force CPU inference for all jobs"),
+    word_timestamps: bool = typer.Option(False, "--word-timestamps", help="Dump word-level timestamps"),
 ) -> None:
     """Process every media file in a directory tree."""
 
@@ -73,6 +82,8 @@ def series(
             gemini_enabled=settings.gemini.enabled,
             gemini_model_id=settings.gemini.model_id,
             gemini_api_key=settings.gemini.api_key,
+            dump_word_timestamps=word_timestamps,
+            word_timestamps_path=None,
         )
         result = run_pipeline(config)
         if not result.skipped and result.output_path:
@@ -94,6 +105,7 @@ def _build_pipeline_config(
     gemini_cfg = cfg.get("gemini") or {}
 
     settings = load_settings()
+    word_timestamps_out = cfg.get("word_timestamps_out")
     return PipelineConfig(
         media_path=media_path,
         output_path=output_path,
@@ -105,6 +117,10 @@ def _build_pipeline_config(
         gemini_model_id=str(gemini_cfg.get("model_id") or settings.gemini.model_id),
         gemini_api_key=(
             str(gemini_cfg.get("api_key")).strip() if gemini_cfg.get("api_key") else settings.gemini.api_key
+        ),
+        dump_word_timestamps=bool(cfg.get("word_timestamps", False)),
+        word_timestamps_path=(
+            Path(str(word_timestamps_out)).expanduser().resolve() if word_timestamps_out else None
         ),
         allow_untagged_english=bool(
             cfg.get("allow_untagged_english", settings.separation.allow_untagged_english)
