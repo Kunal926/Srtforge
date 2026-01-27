@@ -11,9 +11,11 @@ IMPORTANT: Do NOT import torch/faster_whisper/google.genai at module import time
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 logger = logging.getLogger(__name__)
@@ -382,6 +384,7 @@ def generate_optimized_events(
     pause_ms: int = 400,
     max_chars: int = 84,
     max_dur_s: float = 7.0,
+    word_timestamps_path: Optional[Path | str] = None,
 ) -> List[Dict[str, Any]]:
     """
     1) Transcribe with Faster-Whisper (word timestamps)
@@ -407,6 +410,10 @@ def generate_optimized_events(
             t = (getattr(w, "word", "") or "").strip()
             if t:
                 all_words.append({"word": t, "start": float(w.start), "end": float(w.end)})
+
+    if word_timestamps_path:
+        path = Path(word_timestamps_path)
+        path.write_text(json.dumps(all_words, indent=2), encoding="utf-8")
 
     events = segment_smart_stream(all_words, pause_ms=pause_ms, max_chars=max_chars, max_dur_s=max_dur_s)
     events = apply_global_start_offset(events, offset_ms=50)
