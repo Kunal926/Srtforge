@@ -64,6 +64,8 @@ class PipelineConfig:
     dump_word_timestamps: bool = False
     word_timestamps_path: Optional[Path] = None
     allow_untagged_english: bool = settings.separation.allow_untagged_english
+    dump_word_timestamps: bool = False
+    word_timestamps_path: Optional[Path] = None
 
 
 @dataclass(slots=True)
@@ -126,6 +128,7 @@ class Pipeline:
                     extracted = tmp / "english.wav"
                     vocals = tmp / "vocals.wav"
                     preprocessed = tmp / "preprocessed.wav"
+                    word_timestamps_path: Optional[Path] = None
 
                     with run_logger.step("Probe audio streams"):
                         streams = self.config.tools.probe_audio_streams(media_path)
@@ -231,6 +234,11 @@ class Pipeline:
                         )
 
                         output_path.parent.mkdir(parents=True, exist_ok=True)
+                        if self.config.dump_word_timestamps:
+                            word_timestamps_path = (
+                                self.config.word_timestamps_path or output_path.with_suffix(".words.json")
+                            )
+                            word_timestamps_path.parent.mkdir(parents=True, exist_ok=True)
                         device, compute_type = get_whisper_device_config(
                             prefer_gpu=self.config.prefer_gpu,
                         )
@@ -242,6 +250,7 @@ class Pipeline:
                             model_name=self.config.whisper_model,
                             language=self.config.whisper_language,
                             prefer_gpu=self.config.prefer_gpu,
+                            word_timestamps_path=word_timestamps_path,
                         )
                         run_logger.log(f"Whisper segments: {len(events)}")
 
