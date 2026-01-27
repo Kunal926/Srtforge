@@ -61,6 +61,8 @@ class PipelineConfig:
     gemini_enabled: bool = settings.gemini.enabled
     gemini_model_id: str = settings.gemini.model_id
     gemini_api_key: Optional[str] = settings.gemini.api_key
+    dump_word_timestamps: bool = False
+    word_timestamps_path: Optional[Path] = None
     allow_untagged_english: bool = settings.separation.allow_untagged_english
 
 
