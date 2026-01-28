@@ -250,7 +250,9 @@ class Pipeline:
                             model_name=self.config.whisper_model,
                             language=self.config.whisper_language,
                             prefer_gpu=self.config.prefer_gpu,
-                            word_timestamps_path=word_timestamps_path,
+                            word_timestamps_out=(
+                                str(word_timestamps_path.resolve()) if word_timestamps_path else None
+                            ),
                         )
                         run_logger.log(f"Whisper segments: {len(events)}")
 
