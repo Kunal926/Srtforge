@@ -25,11 +25,11 @@ def run(
     media: Path = typer.Argument(..., exists=True, help="Path to the media file to process"),
     output: Optional[Path] = typer.Option(None, "--output", "-o", help="Optional path for the SRT output"),
     cpu: bool = typer.Option(False, help="Force CPU inference even if a GPU is detected"),
-    word_timestamps: bool = typer.Option(False, "--word-timestamps", help="Dump word-level timestamps"),
+    word_timestamps: bool = typer.Option(False, "--word-timestamps", help="Dump raw word-level timestamps"),
     word_timestamps_out: Optional[Path] = typer.Option(
         None,
         "--word-timestamps-out",
-        help="Optional output path for dumped word timestamps (run only)",
+        help="Optional output path for dumped raw word timestamps (run only)",
     ),
 ) -> None:
     """Execute the pipeline for a single media file."""
@@ -61,7 +61,7 @@ def series(
     directory: Path = typer.Argument(..., exists=True, file_okay=False, help="Root directory to scan for media"),
     glob: str = typer.Option("**/*.mkv", help="Glob used to locate media files"),
     cpu: bool = typer.Option(False, help="Force CPU inference for all jobs"),
-    word_timestamps: bool = typer.Option(False, "--word-timestamps", help="Dump word-level timestamps"),
+    word_timestamps: bool = typer.Option(False, "--word-timestamps", help="Dump raw word-level timestamps"),
 ) -> None:
     """Process every media file in a directory tree."""
 
