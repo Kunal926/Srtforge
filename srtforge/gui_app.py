@@ -61,6 +61,7 @@ DEFAULT_BASIC_OPTIONS: dict[str, object] = {
     "embed_subtitles": True,
     "burn_subtitles": False,
     "cleanup_gpu": True,
+    "word_timestamps": False,
     "soft_embed_method": "auto",
     "soft_embed_overwrite_source": True,
     "srt_title": "Srtforge (English)",
@@ -100,6 +101,7 @@ class WorkerOptions:
     embed_subtitles: bool
     burn_subtitles: bool
     cleanup_gpu: bool
+    word_timestamps: bool
     ffmpeg_bin: Optional[str]
     ffprobe_bin: Optional[str]
     soft_embed_method: str  # "auto" | "mkvmerge" | "ffmpeg"
@@ -904,6 +906,7 @@ class TranscriptionWorker(QtCore.QThread):
             "config": {
                 "prefer_gpu": bool(self.options.prefer_gpu),
                 "separation_prefer_gpu": bool(self.options.prefer_gpu),
+                "word_timestamps": bool(self.options.word_timestamps),
                 "whisper": {
                     "model": self.options.whisper_model,
                     "language": self.options.whisper_language,
@@ -1814,6 +1817,14 @@ class OptionsDialog(QtWidgets.QDialog):
         grid.addWidget(self.external_srt_cb, row, 0, 1, 2)
         row += 1
 
+        self.word_timestamps_cb = QtWidgets.QCheckBox("Dump raw word-level timestamps")
+        self.word_timestamps_cb.setToolTip(
+            "Write a word-level timestamp JSON sidecar (filename.srt.words.json) for debugging."
+        )
+        self.word_timestamps_cb.setChecked(bool(initial_basic.get("word_timestamps", False)))
+        grid.addWidget(self.word_timestamps_cb, row, 0, 1, 2)
+        row += 1
+
         self.burn_cb = QtWidgets.QCheckBox("Burn subtitles (hard sub)")
         self.burn_cb.setChecked(bool(initial_basic.get("burn_subtitles", False)))
         grid.addWidget(self.burn_cb, row, 0, 1, 2)
@@ -2013,6 +2024,7 @@ class OptionsDialog(QtWidgets.QDialog):
             "embed_subtitles": self.embed_checkbox.isChecked(),
             "burn_subtitles": self.burn_cb.isChecked(),
             "cleanup_gpu": self.cleanup_cb.isChecked(),
+            "word_timestamps": self.word_timestamps_cb.isChecked(),
             "soft_embed_method": str(self.embed_method.currentData()),
             "soft_embed_overwrite_source": self.embed_overwrite_cb.isChecked(),  # NEW
             "srt_title": self.title_edit.text().strip() or "Srtforge (English)",
@@ -2110,6 +2122,7 @@ class OptionsDialog(QtWidgets.QDialog):
         self.external_srt_cb.setChecked(bool(default_basic.get("srt_next_to_media", False)))
         self.burn_cb.setChecked(bool(default_basic.get("burn_subtitles", False)))
         self.cleanup_cb.setChecked(bool(default_basic.get("cleanup_gpu", False)))
+        self.word_timestamps_cb.setChecked(bool(default_basic.get("word_timestamps", False)))
         self.gemini_cb.setChecked(bool(default_basic.get("gemini_enabled", False)))
 
         # ---- Performance defaults (from shipped config.yaml -> `settings`) ---
@@ -4156,6 +4169,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self._basic_options["embed_subtitles"] = bool(gui.get("embed_subtitles", self._basic_options["embed_subtitles"]))
         self._basic_options["burn_subtitles"] = bool(gui.get("burn_subtitles", self._basic_options["burn_subtitles"]))
         self._basic_options["cleanup_gpu"] = bool(gui.get("cleanup_gpu", self._basic_options["cleanup_gpu"]))
+        self._basic_options["word_timestamps"] = bool(
+            gui.get("word_timestamps", self._basic_options["word_timestamps"])
+        )
         self._basic_options["soft_embed_method"] = str(gui.get("soft_embed_method", self._basic_options["soft_embed_method"]))
         self._basic_options["soft_embed_overwrite_source"] = bool(
             gui.get("soft_embed_overwrite_source", self._basic_options["soft_embed_overwrite_source"])
@@ -5259,6 +5275,7 @@ class MainWindow(QtWidgets.QMainWindow):
             embed_subtitles=bool(basic.get("embed_subtitles", False)),
             burn_subtitles=bool(basic.get("burn_subtitles", False)),
             cleanup_gpu=bool(basic.get("cleanup_gpu", False)),
+            word_timestamps=bool(basic.get("word_timestamps", False)),
             ffmpeg_bin=str(self.ffmpeg_paths.ffmpeg) if self.ffmpeg_paths else None,
             ffprobe_bin=str(self.ffmpeg_paths.ffprobe) if self.ffmpeg_paths else None,
             soft_embed_method=str(basic.get("soft_embed_method", "auto")),
