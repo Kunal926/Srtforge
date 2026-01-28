@@ -388,8 +388,9 @@ def generate_optimized_events(
 ) -> List[Dict[str, Any]]:
     """
     1) Transcribe with Faster-Whisper (word timestamps)
-    2) Segment with smart streaming rules
-    3) Apply timing fixes + shaping (exact logic from reference whisper.py)
+    2) Optionally dump raw word timestamps (unmodified from Faster-Whisper)
+    3) Segment with smart streaming rules
+    4) Apply timing fixes + shaping (exact logic from reference whisper.py)
     """
     logger.info("Generating optimized events with Faster-Whisper...")
     model = load_whisper_model(model_name, prefer_gpu=prefer_gpu)
