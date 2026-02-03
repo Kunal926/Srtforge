@@ -228,8 +228,9 @@ Owner: <TBD_OWNER>
   - `srtforge.config` / `settings` for `AppSettings`.
   - `srtforge.ffmpeg` for probe/extract/filter/embedding/burn‑in commands.
   - `srtforge.parakeet_engine` for NeMo ASR integration.
-  - `srtforge.srt_utils` for SRT segment shaping and Netflix rule enforcement.
+  - `srtforge.post.srt_utils` for SRT segment shaping and Netflix rule enforcement.
   - `srtforge.logging` for structured run IDs, timing, and Rich console integration.
+  - Legacy `srtforge.srt_utils`/`srtforge.segmenter` wrapper modules are removed; use the `srtforge.post.*` modules instead.
 - External:
   - FFmpeg binary (path/discovery influenced by settings and environment).
   - `audio-separator` (FV4 backend config + checkpoint).
