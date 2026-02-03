@@ -838,7 +838,9 @@ function Install-Torch($device) {
         $installArgs = @(
             'install',
             '--upgrade',
-            '--no-cache-dir',
+            '--progress-bar', 'off',
+            '--upgrade-strategy', 'only-if-needed',
+            '--prefer-binary',
             '--index-url', "https://download.pytorch.org/whl/cu$cudaTag",
             '--extra-index-url', 'https://pypi.org/simple'
         ) + $packages
