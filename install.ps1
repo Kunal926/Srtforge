@@ -533,6 +533,43 @@ finally {
     Stop-StepTimer -Name "pip/wheel bootstrap" -Status $pipBootstrapStatus
 }
 
+# Decide on CPU vs GPU early so that we can preinstall the correct PyTorch build
+# before resolving requirements (audio-separator would otherwise pull in the CPU
+# torch wheel first, then we'd replace it later).
+$selectedDevice = 'cpu'
+if ($Cpu) {
+    $selectedDevice = 'cpu'
+} elseif ($Gpu) {
+    $selectedDevice = 'gpu'
+} else {
+    if (Get-Command nvidia-smi -ErrorAction SilentlyContinue) {
+        $selectedDevice = 'gpu'
+    } else {
+        Write-Host "No NVIDIA GPU detected, falling back to CPU wheels"
+        $selectedDevice = 'cpu'
+    }
+}
+
+$script:TorchInstalledBeforeRequirements = $false
+if ($selectedDevice -eq 'gpu') {
+    Start-StepTimer -Name "Install Torch"
+    $torchStepSucceeded = $true
+    try {
+        Install-Torch $selectedDevice
+        $script:TorchInstalledBeforeRequirements = $true
+    }
+    catch {
+        $torchStepSucceeded = $false
+        throw
+    }
+    finally {
+        $torchStatus = if ($torchStepSucceeded) { 'OK' } else { 'Failed' }
+        Stop-StepTimer -Name "Install Torch" -Status $torchStatus
+    }
+}
+
+
+
 Start-StepTimer -Name "Install requirements"
 $requirementsStepSucceeded = $true
 try {
@@ -918,19 +955,8 @@ function Ensure-CudaToolkit {
     }
 }
 
-$selectedDevice = 'cpu'
-if ($Cpu) {
-    $selectedDevice = 'cpu'
-} elseif ($Gpu) {
-    $selectedDevice = 'gpu'
-} else {
-    if (Get-Command nvidia-smi -ErrorAction SilentlyContinue) {
-        $selectedDevice = 'gpu'
-    } else {
-        Write-Host "No NVIDIA GPU detected, falling back to CPU wheels"
-        $selectedDevice = 'cpu'
-    }
-}
+# Device selection is performed earlier (before requirements are installed) so
+# that GPU installs can pull the CUDA-enabled PyTorch wheels up front.
 
 if ($selectedDevice -eq 'gpu') {
     Start-StepTimer -Name "Ensure CUDA toolkit"
@@ -950,18 +976,21 @@ if ($selectedDevice -eq 'gpu') {
     }
 }
 
-Start-StepTimer -Name "Install Torch"
-$torchStepSucceeded = $true
-try {
-    Install-Torch $selectedDevice
-}
-catch {
-    $torchStepSucceeded = $false
-    throw
-}
-finally {
-    $torchStatus = if ($torchStepSucceeded) { 'OK' } else { 'Failed' }
-    Stop-StepTimer -Name "Install Torch" -Status $torchStatus
+# If Torch was already installed before requirements (GPU path), don't reinstall here.
+if (-not $script:TorchInstalledBeforeRequirements) {
+    Start-StepTimer -Name "Install Torch"
+    $torchStepSucceeded = $true
+    try {
+        Install-Torch $selectedDevice
+    }
+    catch {
+        $torchStepSucceeded = $false
+        throw
+    }
+    finally {
+        $torchStatus = if ($torchStepSucceeded) { 'OK' } else { 'Failed' }
+        Stop-StepTimer -Name "Install Torch" -Status $torchStatus
+    }
 }
 
 Start-StepTimer -Name "Install ONNX Runtime"
