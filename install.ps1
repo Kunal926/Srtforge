@@ -1,6 +1,7 @@
 Param(
     [switch]$Cpu,
     [switch]$Gpu,
+    [switch]$ShowProgress,
     [string]$PythonPath,
     [string]$PythonVersion,
     [ValidateSet('auto', '118', '121', '124', '126', '128', '130')]
@@ -8,6 +9,15 @@ Param(
 )
 
 $ErrorActionPreference = "Stop"
+
+# --- Performance defaults ------------------------------------------------
+# Windows PowerShell's progress rendering (Write-Progress) can dramatically
+# slow down large downloads performed by Invoke-WebRequest. Disable it by
+# default (users can opt back in with -ShowProgress).
+$script:OriginalProgressPreference = $ProgressPreference
+if (-not $ShowProgress) {
+    $ProgressPreference = 'SilentlyContinue'
+}
 
 # --- Timing helpers ----------------------------------------------------
 $script:ScriptStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
@@ -418,6 +428,21 @@ finally {
 $venvPython = Join-Path $venvDir "Scripts/python.exe"
 $venvPip = Join-Path $venvDir "Scripts/pip.exe"
 
+# pip command-line defaults: keep installs non-interactive, quiet, and fast.
+$script:PipGlobalArgs = @(
+    '--disable-pip-version-check',
+    '--no-input'
+)
+
+function Invoke-Pip {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string[]]$Args
+    )
+
+    Invoke-WithArgs -Command @($venvPip) -Args ($script:PipGlobalArgs + $Args)
+}
+
 function Test-PipPackageInstalled {
     param(
         [Parameter(Mandatory = $true)]
@@ -425,7 +450,7 @@ function Test-PipPackageInstalled {
     )
 
     try {
-        Invoke-WithArgs -Command @($venvPip) -Args @('show', $Name) | Out-Null
+        Invoke-WithArgs -Command @($venvPip) -Args @('--disable-pip-version-check', 'show', $Name) | Out-Null
         return $true
     }
     catch {
@@ -473,27 +498,53 @@ function Ensure-RequirementsInstalled {
     }
 
     Write-Host "Installing missing requirements: $([string]::Join(', ', $missing))"
-    Invoke-WithArgs -Command @($venvPip) -Args @('install', '-r', 'requirements.txt')
+    Invoke-Pip -Args @(
+        'install',
+        '--progress-bar', 'off',
+        '--upgrade-strategy', 'only-if-needed',
+        '--prefer-binary',
+        '-r', 'requirements.txt'
+    )
 }
 
-Start-StepTimer -Name "pip/wheel upgrade and requirements"
-$pipStepSucceeded = $true
+Start-StepTimer -Name "pip/wheel bootstrap"
+$pipBootstrapSucceeded = $true
 try {
     if (-not (Test-PipPackageInstalled -Name 'pip') -or -not (Test-PipPackageInstalled -Name 'wheel')) {
-        Invoke-WithArgs -Command @($venvPython) -Args @('-m', 'pip', 'install', '--upgrade', 'pip', 'wheel')
+        Invoke-WithArgs -Command @($venvPython) -Args @(
+            '-m', 'pip',
+            '--disable-pip-version-check',
+            '--no-input',
+            'install',
+            '--progress-bar', 'off',
+            '--upgrade',
+            'pip', 'wheel'
+        )
     } else {
         Write-Host 'pip and wheel already installed. Skipping upgrade.'
     }
-
-    Ensure-RequirementsInstalled
 }
 catch {
-    $pipStepSucceeded = $false
+    $pipBootstrapSucceeded = $false
     throw
 }
 finally {
-    $pipStatus = if ($pipStepSucceeded) { 'OK' } else { 'Failed' }
-    Stop-StepTimer -Name "pip/wheel upgrade and requirements" -Status $pipStatus
+    $pipBootstrapStatus = if ($pipBootstrapSucceeded) { 'OK' } else { 'Failed' }
+    Stop-StepTimer -Name "pip/wheel bootstrap" -Status $pipBootstrapStatus
+}
+
+Start-StepTimer -Name "Install requirements"
+$requirementsStepSucceeded = $true
+try {
+    Ensure-RequirementsInstalled
+}
+catch {
+    $requirementsStepSucceeded = $false
+    throw
+}
+finally {
+    $requirementsStatus = if ($requirementsStepSucceeded) { 'OK' } else { 'Failed' }
+    Stop-StepTimer -Name "Install requirements" -Status $requirementsStatus
 }
 
 Start-StepTimer -Name "PyInstaller install"
@@ -1044,6 +1095,11 @@ Write-Host "Installation timing summary:"
 $script:StepTimings | Format-Table -AutoSize
 $totalElapsed = Format-ElapsedTime -Elapsed $script:ScriptStopwatch.Elapsed
 Write-Host ("Total elapsed time: {0}" -f $totalElapsed)
+
+# Restore caller progress preference (matters if the script is dot-sourced)
+if ($null -ne $script:OriginalProgressPreference) {
+    $ProgressPreference = $script:OriginalProgressPreference
+}
 
 # Final message - NOTE: no extra quote at the end of this line
 Write-Host "Installation complete. Activate the virtual environment with '.\.venv\Scripts\Activate.ps1'."
