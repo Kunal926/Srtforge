@@ -9,6 +9,51 @@ Param(
 
 $ErrorActionPreference = "Stop"
 
+# --- Timing helpers ----------------------------------------------------
+$script:ScriptStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+$script:StepTimers = @{}
+$script:StepTimings = @()
+
+function Format-ElapsedTime {
+    param(
+        [Parameter(Mandatory = $true)]
+        [TimeSpan]$Elapsed
+    )
+
+    return $Elapsed.ToString("hh\:mm\:ss\.ff")
+}
+
+function Start-StepTimer {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Name
+    )
+
+    $script:StepTimers[$Name] = [System.Diagnostics.Stopwatch]::StartNew()
+}
+
+function Stop-StepTimer {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Name,
+        [string]$Status = 'OK'
+    )
+
+    $stopwatch = $script:StepTimers[$Name]
+    if ($null -ne $stopwatch) {
+        $stopwatch.Stop()
+        $duration = Format-ElapsedTime -Elapsed $stopwatch.Elapsed
+    } else {
+        $duration = Format-ElapsedTime -Elapsed ([TimeSpan]::Zero)
+    }
+
+    $script:StepTimings += [pscustomobject]@{
+        Step     = $Name
+        Duration = $duration
+        Status   = $Status
+    }
+}
+
 # --- Compatibility for Windows PowerShell 5.x (no $IsWindows automatic var) ---
 if ($null -eq $IsWindows) {
     $IsWindows = [System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform(
@@ -349,9 +394,25 @@ $pythonVersion = $pythonSelection.Display
 Write-Host "Using Python interpreter ($pythonVersion): $pythonExe"
 
 $venvDir = ".venv"
-if (-not (Test-Path $venvDir)) {
-    Write-Host "Creating virtual environment in $venvDir"
-    Invoke-Python @("-m", "venv", $venvDir)
+Start-StepTimer -Name "Virtualenv creation"
+$venvStepSucceeded = $true
+$venvCreated = $false
+try {
+    if (-not (Test-Path $venvDir)) {
+        Write-Host "Creating virtual environment in $venvDir"
+        Invoke-Python @("-m", "venv", $venvDir)
+        $venvCreated = $true
+    } else {
+        Write-Host "Virtual environment already present in $venvDir"
+    }
+}
+catch {
+    $venvStepSucceeded = $false
+    throw
+}
+finally {
+    $venvStatus = if ($venvStepSucceeded) { if ($venvCreated) { 'OK' } else { 'Skipped' } } else { 'Failed' }
+    Stop-StepTimer -Name "Virtualenv creation" -Status $venvStatus
 }
 
 $venvPython = Join-Path $venvDir "Scripts/python.exe"
@@ -415,19 +476,43 @@ function Ensure-RequirementsInstalled {
     Invoke-WithArgs -Command @($venvPip) -Args @('install', '-r', 'requirements.txt')
 }
 
-if (-not (Test-PipPackageInstalled -Name 'pip') -or -not (Test-PipPackageInstalled -Name 'wheel')) {
-    Invoke-WithArgs -Command @($venvPython) -Args @('-m', 'pip', 'install', '--upgrade', 'pip', 'wheel')
-} else {
-    Write-Host 'pip and wheel already installed. Skipping upgrade.'
+Start-StepTimer -Name "pip/wheel upgrade and requirements"
+$pipStepSucceeded = $true
+try {
+    if (-not (Test-PipPackageInstalled -Name 'pip') -or -not (Test-PipPackageInstalled -Name 'wheel')) {
+        Invoke-WithArgs -Command @($venvPython) -Args @('-m', 'pip', 'install', '--upgrade', 'pip', 'wheel')
+    } else {
+        Write-Host 'pip and wheel already installed. Skipping upgrade.'
+    }
+
+    Ensure-RequirementsInstalled
+}
+catch {
+    $pipStepSucceeded = $false
+    throw
+}
+finally {
+    $pipStatus = if ($pipStepSucceeded) { 'OK' } else { 'Failed' }
+    Stop-StepTimer -Name "pip/wheel upgrade and requirements" -Status $pipStatus
 }
 
-Ensure-RequirementsInstalled
-
-if (-not (Test-PipPackageInstalled -Name 'pyinstaller')) {
-    Write-Host 'Installing PyInstaller so Windows bundles can be produced immediately'
-    Invoke-WithArgs -Command @($venvPip) -Args @('install', 'pyinstaller')
-} else {
-    Write-Host 'PyInstaller already installed. Skipping reinstall.'
+Start-StepTimer -Name "PyInstaller install"
+$pyInstallerStepSucceeded = $true
+try {
+    if (-not (Test-PipPackageInstalled -Name 'pyinstaller')) {
+        Write-Host 'Installing PyInstaller so Windows bundles can be produced immediately'
+        Invoke-WithArgs -Command @($venvPip) -Args @('install', 'pyinstaller')
+    } else {
+        Write-Host 'PyInstaller already installed. Skipping reinstall.'
+    }
+}
+catch {
+    $pyInstallerStepSucceeded = $false
+    throw
+}
+finally {
+    $pyInstallerStatus = if ($pyInstallerStepSucceeded) { 'OK' } else { 'Failed' }
+    Stop-StepTimer -Name "PyInstaller install" -Status $pyInstallerStatus
 }
 
 $global:ffmpegDownloadUrls = @(
@@ -580,8 +665,33 @@ function Install-MKVToolNix {
   Write-Host "MKVToolNix extracted to $dstRoot"
 }
 
-Ensure-FfmpegBinaries
-Install-MKVToolNix
+Start-StepTimer -Name "Ensure FFmpeg binaries"
+$ffmpegStepSucceeded = $true
+try {
+    Ensure-FfmpegBinaries
+}
+catch {
+    $ffmpegStepSucceeded = $false
+    throw
+}
+finally {
+    $ffmpegStatus = if ($ffmpegStepSucceeded) { 'OK' } else { 'Failed' }
+    Stop-StepTimer -Name "Ensure FFmpeg binaries" -Status $ffmpegStatus
+}
+
+Start-StepTimer -Name "Install MKVToolNix"
+$mkvStepSucceeded = $true
+try {
+    Install-MKVToolNix
+}
+catch {
+    $mkvStepSucceeded = $false
+    throw
+}
+finally {
+    $mkvStatus = if ($mkvStepSucceeded) { 'OK' } else { 'Failed' }
+    Stop-StepTimer -Name "Install MKVToolNix" -Status $mkvStatus
+}
 
 $torchInfoScript = @'
 import json
@@ -772,21 +882,61 @@ if ($Cpu) {
 }
 
 if ($selectedDevice -eq 'gpu') {
-    if (-not (Ensure-CudaToolkit)) {
-        Write-Warning 'Continuing with GPU Python packages, but CUDA toolkit installation may be incomplete.'
+    Start-StepTimer -Name "Ensure CUDA toolkit"
+    $cudaStepSucceeded = $true
+    try {
+        if (-not (Ensure-CudaToolkit)) {
+            Write-Warning 'Continuing with GPU Python packages, but CUDA toolkit installation may be incomplete.'
+        }
+    }
+    catch {
+        $cudaStepSucceeded = $false
+        throw
+    }
+    finally {
+        $cudaStatus = if ($cudaStepSucceeded) { 'OK' } else { 'Failed' }
+        Stop-StepTimer -Name "Ensure CUDA toolkit" -Status $cudaStatus
     }
 }
 
-Install-Torch $selectedDevice
-$onnxGpuInstalled = Install-OnnxRuntime $selectedDevice
+Start-StepTimer -Name "Install Torch"
+$torchStepSucceeded = $true
+try {
+    Install-Torch $selectedDevice
+}
+catch {
+    $torchStepSucceeded = $false
+    throw
+}
+finally {
+    $torchStatus = if ($torchStepSucceeded) { 'OK' } else { 'Failed' }
+    Stop-StepTimer -Name "Install Torch" -Status $torchStatus
+}
+
+Start-StepTimer -Name "Install ONNX Runtime"
+$onnxStepSucceeded = $true
+try {
+    $onnxGpuInstalled = Install-OnnxRuntime $selectedDevice
+}
+catch {
+    $onnxStepSucceeded = $false
+    throw
+}
+finally {
+    $onnxStatus = if ($onnxStepSucceeded) { 'OK' } else { 'Failed' }
+    Stop-StepTimer -Name "Install ONNX Runtime" -Status $onnxStatus
+}
 if (-not $onnxGpuInstalled -and $selectedDevice -eq 'gpu') {
     Write-Warning "Vocal separation is falling back to the CPU build of ONNX Runtime. Re-run the installer after fixing your CUDA driver to re-enable GPU separation."
 }
 
 # Install the local package in editable mode
-Invoke-WithArgs -Command @($venvPip) -Args @('install', '-e', '.')
+Start-StepTimer -Name "Editable install and import verification"
+$editableStepSucceeded = $true
+try {
+    Invoke-WithArgs -Command @($venvPip) -Args @('install', '-e', '.')
 
-$importCheckScript = @'
+    $importCheckScript = @'
 import importlib
 import sys
 
@@ -799,27 +949,36 @@ else:
     print("✔ Verified srtforge is importable.")
 '@
 
-try {
-    Invoke-CommandWithScript -Command @($venvPython) -ScriptContent $importCheckScript
+    try {
+        Invoke-CommandWithScript -Command @($venvPython) -ScriptContent $importCheckScript
+    }
+    catch {
+        Write-Warning "Editable install could not import srtforge. Falling back to a legacy editable install."
+        try {
+            Invoke-WithArgs -Command @($venvPip) -Args @('install', '-e', '.', '--config-settings', 'editable_mode=compat')
+        }
+        catch {
+            Write-Warning "Legacy editable install failed. Installing a non-editable build instead."
+            Invoke-WithArgs -Command @($venvPip) -Args @('install', '.')
+        }
+
+        try {
+            Invoke-CommandWithScript -Command @($venvPython) -ScriptContent $importCheckScript
+        }
+        catch {
+            Write-Warning "Legacy editable install still could not import srtforge. Installing a non-editable build instead."
+            Invoke-WithArgs -Command @($venvPip) -Args @('install', '.')
+            Invoke-CommandWithScript -Command @($venvPython) -ScriptContent $importCheckScript
+        }
+    }
 }
 catch {
-    Write-Warning "Editable install could not import srtforge. Falling back to a legacy editable install."
-    try {
-        Invoke-WithArgs -Command @($venvPip) -Args @('install', '-e', '.', '--config-settings', 'editable_mode=compat')
-    }
-    catch {
-        Write-Warning "Legacy editable install failed. Installing a non-editable build instead."
-        Invoke-WithArgs -Command @($venvPip) -Args @('install', '.')
-    }
-
-    try {
-        Invoke-CommandWithScript -Command @($venvPython) -ScriptContent $importCheckScript
-    }
-    catch {
-        Write-Warning "Legacy editable install still could not import srtforge. Installing a non-editable build instead."
-        Invoke-WithArgs -Command @($venvPip) -Args @('install', '.')
-        Invoke-CommandWithScript -Command @($venvPython) -ScriptContent $importCheckScript
-    }
+    $editableStepSucceeded = $false
+    throw
+}
+finally {
+    $editableStatus = if ($editableStepSucceeded) { 'OK' } else { 'Failed' }
+    Stop-StepTimer -Name "Editable install and import verification" -Status $editableStatus
 }
 
 # ----------------------------------------------------------------------
@@ -862,9 +1021,29 @@ function Download-Model([hashtable]$item) {
     }
 }
 
-foreach ($item in $downloads) {
-    Download-Model $item
+Start-StepTimer -Name "Model downloads"
+$modelStepSucceeded = $true
+try {
+    foreach ($item in $downloads) {
+        Download-Model $item
+    }
 }
+catch {
+    $modelStepSucceeded = $false
+    throw
+}
+finally {
+    $modelStatus = if ($modelStepSucceeded) { 'OK' } else { 'Failed' }
+    Stop-StepTimer -Name "Model downloads" -Status $modelStatus
+}
+
+# Timing summary
+$script:ScriptStopwatch.Stop()
+Write-Host ""
+Write-Host "Installation timing summary:"
+$script:StepTimings | Format-Table -AutoSize
+$totalElapsed = Format-ElapsedTime -Elapsed $script:ScriptStopwatch.Elapsed
+Write-Host ("Total elapsed time: {0}" -f $totalElapsed)
 
 # Final message - NOTE: no extra quote at the end of this line
 Write-Host "Installation complete. Activate the virtual environment with '.\.venv\Scripts\Activate.ps1'."
