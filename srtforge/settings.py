@@ -149,6 +149,7 @@ class SeparationSettings:
 class WhisperSettings:
     """Configuration for Faster-Whisper transcription."""
 
+    engine: str = "whisper"
     model: str = "large-v3-turbo"
     language: str = "en"
 
