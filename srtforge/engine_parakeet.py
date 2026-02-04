@@ -178,18 +178,68 @@ def _derive_word_timestamps_with_alignment(model: Any, audio_path: str, transcri
     )
 
 
-def _transcribe_with_timestamps(model: Any, audio_path: str) -> Tuple[str, List[Dict[str, Any]]]:
+_PARAKEET_V3_LANGS = {
+    "bg",
+    "hr",
+    "cs",
+    "da",
+    "nl",
+    "en",
+    "et",
+    "fi",
+    "fr",
+    "de",
+    "el",
+    "hu",
+    "it",
+    "lv",
+    "lt",
+    "mt",
+    "pl",
+    "pt",
+    "ro",
+    "sk",
+    "sl",
+    "es",
+    "sv",
+    "ru",
+    "uk",
+}
+
+
+def _resolve_language(model_name: str, language: str) -> str:
+    requested = (language or "en").strip().lower()
+    model_id = model_name.lower()
+    if "parakeet-tdt-0.6b-v2" in model_id:
+        if requested != "en":
+            logger.warning("Parakeet v2 supports English only; forcing language to 'en'.")
+        return "en"
+    if "parakeet-tdt-0.6b-v3" in model_id:
+        if requested not in _PARAKEET_V3_LANGS:
+            logger.warning("Unsupported Parakeet v3 language '%s'; falling back to 'en'.", requested)
+            return "en"
+        return requested
+    return requested
+
+
+def _transcribe_with_timestamps(model: Any, audio_path: str, *, language: Optional[str] = None) -> Tuple[str, List[Dict[str, Any]]]:
+    transcribe_kwargs: Dict[str, Any] = {
+        "paths2audio_files": [audio_path],
+        "return_hypotheses": True,
+    }
+    if language:
+        try:
+            sig = inspect.signature(model.transcribe)
+        except Exception:
+            sig = None
+        if sig and "language" in sig.parameters:
+            transcribe_kwargs["language"] = language
+        elif sig and "lang" in sig.parameters:
+            transcribe_kwargs["lang"] = language
     try:
-        outputs = model.transcribe(
-            paths2audio_files=[audio_path],
-            return_hypotheses=True,
-            timestamps=True,
-        )
+        outputs = model.transcribe(**transcribe_kwargs, timestamps=True)
     except TypeError:
-        outputs = model.transcribe(
-            paths2audio_files=[audio_path],
-            return_hypotheses=True,
-        )
+        outputs = model.transcribe(**transcribe_kwargs)
 
     hyp = outputs[0] if isinstance(outputs, (list, tuple)) and outputs else outputs
     transcript = ""
@@ -219,7 +269,8 @@ def generate_optimized_events(
     logger.info("Generating optimized events with Parakeet (NeMo)... model=%s language=%s", model_name, language)
     model = load_parakeet_model(model_name, prefer_gpu=prefer_gpu)
 
-    transcript, words = _transcribe_with_timestamps(model, audio_path)
+    resolved_language = _resolve_language(model_name, language)
+    transcript, words = _transcribe_with_timestamps(model, audio_path, language=resolved_language)
     if not words and transcript:
         logger.warning("Parakeet returned no word timestamps; derived alignment may be required.")
 
