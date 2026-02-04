@@ -57,6 +57,7 @@ class PipelineConfig:
     ffmpeg_filter_chain: str = settings.ffmpeg.filter_chain
     ffmpeg_extraction_mode: str = settings.ffmpeg.extraction_mode
     prefer_gpu: bool = settings.separation.prefer_gpu
+    asr_engine: str = settings.whisper.engine
     whisper_model: str = settings.whisper.model
     whisper_language: str = settings.whisper.language
     gemini_enabled: bool = settings.gemini.enabled
@@ -233,15 +234,10 @@ class Pipeline:
                             filter_chain=filter_chain,
                         )
 
-                    with status("Running Faster-Whisper ASR and subtitle post-processing"), run_logger.step(
-                        "ASR pipeline"
-                    ):
-                        from .engine_whisper import (
-                            correct_text_only_with_gemini,
-                            generate_optimized_events,
-                            get_whisper_device_config,
-                            write_srt,
-                        )
+                    with status("Running ASR and subtitle post-processing"), run_logger.step("ASR pipeline"):
+                        engine = (self.config.asr_engine or "whisper").strip().lower()
+                        if engine in {"", "default"}:
+                            engine = "whisper"
 
                         output_path.parent.mkdir(parents=True, exist_ok=True)
                         if self.config.dump_word_timestamps:
@@ -249,22 +245,57 @@ class Pipeline:
                                 self.config.word_timestamps_path or output_path.with_suffix(".words.json")
                             )
                             word_timestamps_path.parent.mkdir(parents=True, exist_ok=True)
-                        device, compute_type = get_whisper_device_config(
-                            prefer_gpu=self.config.prefer_gpu,
-                        )
-                        run_logger.log(
-                            f"ASR device: {device} compute: {compute_type} model: {self.config.whisper_model}"
-                        )
-                        events = generate_optimized_events(
-                            str(preprocessed),
-                            model_name=self.config.whisper_model,
-                            language=self.config.whisper_language,
-                            prefer_gpu=self.config.prefer_gpu,
-                            word_timestamps_out=(
-                                str(word_timestamps_path.resolve()) if word_timestamps_path else None
-                            ),
-                        )
-                        run_logger.log(f"Whisper segments: {len(events)}")
+
+                        if engine == "whisper":
+                            from .engine_whisper import (
+                                correct_text_only_with_gemini,
+                                generate_optimized_events,
+                                get_whisper_device_config,
+                                write_srt,
+                            )
+
+                            device, compute_type = get_whisper_device_config(
+                                prefer_gpu=self.config.prefer_gpu,
+                            )
+                            run_logger.log(
+                                "ASR engine: whisper "
+                                f"device: {device} compute: {compute_type} model: {self.config.whisper_model}"
+                            )
+                            events = generate_optimized_events(
+                                str(preprocessed),
+                                model_name=self.config.whisper_model,
+                                language=self.config.whisper_language,
+                                prefer_gpu=self.config.prefer_gpu,
+                                word_timestamps_out=(
+                                    str(word_timestamps_path.resolve()) if word_timestamps_path else None
+                                ),
+                            )
+                            run_logger.log(f"Whisper segments: {len(events)}")
+                        elif engine == "parakeet":
+                            from .engine_parakeet import generate_optimized_events, get_parakeet_device_config
+                            from .engine_whisper import correct_text_only_with_gemini, write_srt
+
+                            device, compute_type = get_parakeet_device_config(
+                                prefer_gpu=self.config.prefer_gpu,
+                            )
+                            run_logger.log(
+                                "ASR engine: parakeet "
+                                f"device: {device} compute: {compute_type} model: {self.config.whisper_model}"
+                            )
+                            events = generate_optimized_events(
+                                str(preprocessed),
+                                model_name=self.config.whisper_model,
+                                language=self.config.whisper_language,
+                                prefer_gpu=self.config.prefer_gpu,
+                                word_timestamps_out=(
+                                    str(word_timestamps_path.resolve()) if word_timestamps_path else None
+                                ),
+                            )
+                            run_logger.log(f"Parakeet segments: {len(events)}")
+                        else:
+                            message = f"Unsupported ASR engine: {self.config.asr_engine}"
+                            run_logger.log_error(message)
+                            raise ValueError(message)
 
                         if self.config.gemini_enabled:
                             events = correct_text_only_with_gemini(

@@ -93,6 +93,7 @@ class WorkerOptions:
 
     config_path: Optional[Path]
     prefer_gpu: bool
+    asr_engine: str
     whisper_model: str
     whisper_language: str
     gemini_enabled: bool
@@ -908,6 +909,7 @@ class TranscriptionWorker(QtCore.QThread):
                 "separation_prefer_gpu": bool(self.options.prefer_gpu),
                 "word_timestamps": bool(self.options.word_timestamps),
                 "whisper": {
+                    "engine": self.options.asr_engine,
                     "model": self.options.whisper_model,
                     "language": self.options.whisper_language,
                 },
@@ -1877,6 +1879,17 @@ class OptionsDialog(QtWidgets.QDialog):
         perf = QtWidgets.QWidget()
         perf_form = QtWidgets.QFormLayout(perf)
 
+        self.asr_engine = QtWidgets.QComboBox()
+        self.asr_engine.addItem("Whisper (faster-whisper)", "whisper")
+        self.asr_engine.addItem("Parakeet", "parakeet")
+        engine_value = (getattr(initial_settings.whisper, "engine", "whisper") or "whisper").lower()
+        idx = self.asr_engine.findData(engine_value)
+        if idx < 0:
+            idx = self.asr_engine.findData("whisper")
+        self.asr_engine.setCurrentIndex(max(0, idx))
+        self.asr_engine.setToolTip("Choose which ASR backend is used for transcription.")
+        perf_form.addRow("ASR engine", self.asr_engine)
+
         self.whisper_model = QtWidgets.QLineEdit(str(initial_settings.whisper.model))
         self.whisper_model.setPlaceholderText("large-v3-turbo")
         perf_form.addRow("Whisper model", self.whisper_model)
@@ -1936,6 +1949,7 @@ class OptionsDialog(QtWidgets.QDialog):
         self._combo_popup_fixers = [
             _ComboPopupFixer(self.device_combo, radius=12),
             _ComboPopupFixer(self.embed_method, radius=12),
+            _ComboPopupFixer(self.asr_engine, radius=12),
             _ComboPopupFixer(self.backend, radius=12),
         ]
 
@@ -2054,6 +2068,7 @@ class OptionsDialog(QtWidgets.QDialog):
                 "allow_untagged_english": self.allow_untagged.isChecked(),
             },
             "whisper": {
+                "engine": str(self.asr_engine.currentData() or "whisper"),
                 "model": self.whisper_model.text().strip() or "large-v3-turbo",
                 "language": self.whisper_language.text().strip() or "en",
             },
@@ -2126,6 +2141,11 @@ class OptionsDialog(QtWidgets.QDialog):
         self.gemini_cb.setChecked(bool(default_basic.get("gemini_enabled", False)))
 
         # ---- Performance defaults (from shipped config.yaml -> `settings`) ---
+        engine_value = str(getattr(settings.whisper, "engine", "whisper") or "whisper")
+        idx = self.asr_engine.findData(engine_value)
+        if idx < 0:
+            idx = self.asr_engine.findData("whisper")
+        self.asr_engine.setCurrentIndex(max(0, idx))
         self.whisper_model.setText(str(getattr(settings.whisper, "model", "large-v3-turbo") or "large-v3-turbo"))
         self.whisper_language.setText(str(getattr(settings.whisper, "language", "en") or "en"))
         self.gemini_model_id.setText(
@@ -4129,6 +4149,7 @@ class MainWindow(QtWidgets.QMainWindow):
                         ),
                     }
                     base["whisper"] = {
+                        "engine": getattr(settings.whisper, "engine", "whisper"),
                         "model": settings.whisper.model,
                         "language": settings.whisper.language,
                     }
@@ -5267,6 +5288,7 @@ class MainWindow(QtWidgets.QMainWindow):
         options = WorkerOptions(
             config_path=Path(self._runtime_config_path) if self._runtime_config_path else None,
             prefer_gpu=prefer_gpu,
+            asr_engine=str(getattr(pipeline_settings, "whisper").engine),
             whisper_model=str(getattr(pipeline_settings, "whisper").model),
             whisper_language=str(getattr(pipeline_settings, "whisper").language),
             gemini_enabled=bool(basic.get("gemini_enabled", False)),

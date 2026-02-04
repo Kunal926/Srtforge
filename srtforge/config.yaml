@@ -13,6 +13,7 @@ separation:
     cfg: ./models/voc_gabox.yaml
     ckpt: ./models/voc_fv4.ckpt
 whisper:
+  engine: whisper
   model: large-v3-turbo
   language: en
 gemini:

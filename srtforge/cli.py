@@ -41,6 +41,7 @@ def run(
         output_path=output,
         prefer_gpu=gpu_pref,
         separation_prefer_gpu=gpu_pref,
+        asr_engine=settings.whisper.engine,
         whisper_model=settings.whisper.model,
         whisper_language=settings.whisper.language,
         gemini_enabled=settings.gemini.enabled,
@@ -77,6 +78,7 @@ def series(
             media_path=path,
             prefer_gpu=gpu_pref,
             separation_prefer_gpu=gpu_pref,
+            asr_engine=settings.whisper.engine,
             whisper_model=settings.whisper.model,
             whisper_language=settings.whisper.language,
             gemini_enabled=settings.gemini.enabled,
@@ -111,6 +113,7 @@ def _build_pipeline_config(
         output_path=output_path,
         prefer_gpu=prefer_gpu,
         separation_prefer_gpu=bool(cfg.get("separation_prefer_gpu", prefer_gpu)),
+        asr_engine=str(whisper_cfg.get("engine") or settings.whisper.engine),
         whisper_model=str(whisper_cfg.get("model") or settings.whisper.model),
         whisper_language=str(whisper_cfg.get("language") or settings.whisper.language),
         gemini_enabled=bool(gemini_cfg.get("enabled", settings.gemini.enabled)),
@@ -148,10 +151,19 @@ def worker(
 
     if preload:
         try:
-            from .engine_whisper import preload_whisper_model
-
             s = load_settings()
-            preload_whisper_model(s.whisper.model, prefer_gpu=default_prefer_gpu)
+            engine = (getattr(s.whisper, "engine", "whisper") or "whisper").strip().lower()
+            if engine == "whisper":
+                from .engine_whisper import preload_whisper_model
+
+                preload_whisper_model(s.whisper.model, prefer_gpu=default_prefer_gpu)
+            else:
+                _emit_worker_event(
+                    {
+                        "event": "worker_preload_skipped",
+                        "reason": f"preload not implemented for ASR engine: {engine}",
+                    }
+                )
         except Exception as exc:
             _emit_worker_event({"event": "worker_preload_failed", "error": str(exc)})
 
