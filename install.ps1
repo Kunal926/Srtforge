@@ -533,6 +533,96 @@ finally {
     Stop-StepTimer -Name "pip/wheel bootstrap" -Status $pipBootstrapStatus
 }
 
+$torchInfoScript = @'
+import json
+
+try:
+    import torch
+except Exception as exc:  # pragma: no cover - diagnostic helper
+    print(json.dumps({
+        "ok": False,
+        "error": str(exc),
+        "cuda_version": None,
+        "cuda_available": False,
+    }))
+else:
+    print(json.dumps({
+        "ok": True,
+        "error": None,
+        "cuda_version": getattr(torch.version, "cuda", None),
+        "cuda_available": bool(torch.cuda.is_available()),
+    }))
+'@
+
+function Get-TorchCudaInfo {
+    try {
+        $result = Invoke-CommandWithScript -Command @($venvPython) -ScriptContent $torchInfoScript
+        if (-not $result) {
+            return $null
+        }
+
+        $json = ($result | Out-String).Trim()
+        if (-not $json) {
+            return $null
+        }
+
+        return $json | ConvertFrom-Json
+    }
+    catch {
+        return $null
+    }
+}
+
+function Install-Torch($device) {
+    $torchInstalled = Test-PipPackageInstalled -Name 'torch'
+    $torchInfo = if ($torchInstalled) { Get-TorchCudaInfo } else { $null }
+
+    if ($device -eq 'gpu') {
+        if ($torchInstalled -and $torchInfo -and $torchInfo.ok -and $torchInfo.cuda_version) {
+            Write-Host "CUDA-enabled PyTorch already installed (CUDA $($torchInfo.cuda_version)). Skipping reinstall."
+            return
+        }
+
+        $cudaTag = if ($Cuda -eq 'auto') { '130' } else { $Cuda }
+        Write-Host "Installing Torch with CUDA $cudaTag wheels"
+        $packages = @('torch', 'torchvision', 'torchaudio')
+
+        $installArgs = @(
+            'install',
+            '--upgrade',
+            '--no-cache-dir',
+            '--index-url', "https://download.pytorch.org/whl/cu$cudaTag",
+            '--extra-index-url', 'https://pypi.org/simple'
+        ) + $packages
+        Invoke-WithArgs -Command @($venvPip) -Args $installArgs
+
+        $torchInfo = Get-TorchCudaInfo
+        if ($torchInfo -and $torchInfo.ok) {
+            if (-not $torchInfo.cuda_version) {
+                Write-Warning 'PyTorch CUDA runtime was not detected after installation. CPU-only wheels may still be in use.'
+            } elseif (-not $torchInfo.cuda_available) {
+                Write-Warning "PyTorch reports CUDA $($torchInfo.cuda_version) but no GPU is currently available. Check your NVIDIA drivers."
+            } else {
+                Write-Host "Detected CUDA-enabled PyTorch (CUDA $($torchInfo.cuda_version))."
+            }
+        } else {
+            Write-Warning 'Unable to verify the CUDA-enabled PyTorch installation.'
+        }
+    } else {
+        if ($torchInstalled -and $torchInfo -and $torchInfo.ok -and -not $torchInfo.cuda_version) {
+            Write-Host 'CPU-only PyTorch already installed. Skipping reinstall.'
+            return
+        }
+
+        Write-Host "Installing Torch CPU wheels"
+        Invoke-WithArgs -Command @($venvPip) -Args @(
+            'install',
+            '--index-url', 'https://download.pytorch.org/whl/cpu',
+            'torch', 'torchvision', 'torchaudio'
+        )
+    }
+}
+
 # Decide on CPU vs GPU early so that we can preinstall the correct PyTorch build
 # before resolving requirements (audio-separator would otherwise pull in the CPU
 # torch wheel first, then we'd replace it later).
@@ -779,98 +869,6 @@ catch {
 finally {
     $mkvStatus = if ($mkvStepSucceeded) { 'OK' } else { 'Failed' }
     Stop-StepTimer -Name "Install MKVToolNix" -Status $mkvStatus
-}
-
-$torchInfoScript = @'
-import json
-
-try:
-    import torch
-except Exception as exc:  # pragma: no cover - diagnostic helper
-    print(json.dumps({
-        "ok": False,
-        "error": str(exc),
-        "cuda_version": None,
-        "cuda_available": False,
-    }))
-else:
-    print(json.dumps({
-        "ok": True,
-        "error": None,
-        "cuda_version": getattr(torch.version, "cuda", None),
-        "cuda_available": bool(torch.cuda.is_available()),
-    }))
-'@
-
-function Get-TorchCudaInfo {
-    try {
-        $result = Invoke-CommandWithScript -Command @($venvPython) -ScriptContent $torchInfoScript
-        if (-not $result) {
-            return $null
-        }
-
-        $json = ($result | Out-String).Trim()
-        if (-not $json) {
-            return $null
-        }
-
-        return $json | ConvertFrom-Json
-    }
-    catch {
-        return $null
-    }
-}
-
-function Install-Torch($device) {
-    $torchInstalled = Test-PipPackageInstalled -Name 'torch'
-    $torchInfo = if ($torchInstalled) { Get-TorchCudaInfo } else { $null }
-
-    if ($device -eq 'gpu') {
-        if ($torchInstalled -and $torchInfo -and $torchInfo.ok -and $torchInfo.cuda_version) {
-            Write-Host "CUDA-enabled PyTorch already installed (CUDA $($torchInfo.cuda_version)). Skipping reinstall."
-            return
-        }
-
-        $cudaTag = if ($Cuda -eq 'auto') { '130' } else { $Cuda }
-        Write-Host "Installing Torch with CUDA $cudaTag wheels"
-        $packages = @('torch', 'torchvision', 'torchaudio')
-
-        $installArgs = @(
-            'install',
-            '--upgrade',
-            '--progress-bar', 'off',
-            '--upgrade-strategy', 'only-if-needed',
-            '--prefer-binary',
-            '--index-url', "https://download.pytorch.org/whl/cu$cudaTag",
-            '--extra-index-url', 'https://pypi.org/simple'
-        ) + $packages
-        Invoke-WithArgs -Command @($venvPip) -Args $installArgs
-
-        $torchInfo = Get-TorchCudaInfo
-        if ($torchInfo -and $torchInfo.ok) {
-            if (-not $torchInfo.cuda_version) {
-                Write-Warning 'PyTorch CUDA runtime was not detected after installation. CPU-only wheels may still be in use.'
-            } elseif (-not $torchInfo.cuda_available) {
-                Write-Warning "PyTorch reports CUDA $($torchInfo.cuda_version) but no GPU is currently available. Check your NVIDIA drivers."
-            } else {
-                Write-Host "Detected CUDA-enabled PyTorch (CUDA $($torchInfo.cuda_version))."
-            }
-        } else {
-            Write-Warning 'Unable to verify the CUDA-enabled PyTorch installation.'
-        }
-    } else {
-        if ($torchInstalled -and $torchInfo -and $torchInfo.ok -and -not $torchInfo.cuda_version) {
-            Write-Host 'CPU-only PyTorch already installed. Skipping reinstall.'
-            return
-        }
-
-        Write-Host "Installing Torch CPU wheels"
-        Invoke-WithArgs -Command @($venvPip) -Args @(
-            'install',
-            '--index-url', 'https://download.pytorch.org/whl/cpu',
-            'torch', 'torchvision', 'torchaudio'
-        )
-    }
 }
 
 function Install-OnnxRuntime($device) {
