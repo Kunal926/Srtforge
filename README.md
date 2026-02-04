@@ -32,6 +32,12 @@ If a CUDA-capable GPU is detected, the installer provisions both the CUDA
 `--cpu` to force CPU wheels (and the CPU ONNX Runtime build) when debugging or
 running on a headless machine.
 
+Parakeet (NeMo) models are pulled directly from Hugging Face (for example,
+`nvidia/parakeet-tdt-0.6b-v2` or `nvidia/parakeet-tdt-0.6b-v3`). The installers
+now include the NeMo ASR runtime and `cuda-python` bindings so Parakeet can run
+out of the box. If you rely on private Hugging Face models, be sure `HF_TOKEN`
+is set before installing so NeMo can authenticate.
+
 ### Windows 11 step-by-step
 
 1. Install [Python 3.12 (recommended)](https://www.python.org/downloads/)—any
@@ -91,6 +97,9 @@ script is safe; existing files are left untouched.
    resampled with SoXr to 16 kHz mono float for consistent ASR input.
 5. **Faster‑Whisper ASR** – the Faster‑Whisper engine transcribes with
    word-level timestamps, segments the stream, and shapes subtitle lines.
+   **Parakeet (NeMo) ASR** – alternatively, the pipeline can use NVIDIA Parakeet
+   TDT models from Hugging Face and applies the same segmentation and timing
+   logic once word timestamps are extracted.
 6. **Timing + shaping fixes** – subtitle timing constraints and line balancing
    are applied so the final SRT matches the reference heuristics.
 
