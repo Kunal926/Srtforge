@@ -19,3 +19,4 @@ cuda-python>=12.3
 faster-whisper
 ctranslate2==4.6.3
 google-genai
+nemo_toolkit[asr]>=2.5.1,<2.6

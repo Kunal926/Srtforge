@@ -29,7 +29,6 @@ fi
 source "$VENV_DIR/bin/activate"
 
 python -m pip install --upgrade pip wheel
-pip install -r requirements.txt
 
 install_torch() {
   local device="$1"
@@ -106,10 +105,7 @@ fi
 install_torch "$SELECTED_DEVICE"
 install_onnxruntime "$SELECTED_DEVICE"
 
-echo "Installing cuda-python bindings required for NeMo CUDA graphs"
-pip install "cuda-python>=12.3"
-
-pip install "nemo_toolkit[asr]>=2.5.1,<2.6"
+pip install -r requirements.txt
 
 python <<'PY'
 import importlib

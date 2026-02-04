@@ -641,21 +641,19 @@ if ($Cpu) {
 }
 
 $script:TorchInstalledBeforeRequirements = $false
-if ($selectedDevice -eq 'gpu') {
-    Start-StepTimer -Name "Install Torch"
-    $torchStepSucceeded = $true
-    try {
-        Install-Torch $selectedDevice
-        $script:TorchInstalledBeforeRequirements = $true
-    }
-    catch {
-        $torchStepSucceeded = $false
-        throw
-    }
-    finally {
-        $torchStatus = if ($torchStepSucceeded) { 'OK' } else { 'Failed' }
-        Stop-StepTimer -Name "Install Torch" -Status $torchStatus
-    }
+Start-StepTimer -Name "Install Torch"
+$torchStepSucceeded = $true
+try {
+    Install-Torch $selectedDevice
+    $script:TorchInstalledBeforeRequirements = $true
+}
+catch {
+    $torchStepSucceeded = $false
+    throw
+}
+finally {
+    $torchStatus = if ($torchStepSucceeded) { 'OK' } else { 'Failed' }
+    Stop-StepTimer -Name "Install Torch" -Status $torchStatus
 }
 
 
@@ -973,23 +971,6 @@ if ($selectedDevice -eq 'gpu') {
     finally {
         $cudaStatus = if ($cudaStepSucceeded) { 'OK' } else { 'Failed' }
         Stop-StepTimer -Name "Ensure CUDA toolkit" -Status $cudaStatus
-    }
-}
-
-# If Torch was already installed before requirements (GPU path), don't reinstall here.
-if (-not $script:TorchInstalledBeforeRequirements) {
-    Start-StepTimer -Name "Install Torch"
-    $torchStepSucceeded = $true
-    try {
-        Install-Torch $selectedDevice
-    }
-    catch {
-        $torchStepSucceeded = $false
-        throw
-    }
-    finally {
-        $torchStatus = if ($torchStepSucceeded) { 'OK' } else { 'Failed' }
-        Stop-StepTimer -Name "Install Torch" -Status $torchStatus
     }
 }
 
