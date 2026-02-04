@@ -20,6 +20,7 @@ from .settings import (
     EXTRACTION_MODE_STEREO_MIX,
     settings,
 )
+from .utils import build_media_context_label
 
 
 def _has_center_channel(layout: str | None, channels: int | None) -> bool:
@@ -123,9 +124,20 @@ class Pipeline:
                 tmp_ctx = tempfile.TemporaryDirectory(**tmp_kwargs)
                 try:
                     tmp = Path(tmp_ctx.name)
-                    extracted = tmp / "english.wav"
-                    vocals = tmp / "vocals.wav"
-                    preprocessed = tmp / "preprocessed.wav"
+                    # Include show + episode metadata in our working WAV filenames.
+                    # This gives Gemini extra context when we upload audio, and also makes
+                    # temp directories easier to inspect/debug.
+                    # Keep this fairly short so Windows temp paths don't hit MAX_PATH.
+                    media_label = build_media_context_label(media_path, max_length=120)
+
+                    def _work_wav(stage: str) -> Path:
+                        if media_label:
+                            return tmp / f"{media_label} - {stage}.wav"
+                        return tmp / f"{stage}.wav"
+
+                    extracted = _work_wav("english")
+                    vocals = _work_wav("vocals")
+                    preprocessed = _work_wav("preprocessed")
                     word_timestamps_path: Optional[Path] = None
 
                     with run_logger.step("Probe audio streams"):

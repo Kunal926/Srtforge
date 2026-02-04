@@ -18,6 +18,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
+from .utils import parse_media_context_from_filename
+
 logger = logging.getLogger(__name__)
 
 # ==============================================================================
@@ -460,16 +462,43 @@ def correct_text_only_with_gemini(
     client = genai.Client(api_key=effective_key)
     file_ref = client.files.upload(file=audio_path)
 
+    # Try to extract show/episode context from the (working) audio filename.
+    # The pipeline names working WAVs with a prefix like:
+    #   "Show Name (2021) - S01E01 - Episode Title - preprocessed.wav"
+    audio_basename = str(audio_path).replace("\\", "/").split("/")[-1]
+    ctx = parse_media_context_from_filename(audio_basename)
+
+    show_context_lines: List[str] = []
+    if ctx.show or ctx.season_episode or ctx.episode_number or ctx.episode_title:
+        show_context_lines.append("SHOW CONTEXT (parsed from filename):")
+        if ctx.show:
+            show_context_lines.append(f"- Show: {ctx.show}")
+        episode_bits: List[str] = []
+        if ctx.season_episode:
+            episode_bits.append(ctx.season_episode)
+        if ctx.episode_number:
+            episode_bits.append(ctx.episode_number)
+        if ctx.episode_title:
+            episode_bits.append(ctx.episode_title)
+        if episode_bits:
+            show_context_lines.append(f"- Episode: {' - '.join(episode_bits)}")
+        show_context_lines.append(f"- Source filename: {audio_basename}")
+    else:
+        show_context_lines.append(f"Source filename: {audio_basename}")
+    show_context = "\n".join(show_context_lines).strip()
+
     payload_lines: List[str] = []
     for i, ev in enumerate(events, 1):
         clean_text = str(ev.get("text") or "").replace("\n", " ")
         payload_lines.append(f"{i}|{clean_text}")
     full_payload = "\n".join(payload_lines)
 
-    prompt = """
+    prompt = f"""
 You are a professional subtitle editor.
 I will provide a list of subtitle lines in the format 'ID|Text'.
 The audio file is provided for context.
+
+{show_context}
 
 TASK:
 1. Listen to the audio to identify correct Name spellings (Context: Anime).
