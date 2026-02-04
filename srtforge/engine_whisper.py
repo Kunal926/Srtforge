@@ -398,13 +398,34 @@ def generate_optimized_events(
     model = load_whisper_model(model_name, prefer_gpu=prefer_gpu)
 
     # The WhisperModel.transcribe API yields segments; keep the same flags as the reference.
-    segments, _info = model.transcribe(
-        audio_path,
-        language=language,
-        word_timestamps=True,
-        condition_on_previous_text=False,
-        vad_filter=False,
-    )
+    # Try VAD first (prevents a lot of wind/music lead-in anchoring).
+    try:
+        segments, _info = model.transcribe(
+            audio_path,
+            language=language,
+            word_timestamps=True,
+            condition_on_previous_text=False,
+            vad_filter=True,
+            vad_parameters={"speech_pad_ms": 0, "min_silence_duration_ms": 500},
+        )
+    except TypeError:
+        # Older/newer faster-whisper builds may not accept vad_parameters
+        segments, _info = model.transcribe(
+            audio_path,
+            language=language,
+            word_timestamps=True,
+            condition_on_previous_text=False,
+            vad_filter=True,
+        )
+    except Exception:
+        # If VAD isn't available in the runtime, fall back to previous behavior
+        segments, _info = model.transcribe(
+            audio_path,
+            language=language,
+            word_timestamps=True,
+            condition_on_previous_text=False,
+            vad_filter=False,
+        )
 
     raw_words: List[Dict[str, Any]] = []
     all_words: List[Dict[str, Any]] = []
