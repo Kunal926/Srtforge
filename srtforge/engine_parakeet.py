@@ -186,6 +186,82 @@ def _normalize_word_timestamp_entries(entries: Sequence[Any]) -> List[Dict[str, 
     return normalized
 
 
+def _derive_words_from_char_timestamps(entries: Sequence[Any]) -> List[Dict[str, Any]]:
+    normalized_chars: List[Dict[str, Any]] = []
+    for item in entries:
+        if isinstance(item, dict):
+            char_text = item.get("word") or item.get("text") or item.get("token")
+            start = item.get("start")
+            end = item.get("end")
+            if start is None:
+                start = item.get("start_time") or item.get("start_offset")
+            if end is None:
+                end = item.get("end_time") or item.get("end_offset")
+        else:
+            char_text = getattr(item, "word", None) or getattr(item, "text", None)
+            start = getattr(item, "start", None)
+            end = getattr(item, "end", None)
+            if start is None:
+                start = getattr(item, "start_offset", None)
+            if end is None:
+                end = getattr(item, "end_offset", None)
+
+        if char_text is None or start is None or end is None:
+            continue
+        normalized_chars.append({"word": str(char_text), "start": float(start), "end": float(end)})
+
+    if not normalized_chars:
+        return []
+
+    words: List[Dict[str, Any]] = []
+    current_text: List[str] = []
+    current_start: Optional[float] = None
+    current_end: Optional[float] = None
+
+    for token in normalized_chars:
+        char_text = str(token.get("word", ""))
+        if not char_text:
+            continue
+        if char_text.isspace():
+            if current_text and current_start is not None and current_end is not None:
+                words.append({"word": "".join(current_text), "start": current_start, "end": current_end})
+            current_text = []
+            current_start = None
+            current_end = None
+            continue
+
+        if current_start is None:
+            current_start = float(token["start"])
+        current_end = float(token["end"])
+        current_text.append(char_text)
+
+    if current_text and current_start is not None and current_end is not None:
+        words.append({"word": "".join(current_text), "start": current_start, "end": current_end})
+
+    return words
+
+
+def _derive_words_from_segment_timestamps(entries: Sequence[Any], transcript: str) -> List[Dict[str, Any]]:
+    normalized_segments = _normalize_word_timestamp_entries(entries)
+    words = [w for w in str(transcript or "").strip().split() if w]
+    if not normalized_segments or not words:
+        return []
+
+    start = float(normalized_segments[0]["start"])
+    end = float(normalized_segments[-1]["end"])
+    if end <= start:
+        return []
+
+    total_words = len(words)
+    duration = end - start
+    generated: List[Dict[str, Any]] = []
+    for idx, word in enumerate(words):
+        word_start = start + duration * (idx / total_words)
+        word_end = start + duration * ((idx + 1) / total_words)
+        generated.append({"word": word, "start": word_start, "end": word_end})
+    return generated
+
+
 def _extract_word_timestamps_from_hypothesis(hyp: Any) -> List[Dict[str, Any]]:
     if hyp is None:
         return []
@@ -215,11 +291,37 @@ def _extract_word_timestamps_from_hypothesis(hyp: Any) -> List[Dict[str, Any]]:
             getattr(hyp, "timestep", None),
         ]
     )
+    transcript = ""
+    if isinstance(hyp, dict):
+        transcript = str(hyp.get("text") or hyp.get("transcript") or "")
+    else:
+        transcript = str(getattr(hyp, "text", "") or getattr(hyp, "transcript", ""))
+
     for timestamps in timestamp_containers:
         if isinstance(timestamps, dict):
-            for key in ("word", "words"):
+            direct_word_keys = ["word", "words"]
+            for key in direct_word_keys:
                 if key in timestamps:
-                    return _normalize_word_timestamp_entries(timestamps[key])
+                    words = _normalize_word_timestamp_entries(timestamps[key])
+                    if words:
+                        return words
+
+            if "char" in timestamps:
+                words = _derive_words_from_char_timestamps(timestamps["char"])
+                if words:
+                    return words
+
+            if "segment" in timestamps and transcript:
+                words = _derive_words_from_segment_timestamps(timestamps["segment"], transcript)
+                if words:
+                    return words
+
+        elif timestamps is not None:
+            for key in ("word", "words"):
+                if hasattr(timestamps, key):
+                    words = _normalize_word_timestamp_entries(getattr(timestamps, key))
+                    if words:
+                        return words
     return []
 
 
@@ -228,6 +330,40 @@ def _unwrap_first_hypothesis(outputs: Any) -> Any:
     while isinstance(current, (list, tuple)) and current:
         current = current[0]
     return current
+
+
+def _iter_output_candidates(outputs: Any) -> Any:
+    stack = [outputs]
+    while stack:
+        current = stack.pop(0)
+        if isinstance(current, (list, tuple)):
+            stack[0:0] = list(current)
+            continue
+        yield current
+
+
+def _extract_transcript_from_outputs(outputs: Any) -> str:
+    for candidate in _iter_output_candidates(outputs):
+        if isinstance(candidate, str):
+            text = candidate.strip()
+            if text:
+                return text
+            continue
+        if isinstance(candidate, dict):
+            text = str(candidate.get("text") or candidate.get("transcript") or "").strip()
+        else:
+            text = str(getattr(candidate, "text", "") or getattr(candidate, "transcript", "")).strip()
+        if text:
+            return text
+    return ""
+
+
+def _extract_words_from_outputs(outputs: Any) -> List[Dict[str, Any]]:
+    for candidate in _iter_output_candidates(outputs):
+        words = _extract_word_timestamps_from_hypothesis(candidate)
+        if words:
+            return words
+    return []
 
 
 def _call_timestamp_helper(func: Any, model: Any, audio_path: str, transcript: str) -> Optional[List[Dict[str, Any]]]:
@@ -252,7 +388,13 @@ def _call_timestamp_helper(func: Any, model: Any, audio_path: str, transcript: s
     return None
 
 
-def _derive_word_timestamps_with_alignment(model: Any, audio_path: str, transcript: str) -> List[Dict[str, Any]]:
+def _derive_word_timestamps_with_alignment(
+    model: Any,
+    audio_path: str,
+    transcript: str,
+    *,
+    outputs: Any = None,
+) -> List[Dict[str, Any]]:
     try:
         from nemo.collections.asr.parts.utils import timestamp_utils  # type: ignore
     except Exception as exc:
@@ -267,11 +409,22 @@ def _derive_word_timestamps_with_alignment(model: Any, audio_path: str, transcri
             "get_word_timestamps_from_alignment",
             "get_word_timestamps_from_hypothesis",
             "extract_word_timestamps",
+            "process_timestamp_outputs",
+            "process_aed_timestamp_outputs",
         )
     ]
 
     for func in helpers:
         if func is None:
+            continue
+        if outputs is not None and func.__name__ in {"process_timestamp_outputs", "process_aed_timestamp_outputs"}:
+            try:
+                result = func(outputs)
+            except Exception:
+                continue
+            words = _extract_words_from_outputs(result)
+            if words:
+                return words
             continue
         result = _call_timestamp_helper(func, model, audio_path, transcript)
         if result:
@@ -401,18 +554,10 @@ def _transcribe_with_timestamps(model: Any, audio_path: str, *, language: Option
             f"Detected audio keys in signature: [{attempted_keys}]."
         ) from last_type_error
 
-    hyp = _unwrap_first_hypothesis(outputs)
-    transcript = ""
-    if isinstance(hyp, str):
-        transcript = hyp
-    elif isinstance(hyp, dict):
-        transcript = str(hyp.get("text") or hyp.get("transcript") or "")
-    else:
-        transcript = getattr(hyp, "text", "") or getattr(hyp, "transcript", "") or ""
-
-    words = _extract_word_timestamps_from_hypothesis(hyp)
+    transcript = _extract_transcript_from_outputs(outputs)
+    words = _extract_words_from_outputs(outputs)
     if not words and transcript:
-        words = _derive_word_timestamps_with_alignment(model, audio_path, transcript)
+        words = _derive_word_timestamps_with_alignment(model, audio_path, transcript, outputs=outputs)
 
     return transcript, words
 
