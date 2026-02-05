@@ -2006,14 +2006,14 @@ class OptionsDialog(QtWidgets.QDialog):
         )
         perf_form.addRow("Local attention window (Parakeet)", local_attn_widget)
 
-        self.subsampling_conv_chunking_factor = QtWidgets.QSpinBox()
-        self.subsampling_conv_chunking_factor.setRange(1, 64)
-        self.subsampling_conv_chunking_factor.setValue(
-            int(getattr(initial_settings.whisper, "subsampling_conv_chunking_factor", 1) or 1)
+        chunking_factor = int(
+            getattr(initial_settings.whisper, "subsampling_conv_chunking_factor", 1) or 1
         )
+        self.subsampling_conv_chunking_factor = QtWidgets.QCheckBox("Use value 1")
+        self.subsampling_conv_chunking_factor.setChecked(chunking_factor == 1)
         self.subsampling_conv_chunking_factor.setToolTip(
-            "Parakeet-focused option: subsampling convolution chunking factor. "
-            "Whisper engine may ignore this setting."
+            "Parakeet-focused option: toggle the subsampling convolution chunking factor between "
+            "1 (enabled) and 0 (disabled). Whisper engine may ignore this setting."
         )
         perf_form.addRow(
             "Subsampling conv chunking factor (Parakeet)",
@@ -2200,8 +2200,8 @@ class OptionsDialog(QtWidgets.QDialog):
                     int(self.local_attn_left.value()),
                     int(self.local_attn_right.value()),
                 ],
-                "subsampling_conv_chunking_factor": int(
-                    self.subsampling_conv_chunking_factor.value()
+                "subsampling_conv_chunking_factor": (
+                    1 if self.subsampling_conv_chunking_factor.isChecked() else 0
                 ),
             },
             "gemini": {
@@ -2285,8 +2285,8 @@ class OptionsDialog(QtWidgets.QDialog):
             default_rel_pos_local_attn = [768, 768]
         self.local_attn_left.setValue(int(default_rel_pos_local_attn[0] or 768))
         self.local_attn_right.setValue(int(default_rel_pos_local_attn[1] or 768))
-        self.subsampling_conv_chunking_factor.setValue(
-            int(getattr(settings.whisper, "subsampling_conv_chunking_factor", 1) or 1)
+        self.subsampling_conv_chunking_factor.setChecked(
+            int(getattr(settings.whisper, "subsampling_conv_chunking_factor", 1) or 1) == 1
         )
         self.gemini_model_id.setText(
             str(getattr(settings.gemini, "model_id", "gemini-3-flash-preview") or "gemini-3-flash-preview")
