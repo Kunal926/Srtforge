@@ -154,18 +154,28 @@ def preload_parakeet_model(model_name: str = "nvidia/parakeet-tdt-0.6b-v3", *, p
 
 
 def _normalize_word_timestamp_entries(entries: Sequence[Any]) -> List[Dict[str, Any]]:
+    def _first_present(source: Dict[str, Any], keys: Sequence[str]) -> Any:
+        for key in keys:
+            if key in source and source[key] is not None:
+                return source[key]
+        return None
+
     normalized: List[Dict[str, Any]] = []
     for item in entries:
         if isinstance(item, dict):
-            word = item.get("word") or item.get("text") or ""
-            start = item.get("start")
-            end = item.get("end")
+            word = _first_present(item, ("word", "text", "token")) or ""
+            start = _first_present(item, ("start", "start_time", "start_offset", "begin", "t0"))
+            end = _first_present(item, ("end", "end_time", "end_offset", "finish", "t1"))
         elif isinstance(item, (list, tuple)) and len(item) >= 3:
             word, start, end = item[0], item[1], item[2]
         elif all(hasattr(item, attr) for attr in ("start", "end")):
             word = getattr(item, "word", None) or getattr(item, "text", None) or ""
             start = getattr(item, "start", None)
             end = getattr(item, "end", None)
+        elif all(hasattr(item, attr) for attr in ("start_offset", "end_offset")):
+            word = getattr(item, "word", None) or getattr(item, "text", None) or ""
+            start = getattr(item, "start_offset", None)
+            end = getattr(item, "end_offset", None)
         else:
             continue
         if start is None or end is None:
@@ -179,6 +189,15 @@ def _normalize_word_timestamp_entries(entries: Sequence[Any]) -> List[Dict[str, 
 def _extract_word_timestamps_from_hypothesis(hyp: Any) -> List[Dict[str, Any]]:
     if hyp is None:
         return []
+
+    if isinstance(hyp, dict):
+        for key in ("word_timestamps", "words", "word_ts"):
+            data = hyp.get(key)
+            if isinstance(data, dict) and "word" in data:
+                return _normalize_word_timestamp_entries(data["word"])
+            if isinstance(data, (list, tuple)):
+                return _normalize_word_timestamp_entries(data)
+
     for attr in ("word_timestamps", "words", "word_ts"):
         data = getattr(hyp, attr, None)
         if data:
@@ -186,11 +205,16 @@ def _extract_word_timestamps_from_hypothesis(hyp: Any) -> List[Dict[str, Any]]:
                 return _normalize_word_timestamp_entries(data["word"])
             if isinstance(data, (list, tuple)):
                 return _normalize_word_timestamp_entries(data)
-    timestamp_containers = [
-        getattr(hyp, "timestamps", None),
-        getattr(hyp, "timestamp", None),
-        getattr(hyp, "timestep", None),
-    ]
+    timestamp_containers = []
+    if isinstance(hyp, dict):
+        timestamp_containers.extend([hyp.get("timestamps"), hyp.get("timestamp"), hyp.get("timestep")])
+    timestamp_containers.extend(
+        [
+            getattr(hyp, "timestamps", None),
+            getattr(hyp, "timestamp", None),
+            getattr(hyp, "timestep", None),
+        ]
+    )
     for timestamps in timestamp_containers:
         if isinstance(timestamps, dict):
             for key in ("word", "words"):
@@ -381,6 +405,8 @@ def _transcribe_with_timestamps(model: Any, audio_path: str, *, language: Option
     transcript = ""
     if isinstance(hyp, str):
         transcript = hyp
+    elif isinstance(hyp, dict):
+        transcript = str(hyp.get("text") or hyp.get("transcript") or "")
     else:
         transcript = getattr(hyp, "text", "") or getattr(hyp, "transcript", "") or ""
 
