@@ -235,6 +235,12 @@ def load_parakeet_model(model_name: str, *, prefer_gpu: bool = True) -> Any:
 
     logger.info("Loading Parakeet model '%s' (device=%s)...", model_name, device)
 
+    from .asr._nemo_compat import ensure_cuda_python_available, install_megatron_microbatch_stub
+
+    install_megatron_microbatch_stub()
+    if device == "cuda":
+        ensure_cuda_python_available()
+
     from nemo.collections.asr.models import ASRModel, EncDecRNNTBPEModel  # type: ignore
 
     try:
