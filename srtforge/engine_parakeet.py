@@ -230,6 +230,40 @@ def _unwrap_first_hypothesis(outputs: Any) -> Any:
     return current
 
 
+def _iter_output_candidates(outputs: Any) -> Any:
+    stack = [outputs]
+    while stack:
+        current = stack.pop(0)
+        if isinstance(current, (list, tuple)):
+            stack[0:0] = list(current)
+            continue
+        yield current
+
+
+def _extract_transcript_from_outputs(outputs: Any) -> str:
+    for candidate in _iter_output_candidates(outputs):
+        if isinstance(candidate, str):
+            text = candidate.strip()
+            if text:
+                return text
+            continue
+        if isinstance(candidate, dict):
+            text = str(candidate.get("text") or candidate.get("transcript") or "").strip()
+        else:
+            text = str(getattr(candidate, "text", "") or getattr(candidate, "transcript", "")).strip()
+        if text:
+            return text
+    return ""
+
+
+def _extract_words_from_outputs(outputs: Any) -> List[Dict[str, Any]]:
+    for candidate in _iter_output_candidates(outputs):
+        words = _extract_word_timestamps_from_hypothesis(candidate)
+        if words:
+            return words
+    return []
+
+
 def _call_timestamp_helper(func: Any, model: Any, audio_path: str, transcript: str) -> Optional[List[Dict[str, Any]]]:
     call_patterns = [
         ((), {"model": model, "audio_file": audio_path, "transcript": transcript}),
@@ -252,7 +286,13 @@ def _call_timestamp_helper(func: Any, model: Any, audio_path: str, transcript: s
     return None
 
 
-def _derive_word_timestamps_with_alignment(model: Any, audio_path: str, transcript: str) -> List[Dict[str, Any]]:
+def _derive_word_timestamps_with_alignment(
+    model: Any,
+    audio_path: str,
+    transcript: str,
+    *,
+    outputs: Any = None,
+) -> List[Dict[str, Any]]:
     try:
         from nemo.collections.asr.parts.utils import timestamp_utils  # type: ignore
     except Exception as exc:
@@ -267,11 +307,22 @@ def _derive_word_timestamps_with_alignment(model: Any, audio_path: str, transcri
             "get_word_timestamps_from_alignment",
             "get_word_timestamps_from_hypothesis",
             "extract_word_timestamps",
+            "process_timestamp_outputs",
+            "process_aed_timestamp_outputs",
         )
     ]
 
     for func in helpers:
         if func is None:
+            continue
+        if outputs is not None and func.__name__ in {"process_timestamp_outputs", "process_aed_timestamp_outputs"}:
+            try:
+                result = func(outputs)
+            except Exception:
+                continue
+            words = _extract_words_from_outputs(result)
+            if words:
+                return words
             continue
         result = _call_timestamp_helper(func, model, audio_path, transcript)
         if result:
@@ -401,18 +452,10 @@ def _transcribe_with_timestamps(model: Any, audio_path: str, *, language: Option
             f"Detected audio keys in signature: [{attempted_keys}]."
         ) from last_type_error
 
-    hyp = _unwrap_first_hypothesis(outputs)
-    transcript = ""
-    if isinstance(hyp, str):
-        transcript = hyp
-    elif isinstance(hyp, dict):
-        transcript = str(hyp.get("text") or hyp.get("transcript") or "")
-    else:
-        transcript = getattr(hyp, "text", "") or getattr(hyp, "transcript", "") or ""
-
-    words = _extract_word_timestamps_from_hypothesis(hyp)
+    transcript = _extract_transcript_from_outputs(outputs)
+    words = _extract_words_from_outputs(outputs)
     if not words and transcript:
-        words = _derive_word_timestamps_with_alignment(model, audio_path, transcript)
+        words = _derive_word_timestamps_with_alignment(model, audio_path, transcript, outputs=outputs)
 
     return transcript, words
 

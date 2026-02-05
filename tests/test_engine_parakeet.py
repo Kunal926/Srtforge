@@ -207,3 +207,47 @@ def test_transcribe_extracts_words_from_dict_hypothesis_with_offsets() -> None:
         {"word": "hello", "start": 0.0, "end": 0.4},
         {"word": "world", "start": 0.45, "end": 0.9},
     ]
+
+
+def test_transcribe_uses_timestamp_utils_processed_outputs(monkeypatch: pytest.MonkeyPatch) -> None:
+    class RawHypothesis:
+        def __init__(self) -> None:
+            self.text = "hello world"
+            self.timestamp = {}
+
+    class ProcessedHypothesis:
+        def __init__(self) -> None:
+            self.text = "hello world"
+            self.timestamp = {
+                "word": [
+                    {"word": "hello", "start": 0.0, "end": 0.4},
+                    {"word": "world", "start": 0.5, "end": 0.9},
+                ]
+            }
+
+    class FakeTimestampUtils:
+        @staticmethod
+        def process_timestamp_outputs(outputs):
+            return [ProcessedHypothesis()]
+
+        @staticmethod
+        def process_aed_timestamp_outputs(outputs):
+            return None
+
+    class Model:
+        def transcribe(self, audio_file, return_hypotheses=True, timestamps=False):
+            return [RawHypothesis()]
+
+    import types
+    import sys
+
+    fake_mod = types.SimpleNamespace(timestamp_utils=FakeTimestampUtils)
+    sys.modules["nemo.collections.asr.parts.utils"] = fake_mod
+
+    transcript, words = _transcribe_with_timestamps(Model(), "clip.wav")
+
+    assert transcript == "hello world"
+    assert words == [
+        {"word": "hello", "start": 0.0, "end": 0.4},
+        {"word": "world", "start": 0.5, "end": 0.9},
+    ]
