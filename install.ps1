@@ -596,6 +596,14 @@ function Install-Torch($device) {
         ) + $packages
         Invoke-WithArgs -Command @($venvPip) -Args $installArgs
 
+        # NeMo decoding performance relies on CUDA graph support from cuda-python.
+        # Ensure a recent build is present to avoid falling back to slower paths.
+        Invoke-Pip -Args @(
+            'install',
+            '--upgrade',
+            'cuda-python>=12.3'
+        )
+
         $torchInfo = Get-TorchCudaInfo
         if ($torchInfo -and $torchInfo.ok) {
             if (-not $torchInfo.cuda_version) {
