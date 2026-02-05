@@ -6,7 +6,7 @@ import os
 import sys
 from dataclasses import dataclass, field, fields, is_dataclass
 from pathlib import Path
-from typing import Any, Optional, Union, get_args, get_origin
+from typing import Any, Optional, Union, get_args, get_origin, get_type_hints
 
 import yaml
 
@@ -152,6 +152,9 @@ class WhisperSettings:
     engine: str = "whisper"
     model: str = "large-v3-turbo"
     language: str = "en"
+    force_float32: bool = False
+    rel_pos_local_attn: list[int] = field(default_factory=lambda: [768, 768])
+    subsampling_conv_chunking_factor: int = 1
 
 
 @dataclass(slots=True)
@@ -178,6 +181,27 @@ def _coerce_value(value: Any, target_type: Any) -> Any:
     """Convert ``value`` into ``target_type`` when possible."""
 
     base_type = _unwrap_optional(target_type)
+    origin = get_origin(base_type)
+
+    if origin is list:
+        if value is None:
+            return []
+
+        item_type = get_args(base_type)[0] if get_args(base_type) else Any
+        if isinstance(value, str):
+            parsed = yaml.safe_load(value)
+            if isinstance(parsed, list):
+                value = parsed
+            else:
+                value = [part.strip() for part in value.split(",") if part.strip()]
+        elif isinstance(value, tuple):
+            value = list(value)
+
+        if isinstance(value, list):
+            return [_coerce_value(item, item_type) for item in value]
+
+        return [_coerce_value(value, item_type)]
+
     if base_type is Path:
         return _resolve_path(value)
     if base_type is str:
@@ -198,6 +222,7 @@ def _coerce_value(value: Any, target_type: Any) -> Any:
 
 
 def _merge_dataclass(instance: Any, data: dict[str, Any]) -> Any:
+    type_hints = get_type_hints(type(instance))
     for field_info in fields(instance):
         key = field_info.name
         if key not in data:
@@ -207,7 +232,8 @@ def _merge_dataclass(instance: Any, data: dict[str, Any]) -> Any:
         if is_dataclass(current) and isinstance(value, dict):
             _merge_dataclass(current, value)
         else:
-            coerced = _coerce_value(value, field_info.type)
+            target_type = type_hints.get(key, field_info.type)
+            coerced = _coerce_value(value, target_type)
             setattr(instance, key, coerced)
     return instance
 
