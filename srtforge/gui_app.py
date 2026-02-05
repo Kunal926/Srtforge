@@ -1955,6 +1955,71 @@ class OptionsDialog(QtWidgets.QDialog):
         self.whisper_language.setPlaceholderText("en")
         perf_form.addRow("Whisper language", self.whisper_language)
 
+        self.force_float32 = QtWidgets.QCheckBox()
+        self.force_float32.setChecked(bool(getattr(initial_settings.whisper, "force_float32", False)))
+        self.force_float32.setToolTip(
+            "Parakeet-focused option: force float32 inference for compatibility/stability. "
+            "Whisper engine may ignore this setting."
+        )
+        perf_form.addRow("Force float32 (Parakeet)", self.force_float32)
+
+        rel_pos_local_attn = getattr(initial_settings.whisper, "rel_pos_local_attn", [768, 768])
+        if not isinstance(rel_pos_local_attn, list) or len(rel_pos_local_attn) < 2:
+            rel_pos_local_attn = [768, 768]
+        try:
+            left_window_default = int(rel_pos_local_attn[0])
+        except Exception:
+            left_window_default = 768
+        try:
+            right_window_default = int(rel_pos_local_attn[1])
+        except Exception:
+            right_window_default = 768
+
+        self.local_attn_left = QtWidgets.QSpinBox()
+        self.local_attn_left.setRange(0, 8192)
+        self.local_attn_left.setValue(left_window_default)
+        self.local_attn_left.setToolTip(
+            "Parakeet-focused option: local attention left window size. "
+            "Whisper engine may ignore this setting."
+        )
+
+        self.local_attn_right = QtWidgets.QSpinBox()
+        self.local_attn_right.setRange(0, 8192)
+        self.local_attn_right.setValue(right_window_default)
+        self.local_attn_right.setToolTip(
+            "Parakeet-focused option: local attention right window size. "
+            "Whisper engine may ignore this setting."
+        )
+
+        local_attn_widget = QtWidgets.QWidget()
+        local_attn_layout = QtWidgets.QHBoxLayout(local_attn_widget)
+        local_attn_layout.setContentsMargins(0, 0, 0, 0)
+        local_attn_layout.addWidget(QtWidgets.QLabel("Left"))
+        local_attn_layout.addWidget(self.local_attn_left)
+        local_attn_layout.addSpacing(8)
+        local_attn_layout.addWidget(QtWidgets.QLabel("Right"))
+        local_attn_layout.addWidget(self.local_attn_right)
+        local_attn_layout.addStretch(1)
+        local_attn_widget.setToolTip(
+            "Parakeet-focused option: relative-position local attention window (left/right). "
+            "Whisper engine may ignore this setting."
+        )
+        perf_form.addRow("Local attention window (Parakeet)", local_attn_widget)
+
+        self.subsampling_conv_chunking_factor = QtWidgets.QSpinBox()
+        self.subsampling_conv_chunking_factor.setRange(1, 64)
+        self.subsampling_conv_chunking_factor.setValue(
+            int(getattr(initial_settings.whisper, "subsampling_conv_chunking_factor", 1) or 1)
+        )
+        self.subsampling_conv_chunking_factor.setToolTip(
+            "Parakeet-focused option: subsampling convolution chunking factor. "
+            "Whisper engine may ignore this setting."
+        )
+        perf_form.addRow(
+            "Subsampling conv chunking factor (Parakeet)",
+            self.subsampling_conv_chunking_factor,
+        )
+
         self.gemini_model_id = QtWidgets.QLineEdit(str(initial_settings.gemini.model_id))
         self.gemini_model_id.setPlaceholderText("gemini-3-flash-preview")
         perf_form.addRow("Gemini model id", self.gemini_model_id)
@@ -2130,6 +2195,14 @@ class OptionsDialog(QtWidgets.QDialog):
                 "engine": engine,
                 "model": model,
                 "language": self.whisper_language.text().strip() or "en",
+                "force_float32": self.force_float32.isChecked(),
+                "rel_pos_local_attn": [
+                    int(self.local_attn_left.value()),
+                    int(self.local_attn_right.value()),
+                ],
+                "subsampling_conv_chunking_factor": int(
+                    self.subsampling_conv_chunking_factor.value()
+                ),
             },
             "gemini": {
                 "enabled": bool(self.gemini_cb.isChecked()),
@@ -2206,6 +2279,15 @@ class OptionsDialog(QtWidgets.QDialog):
             whisper_idx = self.whisper_model.findData(WHISPER_MODEL_TURBO)
         self.whisper_model.setCurrentIndex(max(0, whisper_idx))
         self.whisper_language.setText(str(getattr(settings.whisper, "language", "en") or "en"))
+        self.force_float32.setChecked(bool(getattr(settings.whisper, "force_float32", False)))
+        default_rel_pos_local_attn = getattr(settings.whisper, "rel_pos_local_attn", [768, 768])
+        if not isinstance(default_rel_pos_local_attn, list) or len(default_rel_pos_local_attn) < 2:
+            default_rel_pos_local_attn = [768, 768]
+        self.local_attn_left.setValue(int(default_rel_pos_local_attn[0] or 768))
+        self.local_attn_right.setValue(int(default_rel_pos_local_attn[1] or 768))
+        self.subsampling_conv_chunking_factor.setValue(
+            int(getattr(settings.whisper, "subsampling_conv_chunking_factor", 1) or 1)
+        )
         self.gemini_model_id.setText(
             str(getattr(settings.gemini, "model_id", "gemini-3-flash-preview") or "gemini-3-flash-preview")
         )
