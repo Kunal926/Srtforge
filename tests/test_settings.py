@@ -39,3 +39,27 @@ whisper:
     assert settings.whisper.force_float32 is True
     assert settings.whisper.rel_pos_local_attn == [1024, 512]
     assert settings.whisper.subsampling_conv_chunking_factor == 4
+
+
+def test_load_settings_reads_explicit_whisper_parakeet_fields(tmp_path: Path) -> None:
+    config_path = tmp_path / "explicit.yaml"
+    config_path.write_text(
+        """
+whisper:
+  engine: parakeet
+  model: nvidia/parakeet-tdt-0.6b-v3
+  language: es
+  force_float32: true
+  rel_pos_local_attn: [1200, 300]
+  subsampling_conv_chunking_factor: 6
+""".strip()
+    )
+
+    settings = load_settings(config_path)
+
+    assert settings.whisper.engine == "parakeet"
+    assert settings.whisper.model == "nvidia/parakeet-tdt-0.6b-v3"
+    assert settings.whisper.language == "es"
+    assert settings.whisper.force_float32 is True
+    assert settings.whisper.rel_pos_local_attn == [1200, 300]
+    assert settings.whisper.subsampling_conv_chunking_factor == 6
