@@ -157,6 +157,39 @@ def _enable_parakeet_timestamping(model: Any) -> None:
     if getattr(model, "_parakeet_timestamping_enabled", False):
         return
 
+    def _cfg_get(obj: Any, key: str) -> Any:
+        if obj is None:
+            return None
+        if isinstance(obj, dict):
+            return obj.get(key)
+        # OmegaConf / DictConfig often supports .get()
+        getter = getattr(obj, "get", None)
+        if callable(getter):
+            try:
+                return getter(key)
+            except Exception:
+                pass
+        try:
+            return obj[key]  # type: ignore[index]
+        except Exception:
+            return getattr(obj, key, None)
+
+    def _cfg_set(obj: Any, key: str, value: Any) -> None:
+        if obj is None:
+            return
+        if isinstance(obj, dict):
+            obj[key] = value
+            return
+        try:
+            setattr(obj, key, value)
+            return
+        except Exception:
+            pass
+        try:
+            obj[key] = value  # type: ignore[index]
+        except Exception:
+            return
+
     decoding_cfg = None
     for cfg_attr in ("cfg", "config"):
         cfg = getattr(model, cfg_attr, None)
@@ -178,30 +211,17 @@ def _enable_parakeet_timestamping(model: Any) -> None:
         )
         return
 
-    def _force_cfg_bool(cfg_obj: Any, key: str, value: bool = True) -> None:
-        if cfg_obj is None:
-            return
-        if isinstance(cfg_obj, dict):
-            cfg_obj[key] = value
-            return
-        try:
-            setattr(cfg_obj, key, value)
-        except Exception:
-            return
-
+    # ✅ Force at top-level
     for key in ("preserve_alignments", "compute_timestamps"):
-        _force_cfg_bool(decoding_cfg, key, True)
+        _cfg_set(decoding_cfg, key, True)
 
-    for strategy_key in ("greedy", "beam"):
-        sub_cfg = (
-            decoding_cfg.get(strategy_key)
-            if isinstance(decoding_cfg, dict)
-            else getattr(decoding_cfg, strategy_key, None)
-        )
-        if sub_cfg is None:
+    # ✅ ALSO force inside greedy/beam (this is where NeMo often reads them)
+    for child_name in ("greedy", "beam"):
+        child = _cfg_get(decoding_cfg, child_name)
+        if child is None:
             continue
         for key in ("preserve_alignments", "compute_timestamps"):
-            _force_cfg_bool(sub_cfg, key, True)
+            _cfg_set(child, key, True)
 
     if hasattr(model, "change_decoding_strategy"):
         try:
@@ -330,21 +350,30 @@ def _extract_word_timestamps_from_hypothesis(hyp: Any) -> List[Dict[str, Any]]:
     if hyp is None:
         return []
 
-    def _get_ts_item(container: Any, key: str) -> Any:
-        if container is None:
-            return None
-        if isinstance(container, dict):
-            return container.get(key)
-        # NeMo's Hypothesis.timestamp may be a custom container that supports
-        # dict-style access (timestamp['word']) but is not a plain dict.
-        try:
-            return container[key]
-        except Exception:
-            return None
+    # Treat OmegaConf/DictConfig/etc. as mapping-like when possible.
+    def _is_mapping_like(obj: Any) -> bool:
+        return isinstance(obj, dict) or hasattr(obj, "get") or hasattr(obj, "__getitem__")
 
-    if isinstance(hyp, dict):
+    def _get(obj: Any, key: str) -> Any:
+        if obj is None:
+            return None
+        if isinstance(obj, dict):
+            return obj.get(key)
+        getter = getattr(obj, "get", None)
+        if callable(getter):
+            try:
+                return getter(key)
+            except Exception:
+                pass
+        try:
+            return obj[key]  # type: ignore[index]
+        except Exception:
+            return getattr(obj, key, None)
+
+    # 1) Direct fields that some outputs use
+    if _is_mapping_like(hyp):
         for key in ("word_timestamps", "words", "word_ts"):
-            data = hyp.get(key)
+            data = _get(hyp, key)
             if isinstance(data, dict) and "word" in data:
                 return _normalize_word_timestamp_entries(data["word"])
             if isinstance(data, (list, tuple)):
@@ -357,19 +386,16 @@ def _extract_word_timestamps_from_hypothesis(hyp: Any) -> List[Dict[str, Any]]:
                 return _normalize_word_timestamp_entries(data["word"])
             if isinstance(data, (list, tuple)):
                 return _normalize_word_timestamp_entries(data)
+
+    # 2) Timestamp containers
     timestamp_containers = []
-    if isinstance(hyp, dict):
-        timestamp_containers.extend([hyp.get("timestamps"), hyp.get("timestamp"), hyp.get("timestep")])
-    timestamp_containers.extend(
-        [
-            getattr(hyp, "timestamps", None),
-            getattr(hyp, "timestamp", None),
-            getattr(hyp, "timestep", None),
-        ]
-    )
+    if _is_mapping_like(hyp):
+        timestamp_containers.extend([_get(hyp, "timestamps"), _get(hyp, "timestamp"), _get(hyp, "timestep")])
+    timestamp_containers.extend([getattr(hyp, "timestamps", None), getattr(hyp, "timestamp", None), getattr(hyp, "timestep", None)])
+
     transcript = ""
-    if isinstance(hyp, dict):
-        transcript = str(hyp.get("text") or hyp.get("transcript") or "")
+    if _is_mapping_like(hyp):
+        transcript = str(_get(hyp, "text") or _get(hyp, "transcript") or "")
     else:
         transcript = str(getattr(hyp, "text", "") or getattr(hyp, "transcript", ""))
 
@@ -377,37 +403,36 @@ def _extract_word_timestamps_from_hypothesis(hyp: Any) -> List[Dict[str, Any]]:
         if timestamps is None:
             continue
 
-        # Prefer dict-style access (matches HF model card usage).
+        # Mapping-like (dict, DictConfig, etc.)
+        if _is_mapping_like(timestamps):
+            for key in ("word", "words"):
+                data = _get(timestamps, key)
+                if data:
+                    words = _normalize_word_timestamp_entries(data)
+                    if words:
+                        return words
+
+            char_data = _get(timestamps, "char")
+            if char_data:
+                words = _derive_words_from_char_timestamps(char_data)
+                if words:
+                    return words
+
+            seg_data = _get(timestamps, "segment")
+            if seg_data and transcript:
+                words = _derive_words_from_segment_timestamps(seg_data, transcript)
+                if words:
+                    return words
+
+        # Object-like
         for key in ("word", "words"):
-            data = _get_ts_item(timestamps, key)
-            if data is None and hasattr(timestamps, key):
-                data = getattr(timestamps, key)
-            if not data:
-                continue
+            if hasattr(timestamps, key):
+                words = _normalize_word_timestamp_entries(getattr(timestamps, key))
+                if words:
+                    return words
 
-            if isinstance(data, dict) and "word" in data:
-                words = _normalize_word_timestamp_entries(data["word"])
-            else:
-                words = _normalize_word_timestamp_entries(data)
-            if words:
-                return words
-
-        char_data = _get_ts_item(timestamps, "char")
-        if char_data is None and hasattr(timestamps, "char"):
-            char_data = getattr(timestamps, "char")
-        if char_data:
-            words = _derive_words_from_char_timestamps(char_data)
-            if words:
-                return words
-
-        segment_data = _get_ts_item(timestamps, "segment")
-        if segment_data is None and hasattr(timestamps, "segment"):
-            segment_data = getattr(timestamps, "segment")
-        if segment_data and transcript:
-            words = _derive_words_from_segment_timestamps(segment_data, transcript)
-            if words:
-                return words
     return []
+
 
 
 def _unwrap_first_hypothesis(outputs: Any) -> Any:
