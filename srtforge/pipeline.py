@@ -78,6 +78,16 @@ class PipelineResult:
     reason: Optional[str] = None
     run_id: Optional[str] = None
 
+    @property
+    def failed(self) -> bool:
+        """Compatibility alias used by worker event emission."""
+        return self.skipped
+
+    @property
+    def error(self) -> Optional[str]:
+        """Compatibility alias used by worker/automation error surfaces."""
+        return self.reason
+
 
 class Pipeline:
     """Implements the ordered processing chain required by the project specification."""
