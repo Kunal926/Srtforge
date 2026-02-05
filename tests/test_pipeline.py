@@ -61,7 +61,7 @@ def test_pipeline_executes_whisper_steps(tmp_path, monkeypatch):
 
     outputs = []
 
-    def fake_generate(preprocessed: str, *, model_name: str, language: str, prefer_gpu: bool):
+    def fake_generate(preprocessed: str, *, model_name: str, language: str, prefer_gpu: bool, word_timestamps_out: str | None = None):
         outputs.append(
             {
                 "preprocessed": preprocessed,
@@ -112,7 +112,7 @@ def test_pipeline_falls_back_when_dual_mono_requested_without_center_channel(tmp
 
     tools = DummyTools()
 
-    def fake_generate(preprocessed: str, *, model_name: str, language: str, prefer_gpu: bool):
+    def fake_generate(preprocessed: str, *, model_name: str, language: str, prefer_gpu: bool, word_timestamps_out: str | None = None):
         return [{"start": 0.0, "end": 1.0, "text": "Hello", "words": []}]
 
     def fake_write_srt(events, srt_path: str) -> None:
@@ -139,3 +139,65 @@ def test_pipeline_falls_back_when_dual_mono_requested_without_center_channel(tmp
     assert extract_call[-1] == "stereo_mix"
     assert result.output_path == output_path
     assert result.output_path.exists()
+
+
+def test_pipeline_parakeet_forwards_optimized_generation_fields(tmp_path, monkeypatch):
+    media = tmp_path / "episode.mkv"
+    media.write_bytes(b"video")
+
+    tools = DummyTools()
+    captured: dict[str, object] = {}
+
+    def fake_generate(
+        preprocessed: str,
+        *,
+        model_name: str,
+        language: str,
+        prefer_gpu: bool,
+        force_float32: bool,
+        rel_pos_local_attn: list[int],
+        subsampling_conv_chunking_factor: int,
+        word_timestamps_out: str | None = None,
+    ):
+        captured.update(
+            {
+                "preprocessed": preprocessed,
+                "model_name": model_name,
+                "language": language,
+                "prefer_gpu": prefer_gpu,
+                "force_float32": force_float32,
+                "rel_pos_local_attn": rel_pos_local_attn,
+                "subsampling_conv_chunking_factor": subsampling_conv_chunking_factor,
+                "word_timestamps_out": word_timestamps_out,
+            }
+        )
+        return [{"start": 0.0, "end": 1.0, "text": "Hello", "words": []}]
+
+    def fake_write_srt(events, srt_path: str) -> None:
+        Path(srt_path).write_text("1\n00:00:00,000 --> 00:00:01,000\nHello\n\n")
+
+    monkeypatch.setattr("srtforge.engine_parakeet.generate_optimized_events", fake_generate)
+    monkeypatch.setattr("srtforge.engine_parakeet.get_parakeet_device_config", lambda *, prefer_gpu: ("cpu", "float32"))
+    monkeypatch.setattr("srtforge.engine_whisper.write_srt", fake_write_srt)
+
+    config = PipelineConfig(
+        media_path=media,
+        tools=tools,
+        output_path=media.with_suffix(".srt"),
+        asr_engine="parakeet",
+        prefer_gpu=False,
+        separation_prefer_gpu=False,
+        parakeet_force_float32=True,
+        parakeet_rel_pos_local_attn=[1024, 256],
+        parakeet_subsampling_conv_chunking_factor=4,
+    )
+
+    result = Pipeline(config).run()
+
+    assert not result.skipped
+    assert captured["model_name"] == config.whisper_model
+    assert captured["language"] == config.whisper_language
+    assert captured["prefer_gpu"] is False
+    assert captured["force_float32"] is True
+    assert captured["rel_pos_local_attn"] == [1024, 256]
+    assert captured["subsampling_conv_chunking_factor"] == 4

@@ -289,6 +289,25 @@ def test_apply_subsampling_conv_chunking_factor_supports_encoder_hook() -> None:
     assert getattr(model, "_parakeet_subsampling_conv_chunking_factor") == 3
 
 
+def test_apply_subsampling_conv_chunking_factor_prefers_model_hook_over_encoder() -> None:
+    calls: list[tuple[str, int]] = []
+
+    class Encoder:
+        def set_subsampling_conv_chunking_factor(self, factor: int) -> None:
+            calls.append(("encoder", factor))
+
+    class Model:
+        encoder = Encoder()
+
+        def set_subsampling_conv_chunking_factor(self, factor: int) -> None:
+            calls.append(("model", factor))
+
+    model = Model()
+    _maybe_apply_subsampling_conv_chunking_factor(model, 5)
+
+    assert calls == [("model", 5)]
+
+
 def test_apply_subsampling_conv_chunking_factor_skips_without_api(caplog: pytest.LogCaptureFixture) -> None:
     class Model:
         pass
@@ -384,3 +403,93 @@ def test_apply_cuda_force_float32_marks_applied(monkeypatch: pytest.MonkeyPatch)
 
     assert getattr(model, "_parakeet_force_float32", False) is True
     assert model.calls
+
+
+def test_apply_cuda_force_float32_supported_vs_unsupported_hooks_do_not_crash(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import builtins
+
+    class FakeTorchWithHooks:
+        class cuda:
+            @staticmethod
+            def is_available() -> bool:
+                return True
+
+        class backends:
+            class cuda:
+                class matmul:
+                    allow_tf32 = True
+
+            class cudnn:
+                allow_tf32 = True
+
+        @staticmethod
+        def set_float32_matmul_precision(_value: str) -> None:
+            return
+
+        @staticmethod
+        def device(name: str) -> str:
+            return name
+
+        float32 = "float32"
+
+    class FakeTorchUnsupported:
+        class cuda:
+            @staticmethod
+            def is_available() -> bool:
+                return True
+
+        @staticmethod
+        def set_float32_matmul_precision(_value: str) -> None:
+            raise AttributeError("unsupported")
+
+        @staticmethod
+        def device(name: str) -> str:
+            return name
+
+        float32 = "float32"
+
+    real_import = builtins.__import__
+
+    def _run_with_torch(torch_mod):
+        def fake_import(name, *args, **kwargs):
+            if name == "torch":
+                return torch_mod
+            return real_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", fake_import)
+
+        class Model:
+            def float(self) -> "Model":
+                return self
+
+            def to(self, *, device=None, dtype=None):
+                return self
+
+        model = Model()
+        _maybe_apply_cuda_force_float32(model, force_float32=True)
+        return model
+
+    supported_model = _run_with_torch(FakeTorchWithHooks)
+    assert getattr(supported_model, "_parakeet_force_float32", False) is True
+
+    monkeypatch.setattr(builtins, "__import__", real_import)
+
+    class UnsupportedModel:
+        def float(self) -> "UnsupportedModel":
+            raise RuntimeError("float() unsupported")
+
+        def to(self, *, device=None, dtype=None):
+            raise RuntimeError("to() unsupported")
+
+    def fake_import_unsupported(name, *args, **kwargs):
+        if name == "torch":
+            return FakeTorchUnsupported
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import_unsupported)
+
+    model = UnsupportedModel()
+    _maybe_apply_cuda_force_float32(model, force_float32=True)
+    assert getattr(model, "_parakeet_force_float32", False) is False
