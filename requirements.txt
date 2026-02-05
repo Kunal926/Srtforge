@@ -7,14 +7,16 @@ pyyaml>=6.0.1
 requests>=2.32.3
 # GUI runtime
 PySide6>=6.7.0
-# audio-separator>=0.39.0 requires numpy>=2.0.0. Bump the lower bound to
-# ensure compatibility and prevent pip resolver conflicts.
-numpy>=2.0.0
+# NeMo ASR depends on NumPy <2.0 today. Keep NumPy below 2.x so NeMo and the
+# audio-separator dependency resolver can agree.
+numpy>=1.24.0,<2.0.0
 pyarrow>=20.0.0,<21
 matplotlib>=3.8.0
 soundfile>=0.12.1
 watchdog>=4.0.0
-audio-separator>=0.39.0
+# audio-separator 0.39+ requires NumPy >=2.0, which conflicts with NeMo's
+# current NumPy constraint. Pin to the latest compatible release.
+audio-separator>=0.38.0,<0.39.0
 cuda-python>=12.3
 faster-whisper
 ctranslate2==4.6.3
