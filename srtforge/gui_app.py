@@ -73,6 +73,7 @@ DEFAULT_BASIC_OPTIONS: dict[str, object] = {
 
 PARAKEET_MODEL_V2 = "nvidia/parakeet-tdt-0.6b-v2"
 PARAKEET_MODEL_V3 = "nvidia/parakeet-tdt-0.6b-v3"
+WHISPER_MODEL_TURBO = "large-v3-turbo"
 
 
 @dataclass(slots=True)
@@ -1882,39 +1883,21 @@ class OptionsDialog(QtWidgets.QDialog):
         perf = QtWidgets.QWidget()
         perf_form = QtWidgets.QFormLayout(perf)
 
-        self.asr_engine = QtWidgets.QComboBox()
-        self.asr_engine.addItem("Whisper (faster-whisper)", "whisper")
-        self.asr_engine.addItem("Parakeet", "parakeet")
-        engine_value = (getattr(initial_settings.whisper, "engine", "whisper") or "whisper").lower()
-        idx = self.asr_engine.findData(engine_value)
-        if idx < 0:
-            idx = self.asr_engine.findData("whisper")
-        self.asr_engine.setCurrentIndex(max(0, idx))
-        self.asr_engine.setToolTip("Choose which ASR backend is used for transcription.")
-        perf_form.addRow("ASR engine", self.asr_engine)
-
-        self.whisper_model = QtWidgets.QLineEdit(str(initial_settings.whisper.model))
-        self.whisper_model.setPlaceholderText("large-v3-turbo")
+        self.whisper_model = QtWidgets.QComboBox()
+        self.whisper_model.addItem("Whisper Large v3 Turbo", WHISPER_MODEL_TURBO)
+        self.whisper_model.addItem("Parakeet TDT 0.6B v3", PARAKEET_MODEL_V3)
+        self.whisper_model.addItem("Parakeet TDT 0.6B v2", PARAKEET_MODEL_V2)
+        whisper_model_value = str(initial_settings.whisper.model or WHISPER_MODEL_TURBO)
+        whisper_idx = self.whisper_model.findData(whisper_model_value)
+        if whisper_idx < 0:
+            whisper_idx = self.whisper_model.findData(WHISPER_MODEL_TURBO)
+        self.whisper_model.setCurrentIndex(max(0, whisper_idx))
+        self.whisper_model.setToolTip("Choose the ASR model used for transcription.")
         perf_form.addRow("ASR model", self.whisper_model)
-
-        self.parakeet_model = QtWidgets.QComboBox()
-        self.parakeet_model.addItem("Parakeet TDT 0.6B v3", PARAKEET_MODEL_V3)
-        self.parakeet_model.addItem("Parakeet TDT 0.6B v2", PARAKEET_MODEL_V2)
-        parakeet_model_value = str(initial_settings.whisper.model or PARAKEET_MODEL_V3)
-        parakeet_idx = self.parakeet_model.findData(parakeet_model_value)
-        if parakeet_idx < 0:
-            parakeet_idx = self.parakeet_model.findData(PARAKEET_MODEL_V3)
-        self.parakeet_model.setCurrentIndex(max(0, parakeet_idx))
-        self.parakeet_model.setToolTip("Choose the Parakeet checkpoint when ASR engine is set to Parakeet.")
-        perf_form.addRow("Parakeet model", self.parakeet_model)
 
         self.whisper_language = QtWidgets.QLineEdit(str(initial_settings.whisper.language))
         self.whisper_language.setPlaceholderText("en")
         perf_form.addRow("Whisper language", self.whisper_language)
-
-        self.asr_engine.currentIndexChanged.connect(self._sync_asr_model_controls)
-        self.parakeet_model.currentIndexChanged.connect(self._on_parakeet_model_changed)
-        self._sync_asr_model_controls()
 
         self.gemini_model_id = QtWidgets.QLineEdit(str(initial_settings.gemini.model_id))
         self.gemini_model_id.setPlaceholderText("gemini-3-flash-preview")
@@ -1967,8 +1950,7 @@ class OptionsDialog(QtWidgets.QDialog):
         self._combo_popup_fixers = [
             _ComboPopupFixer(self.device_combo, radius=12),
             _ComboPopupFixer(self.embed_method, radius=12),
-            _ComboPopupFixer(self.asr_engine, radius=12),
-            _ComboPopupFixer(self.parakeet_model, radius=12),
+            _ComboPopupFixer(self.whisper_model, radius=12),
             _ComboPopupFixer(self.backend, radius=12),
         ]
 
@@ -2050,23 +2032,6 @@ class OptionsDialog(QtWidgets.QDialog):
         if path:
             edit.setText(path)
 
-    def _sync_asr_model_controls(self) -> None:
-        engine = str(self.asr_engine.currentData() or "whisper").strip().lower()
-        is_parakeet = engine == "parakeet"
-        self.parakeet_model.setEnabled(is_parakeet)
-        self.whisper_model.setReadOnly(is_parakeet)
-        self.whisper_model.setPlaceholderText(
-            PARAKEET_MODEL_V3 if is_parakeet else "large-v3-turbo"
-        )
-        if is_parakeet:
-            self._on_parakeet_model_changed()
-
-    def _on_parakeet_model_changed(self) -> None:
-        if str(self.asr_engine.currentData() or "whisper").strip().lower() != "parakeet":
-            return
-        selected = str(self.parakeet_model.currentData() or PARAKEET_MODEL_V3)
-        self.whisper_model.setText(selected)
-
     def basic_values(self) -> dict:
         return {
             "prefer_gpu": self.device_combo.currentData() is True,
@@ -2087,10 +2052,8 @@ class OptionsDialog(QtWidgets.QDialog):
 
     def settings_payload(self, *, prefer_gpu: Optional[bool] = None) -> dict:
         gpu_pref = bool(prefer_gpu) if prefer_gpu is not None else True
-        engine = str(self.asr_engine.currentData() or "whisper")
-        model = self.whisper_model.text().strip() or "large-v3-turbo"
-        if engine.strip().lower() == "parakeet":
-            model = str(self.parakeet_model.currentData() or PARAKEET_MODEL_V3)
+        model = str(self.whisper_model.currentData() or WHISPER_MODEL_TURBO)
+        engine = "parakeet" if model in {PARAKEET_MODEL_V2, PARAKEET_MODEL_V3} else "whisper"
         return {
             "paths": {
                 "temp_dir": self.temp_dir.text().strip() or None,
@@ -2181,19 +2144,12 @@ class OptionsDialog(QtWidgets.QDialog):
         self.gemini_cb.setChecked(bool(default_basic.get("gemini_enabled", False)))
 
         # ---- Performance defaults (from shipped config.yaml -> `settings`) ---
-        engine_value = str(getattr(settings.whisper, "engine", "whisper") or "whisper")
-        idx = self.asr_engine.findData(engine_value)
-        if idx < 0:
-            idx = self.asr_engine.findData("whisper")
-        self.asr_engine.setCurrentIndex(max(0, idx))
-        parakeet_model_value = str(getattr(settings.whisper, "model", PARAKEET_MODEL_V3) or PARAKEET_MODEL_V3)
-        parakeet_idx = self.parakeet_model.findData(parakeet_model_value)
-        if parakeet_idx < 0:
-            parakeet_idx = self.parakeet_model.findData(PARAKEET_MODEL_V3)
-        self.parakeet_model.setCurrentIndex(max(0, parakeet_idx))
-        self.whisper_model.setText(str(getattr(settings.whisper, "model", "large-v3-turbo") or "large-v3-turbo"))
+        whisper_model_value = str(getattr(settings.whisper, "model", WHISPER_MODEL_TURBO) or WHISPER_MODEL_TURBO)
+        whisper_idx = self.whisper_model.findData(whisper_model_value)
+        if whisper_idx < 0:
+            whisper_idx = self.whisper_model.findData(WHISPER_MODEL_TURBO)
+        self.whisper_model.setCurrentIndex(max(0, whisper_idx))
         self.whisper_language.setText(str(getattr(settings.whisper, "language", "en") or "en"))
-        self._sync_asr_model_controls()
         self.gemini_model_id.setText(
             str(getattr(settings.gemini, "model_id", "gemini-3-flash-preview") or "gemini-3-flash-preview")
         )
