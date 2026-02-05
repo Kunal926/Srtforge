@@ -4,7 +4,7 @@ from typing import Any
 
 import pytest
 
-from srtforge.engine_parakeet import _transcribe_with_timestamps
+from srtforge.engine_parakeet import _maybe_apply_long_audio_settings, _transcribe_with_timestamps
 
 
 class _Hypothesis:
@@ -127,3 +127,29 @@ def test_transcribe_raises_runtime_error_with_audio_key_context_after_retries() 
     message = str(excinfo.value)
     assert "Resolved audio key: 'audio_file'" in message
     assert "Detected audio keys in signature" in message
+
+
+def test_apply_long_audio_settings_applies_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("srtforge.engine_parakeet._probe_audio_duration_seconds", lambda _path: 600.0)
+
+    calls: list[tuple[str, list[int]]] = []
+
+    class Model:
+        def change_attention_model(self, name, window):
+            calls.append((name, window))
+
+    model = Model()
+    _maybe_apply_long_audio_settings(model, "movie.wav", rel_pos_local_attn=[512, 512])
+    _maybe_apply_long_audio_settings(model, "movie.wav", rel_pos_local_attn=[512, 512])
+
+    assert calls == [("rel_pos_local_attn", [512, 512])]
+
+
+def test_apply_long_audio_settings_skips_short_audio(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("srtforge.engine_parakeet._probe_audio_duration_seconds", lambda _path: 100.0)
+
+    class Model:
+        def change_attention_model(self, *_args, **_kwargs):
+            raise AssertionError("should not be called")
+
+    _maybe_apply_long_audio_settings(Model(), "clip.wav")
