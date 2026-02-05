@@ -162,6 +162,10 @@ def _normalize_word_timestamp_entries(entries: Sequence[Any]) -> List[Dict[str, 
             end = item.get("end")
         elif isinstance(item, (list, tuple)) and len(item) >= 3:
             word, start, end = item[0], item[1], item[2]
+        elif all(hasattr(item, attr) for attr in ("start", "end")):
+            word = getattr(item, "word", None) or getattr(item, "text", None) or ""
+            start = getattr(item, "start", None)
+            end = getattr(item, "end", None)
         else:
             continue
         if start is None or end is None:
@@ -182,10 +186,24 @@ def _extract_word_timestamps_from_hypothesis(hyp: Any) -> List[Dict[str, Any]]:
                 return _normalize_word_timestamp_entries(data["word"])
             if isinstance(data, (list, tuple)):
                 return _normalize_word_timestamp_entries(data)
-    timestamps = getattr(hyp, "timestamps", None)
-    if isinstance(timestamps, dict) and "word" in timestamps:
-        return _normalize_word_timestamp_entries(timestamps["word"])
+    timestamp_containers = [
+        getattr(hyp, "timestamps", None),
+        getattr(hyp, "timestamp", None),
+        getattr(hyp, "timestep", None),
+    ]
+    for timestamps in timestamp_containers:
+        if isinstance(timestamps, dict):
+            for key in ("word", "words"):
+                if key in timestamps:
+                    return _normalize_word_timestamp_entries(timestamps[key])
     return []
+
+
+def _unwrap_first_hypothesis(outputs: Any) -> Any:
+    current = outputs
+    while isinstance(current, (list, tuple)) and current:
+        current = current[0]
+    return current
 
 
 def _call_timestamp_helper(func: Any, model: Any, audio_path: str, transcript: str) -> Optional[List[Dict[str, Any]]]:
@@ -243,9 +261,8 @@ def _derive_word_timestamps_with_alignment(model: Any, audio_path: str, transcri
             sigs.append(f"{func.__name__}{inspect.signature(func)}")
         except Exception:
             sigs.append(func.__name__)
-    raise RuntimeError(
-        "Unable to derive word timestamps from NeMo. Tried helpers: " + ", ".join(sigs)
-    )
+    helper_details = ", ".join(sigs) if sigs else "<no compatible timestamp helpers found>"
+    raise RuntimeError("Unable to derive word timestamps from NeMo. Tried helpers: " + helper_details)
 
 
 _PARAKEET_V3_LANGS = {
@@ -360,7 +377,7 @@ def _transcribe_with_timestamps(model: Any, audio_path: str, *, language: Option
             f"Detected audio keys in signature: [{attempted_keys}]."
         ) from last_type_error
 
-    hyp = outputs[0] if isinstance(outputs, (list, tuple)) and outputs else outputs
+    hyp = _unwrap_first_hypothesis(outputs)
     transcript = ""
     if isinstance(hyp, str):
         transcript = hyp
