@@ -121,8 +121,9 @@ def _build_pipeline_config(
             whisper_cfg.get("rel_pos_local_attn") or settings.whisper.rel_pos_local_attn
         ),
         parakeet_subsampling_conv_chunking_factor=int(
-            whisper_cfg.get("subsampling_conv_chunking_factor")
-            or settings.whisper.subsampling_conv_chunking_factor
+            settings.whisper.subsampling_conv_chunking_factor
+            if whisper_cfg.get("subsampling_conv_chunking_factor") is None
+            else whisper_cfg.get("subsampling_conv_chunking_factor")
         ),
         gemini_enabled=bool(gemini_cfg.get("enabled", settings.gemini.enabled)),
         gemini_model_id=str(gemini_cfg.get("model_id") or settings.gemini.model_id),
