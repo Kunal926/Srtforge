@@ -178,14 +178,30 @@ def _enable_parakeet_timestamping(model: Any) -> None:
         )
         return
 
+    def _force_cfg_bool(cfg_obj: Any, key: str, value: bool = True) -> None:
+        if cfg_obj is None:
+            return
+        if isinstance(cfg_obj, dict):
+            cfg_obj[key] = value
+            return
+        try:
+            setattr(cfg_obj, key, value)
+        except Exception:
+            return
+
     for key in ("preserve_alignments", "compute_timestamps"):
-        if isinstance(decoding_cfg, dict):
-            decoding_cfg[key] = True
-        else:
-            try:
-                setattr(decoding_cfg, key, True)
-            except Exception:
-                continue
+        _force_cfg_bool(decoding_cfg, key, True)
+
+    for strategy_key in ("greedy", "beam"):
+        sub_cfg = (
+            decoding_cfg.get(strategy_key)
+            if isinstance(decoding_cfg, dict)
+            else getattr(decoding_cfg, strategy_key, None)
+        )
+        if sub_cfg is None:
+            continue
+        for key in ("preserve_alignments", "compute_timestamps"):
+            _force_cfg_bool(sub_cfg, key, True)
 
     if hasattr(model, "change_decoding_strategy"):
         try:
@@ -314,6 +330,18 @@ def _extract_word_timestamps_from_hypothesis(hyp: Any) -> List[Dict[str, Any]]:
     if hyp is None:
         return []
 
+    def _get_ts_item(container: Any, key: str) -> Any:
+        if container is None:
+            return None
+        if isinstance(container, dict):
+            return container.get(key)
+        # NeMo's Hypothesis.timestamp may be a custom container that supports
+        # dict-style access (timestamp['word']) but is not a plain dict.
+        try:
+            return container[key]
+        except Exception:
+            return None
+
     if isinstance(hyp, dict):
         for key in ("word_timestamps", "words", "word_ts"):
             data = hyp.get(key)
@@ -346,30 +374,39 @@ def _extract_word_timestamps_from_hypothesis(hyp: Any) -> List[Dict[str, Any]]:
         transcript = str(getattr(hyp, "text", "") or getattr(hyp, "transcript", ""))
 
     for timestamps in timestamp_containers:
-        if isinstance(timestamps, dict):
-            direct_word_keys = ["word", "words"]
-            for key in direct_word_keys:
-                if key in timestamps:
-                    words = _normalize_word_timestamp_entries(timestamps[key])
-                    if words:
-                        return words
+        if timestamps is None:
+            continue
 
-            if "char" in timestamps:
-                words = _derive_words_from_char_timestamps(timestamps["char"])
-                if words:
-                    return words
+        # Prefer dict-style access (matches HF model card usage).
+        for key in ("word", "words"):
+            data = _get_ts_item(timestamps, key)
+            if data is None and hasattr(timestamps, key):
+                data = getattr(timestamps, key)
+            if not data:
+                continue
 
-            if "segment" in timestamps and transcript:
-                words = _derive_words_from_segment_timestamps(timestamps["segment"], transcript)
-                if words:
-                    return words
+            if isinstance(data, dict) and "word" in data:
+                words = _normalize_word_timestamp_entries(data["word"])
+            else:
+                words = _normalize_word_timestamp_entries(data)
+            if words:
+                return words
 
-        elif timestamps is not None:
-            for key in ("word", "words"):
-                if hasattr(timestamps, key):
-                    words = _normalize_word_timestamp_entries(getattr(timestamps, key))
-                    if words:
-                        return words
+        char_data = _get_ts_item(timestamps, "char")
+        if char_data is None and hasattr(timestamps, "char"):
+            char_data = getattr(timestamps, "char")
+        if char_data:
+            words = _derive_words_from_char_timestamps(char_data)
+            if words:
+                return words
+
+        segment_data = _get_ts_item(timestamps, "segment")
+        if segment_data is None and hasattr(timestamps, "segment"):
+            segment_data = getattr(timestamps, "segment")
+        if segment_data and transcript:
+            words = _derive_words_from_segment_timestamps(segment_data, transcript)
+            if words:
+                return words
     return []
 
 
