@@ -223,23 +223,72 @@ def _resolve_language(model_name: str, language: str) -> str:
 
 
 def _transcribe_with_timestamps(model: Any, audio_path: str, *, language: Optional[str] = None) -> Tuple[str, List[Dict[str, Any]]]:
+    try:
+        sig = inspect.signature(model.transcribe)
+    except Exception:
+        sig = None
+
+    parameters = sig.parameters if sig else {}
+    audio_key_candidates = [
+        ("paths2audio_files", True),
+        ("audio", False),
+        ("audio_files", True),
+        ("audio_filepath", False),
+        ("audio_file", False),
+    ]
+    available_audio_keys = [name for name, _expects_list in audio_key_candidates if name in parameters]
+
+    selected_audio_key: Optional[str] = None
+    selected_audio_value: Any = None
+    for key, expects_list in audio_key_candidates:
+        if key not in parameters:
+            continue
+        selected_audio_key = key
+        selected_audio_value = [audio_path] if expects_list else audio_path
+        break
+
+    if selected_audio_key is None:
+        attempted = ", ".join(name for name, _expects_list in audio_key_candidates)
+        available = ", ".join(parameters.keys()) if parameters else "<unknown>"
+        raise RuntimeError(
+            "Unable to resolve NeMo transcribe audio argument key. "
+            f"Attempted keys: [{attempted}]; signature parameters: [{available}]"
+        )
+
     transcribe_kwargs: Dict[str, Any] = {
-        "paths2audio_files": [audio_path],
+        selected_audio_key: selected_audio_value,
         "return_hypotheses": True,
     }
     if language:
-        try:
-            sig = inspect.signature(model.transcribe)
-        except Exception:
-            sig = None
         if sig and "language" in sig.parameters:
             transcribe_kwargs["language"] = language
         elif sig and "lang" in sig.parameters:
             transcribe_kwargs["lang"] = language
-    try:
-        outputs = model.transcribe(**transcribe_kwargs, timestamps=True)
-    except TypeError:
-        outputs = model.transcribe(**transcribe_kwargs)
+
+    call_variants = [
+        {**transcribe_kwargs, "timestamps": True},
+        dict(transcribe_kwargs),
+    ]
+    if "return_hypotheses" in transcribe_kwargs:
+        no_hypo = dict(transcribe_kwargs)
+        no_hypo.pop("return_hypotheses", None)
+        call_variants.append(no_hypo)
+
+    last_type_error: Optional[TypeError] = None
+    outputs: Any = None
+    for kwargs in call_variants:
+        try:
+            outputs = model.transcribe(**kwargs)
+            break
+        except TypeError as exc:
+            last_type_error = exc
+    else:
+        attempted_keys = ", ".join(available_audio_keys or [selected_audio_key])
+        raise RuntimeError(
+            "All NeMo transcribe compatibility retries failed with TypeError. "
+            f"Resolved audio key: '{selected_audio_key}'. "
+            f"Detected audio keys in signature: [{attempted_keys}]."
+        ) from last_type_error
 
     hyp = outputs[0] if isinstance(outputs, (list, tuple)) and outputs else outputs
     transcript = ""
