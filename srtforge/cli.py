@@ -116,6 +116,14 @@ def _build_pipeline_config(
         asr_engine=str(whisper_cfg.get("engine") or settings.whisper.engine),
         whisper_model=str(whisper_cfg.get("model") or settings.whisper.model),
         whisper_language=str(whisper_cfg.get("language") or settings.whisper.language),
+        parakeet_force_float32=bool(whisper_cfg.get("force_float32", settings.whisper.force_float32)),
+        parakeet_rel_pos_local_attn=list(
+            whisper_cfg.get("rel_pos_local_attn") or settings.whisper.rel_pos_local_attn
+        ),
+        parakeet_subsampling_conv_chunking_factor=int(
+            whisper_cfg.get("subsampling_conv_chunking_factor")
+            or settings.whisper.subsampling_conv_chunking_factor
+        ),
         gemini_enabled=bool(gemini_cfg.get("enabled", settings.gemini.enabled)),
         gemini_model_id=str(gemini_cfg.get("model_id") or settings.gemini.model_id),
         gemini_api_key=(

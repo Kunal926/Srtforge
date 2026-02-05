@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import shutil
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterable, Optional
@@ -60,6 +60,9 @@ class PipelineConfig:
     asr_engine: str = settings.whisper.engine
     whisper_model: str = settings.whisper.model
     whisper_language: str = settings.whisper.language
+    parakeet_force_float32: bool = settings.whisper.force_float32
+    parakeet_rel_pos_local_attn: list[int] = field(default_factory=lambda: list(settings.whisper.rel_pos_local_attn))
+    parakeet_subsampling_conv_chunking_factor: int = settings.whisper.subsampling_conv_chunking_factor
     gemini_enabled: bool = settings.gemini.enabled
     gemini_model_id: str = settings.gemini.model_id
     gemini_api_key: Optional[str] = settings.gemini.api_key
@@ -297,6 +300,11 @@ class Pipeline:
                                 model_name=self.config.whisper_model,
                                 language=self.config.whisper_language,
                                 prefer_gpu=self.config.prefer_gpu,
+                                force_float32=self.config.parakeet_force_float32,
+                                rel_pos_local_attn=self.config.parakeet_rel_pos_local_attn,
+                                subsampling_conv_chunking_factor=(
+                                    self.config.parakeet_subsampling_conv_chunking_factor
+                                ),
                                 word_timestamps_out=(
                                     str(word_timestamps_path.resolve()) if word_timestamps_path else None
                                 ),

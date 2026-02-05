@@ -858,9 +858,18 @@ def generate_optimized_events(
     max_chars: int = 84,
     max_dur_s: float = 7.0,
     word_timestamps_out: Optional[str] = None,
+    force_float32: bool = False,
     rel_pos_local_attn: Optional[Sequence[int]] = None,
+    subsampling_conv_chunking_factor: int = 1,
 ) -> List[Dict[str, Any]]:
     logger.info("Generating optimized events with Parakeet (NeMo)... model=%s language=%s", model_name, language)
+    if force_float32:
+        logger.info("Parakeet option enabled: force_float32=true")
+    if subsampling_conv_chunking_factor > 1:
+        logger.info(
+            "Parakeet option enabled: subsampling_conv_chunking_factor=%s",
+            subsampling_conv_chunking_factor,
+        )
     model = load_parakeet_model(model_name, prefer_gpu=prefer_gpu)
     _maybe_apply_long_audio_settings(model, audio_path, rel_pos_local_attn=rel_pos_local_attn)
 
