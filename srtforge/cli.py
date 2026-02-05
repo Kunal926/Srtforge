@@ -210,6 +210,18 @@ def worker(
             config = _build_pipeline_config(media_path, output_path, cfg, default_prefer_gpu=default_prefer_gpu)
             result = run_pipeline(config)
 
+            if result.failed or result.output_path is None:
+                _emit_worker_event(
+                    {
+                        "event": "job_failed",
+                        "id": job_id,
+                        "file": str(media_path),
+                        "run_id": result.run_id,
+                        "error": result.error or "pipeline did not produce output",
+                    }
+                )
+                continue
+
             _emit_worker_event({"event": "srt_written", "id": job_id, "path": str(result.output_path)})
             _emit_worker_event({"event": "job_completed", "id": job_id, "seconds": None})
         except Exception as exc:
