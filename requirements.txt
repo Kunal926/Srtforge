@@ -14,9 +14,9 @@ pyarrow>=20.0.0,<21
 matplotlib>=3.8.0
 soundfile>=0.12.1
 watchdog>=4.0.0
-# audio-separator 0.39+ requires NumPy >=2.0, which conflicts with NeMo's
-# current NumPy constraint. Pin to the latest compatible release.
-audio-separator>=0.38.0,<0.39.0
+# audio-separator 0.31+ requires NumPy >=2.0, which conflicts with NeMo's
+# current NumPy constraint. Pin to the latest compatible release on NumPy 1.x.
+audio-separator>=0.30.2,<0.31.0
 cuda-python>=12.3
 faster-whisper
 ctranslate2==4.6.3
