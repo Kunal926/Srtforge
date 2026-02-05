@@ -404,6 +404,8 @@ class TranscriptionWorker(QtCore.QThread):
         import signal as _signal
         import os as _os
         self._stop_event.set()
+        self._queue_quit_event_loop(self._awaiting_job_loop)
+        self._queue_quit_event_loop(self._awaiting_worker_ready_loop)
         qprocess = self._cli_qprocess
         if qprocess and qprocess.state() != QtCore.QProcess.ProcessState.NotRunning:
             try:
@@ -473,6 +475,19 @@ class TranscriptionWorker(QtCore.QThread):
                     )
                 else:
                     process.terminate()
+
+    def _queue_quit_event_loop(self, loop: Optional[QtCore.QEventLoop]) -> None:
+        """Safely ask a QEventLoop to quit from any thread."""
+
+        if loop is None:
+            return
+        try:
+            QtCore.QMetaObject.invokeMethod(loop, "quit", QtCore.Qt.QueuedConnection)
+        except Exception:
+            try:
+                loop.quit()
+            except Exception:
+                pass
 
     def _queue_cli_kill(self) -> None:
         """Post a kill request for the active QProcess without blocking the UI."""
@@ -606,6 +621,11 @@ class TranscriptionWorker(QtCore.QThread):
         self._log_timing("queue started")
         try:
             self._start_persistent_worker()
+        except StopRequested:
+            for media_path in self.files:
+                self.fileFailed.emit(str(media_path), "Cancelled by user")
+            self.queueFinished.emit(True)
+            return
         except Exception as exc:
             msg = f"Failed to start ASR worker: {exc}"
             self.logMessage.emit(msg)
@@ -755,6 +775,7 @@ class TranscriptionWorker(QtCore.QThread):
         process.readyReadStandardOutput.connect(self._on_worker_stdout)
         process.readyReadStandardError.connect(self._on_worker_stderr)
         process.errorOccurred.connect(self._on_worker_error)
+        process.finished.connect(self._on_worker_finished)
 
         self._cli_qprocess = process
         process.start()
@@ -771,11 +792,17 @@ class TranscriptionWorker(QtCore.QThread):
 
         def _timeout() -> None:
             if self._awaiting_worker_ready_loop is loop:
-                loop.quit()
+                self._queue_quit_event_loop(loop)
 
         QtCore.QTimer.singleShot(15000, _timeout)
+        if self._stop_event.is_set():
+            self._awaiting_worker_ready_loop = None
+            raise StopRequested
         loop.exec()
         self._awaiting_worker_ready_loop = None
+
+        if self._stop_event.is_set():
+            raise StopRequested
 
         if not self._worker_ready:
             self._shutdown_persistent_worker()
@@ -849,7 +876,34 @@ class TranscriptionWorker(QtCore.QThread):
 
     def _on_worker_error(self, error: QtCore.QProcess.ProcessError) -> None:
         message = self._cli_qprocess.errorString() if self._cli_qprocess else str(error)
-        self.logMessage.emit(f"Worker process error: {message}")
+        if self._stop_event.is_set():
+            self.logMessage.emit("Worker stopped")
+        else:
+            self.logMessage.emit(f"Worker process error: {message}")
+            if self._awaiting_job_loop is not None:
+                self._worker_job_error = f"Worker process error: {message}"
+        self._queue_quit_event_loop(self._awaiting_worker_ready_loop)
+        self._queue_quit_event_loop(self._awaiting_job_loop)
+
+    def _on_worker_finished(
+        self,
+        exit_code: int,
+        exit_status: QtCore.QProcess.ExitStatus,
+    ) -> None:
+        waiting = (self._awaiting_worker_ready_loop is not None) or (
+            self._awaiting_job_loop is not None
+        )
+        if waiting and not self._stop_event.is_set() and not self._worker_job_error:
+            status_label = (
+                "crashed"
+                if exit_status == QtCore.QProcess.ExitStatus.CrashExit
+                else "exited"
+            )
+            self._worker_job_error = (
+                f"ASR worker {status_label} (exit code {int(exit_code)})"
+            )
+        self._queue_quit_event_loop(self._awaiting_worker_ready_loop)
+        self._queue_quit_event_loop(self._awaiting_job_loop)
 
     def _process_cli_line(self, text: str) -> None:
         if not text:
@@ -869,8 +923,7 @@ class TranscriptionWorker(QtCore.QThread):
         event = payload.get("event")
         if event == "worker_ready":
             self._worker_ready = True
-            if self._awaiting_worker_ready_loop:
-                self._awaiting_worker_ready_loop.quit()
+            self._queue_quit_event_loop(self._awaiting_worker_ready_loop)
         elif event == "worker_preload_failed":
             error = payload.get("error")
             if error:
@@ -878,16 +931,14 @@ class TranscriptionWorker(QtCore.QThread):
         elif event == "job_failed":
             if str(payload.get("id") or "") == str(self._current_job_id or ""):
                 self._worker_job_error = str(payload.get("error") or "worker job failed")
-                if self._awaiting_job_loop:
-                    self._awaiting_job_loop.quit()
+                self._queue_quit_event_loop(self._awaiting_job_loop)
         elif event == "srt_written":
             candidate = Path(str(payload.get("path", ""))).expanduser()
             if candidate.exists() and candidate != self._last_srt_path:
                 self._last_srt_path = candidate
                 self.logMessage.emit(f"SRT ready: {candidate}")
             if str(payload.get("id") or "") == str(self._current_job_id or ""):
-                if self._awaiting_job_loop:
-                    self._awaiting_job_loop.quit()
+                self._queue_quit_event_loop(self._awaiting_job_loop)
 
     def _run_pipeline_via_worker(self, media: Path) -> Path:
         self._last_srt_path = None
@@ -898,6 +949,8 @@ class TranscriptionWorker(QtCore.QThread):
         qprocess = self._cli_qprocess
         if not qprocess or qprocess.state() == QtCore.QProcess.ProcessState.NotRunning:
             raise RuntimeError("ASR worker is not running")
+        if self._stop_event.is_set():
+            raise StopRequested
 
         output_path = None
         if getattr(self.options, "place_srt_next_to_media", False):
@@ -933,11 +986,14 @@ class TranscriptionWorker(QtCore.QThread):
 
         def _timeout() -> None:
             if self._awaiting_job_loop is loop:
-                loop.quit()
+                self._queue_quit_event_loop(loop)
 
         QtCore.QTimer.singleShot(60 * 60 * 1000, _timeout)
         loop.exec()
         self._awaiting_job_loop = None
+
+        if self._stop_event.is_set():
+            raise StopRequested
 
         if self._worker_job_error:
             raise RuntimeError(self._worker_job_error)
