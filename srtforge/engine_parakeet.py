@@ -13,6 +13,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
+try:  # pragma: no cover - optional dependency
+    import soundfile as sf
+except Exception:  # pragma: no cover - defer failure until used
+    sf = None  # type: ignore[assignment]
+
 from .engine_events import (
     apply_extension_then_merge,
     apply_global_start_offset,
@@ -25,6 +30,10 @@ from .engine_events import (
 logger = logging.getLogger(__name__)
 
 
+LONG_AUDIO_THRESHOLD_S = 480.0
+DEFAULT_REL_POS_LOCAL_ATTN: Tuple[int, int] = (768, 768)
+
+
 @dataclass(frozen=True)
 class ParakeetEngineConfig:
     model: str = "nvidia/parakeet-tdt-0.6b-v3"
@@ -33,6 +42,67 @@ class ParakeetEngineConfig:
 
 
 _MODEL_CACHE: Dict[Tuple[str, str], Any] = {}
+
+
+def _normalize_rel_pos_local_attn_window(value: Optional[Sequence[int]]) -> List[int]:
+    if isinstance(value, (list, tuple)) and len(value) >= 2:
+        try:
+            left = int(value[0])
+            right = int(value[1])
+        except Exception:
+            left, right = DEFAULT_REL_POS_LOCAL_ATTN
+    else:
+        left, right = DEFAULT_REL_POS_LOCAL_ATTN
+
+    if left <= 0 or right <= 0:
+        left, right = DEFAULT_REL_POS_LOCAL_ATTN
+    return [left, right]
+
+
+def _probe_audio_duration_seconds(path: Path) -> Optional[float]:
+    if sf is None:
+        return None
+
+    try:
+        info = sf.info(str(path))
+    except Exception:
+        return None
+
+    if not info.samplerate or not info.frames:
+        return None
+    return float(info.frames) / float(info.samplerate)
+
+
+def _maybe_apply_long_audio_settings(
+    model: Any,
+    audio_path: str,
+    *,
+    rel_pos_local_attn: Optional[Sequence[int]] = None,
+) -> None:
+    duration_s = _probe_audio_duration_seconds(Path(audio_path))
+    if duration_s is None or duration_s <= LONG_AUDIO_THRESHOLD_S:
+        return
+
+    desired_window = tuple(_normalize_rel_pos_local_attn_window(rel_pos_local_attn))
+    applied_window = getattr(model, "_parakeet_rel_pos_local_attn_window", None)
+    if applied_window == desired_window:
+        return
+
+    if not hasattr(model, "change_attention_model"):
+        logger.warning(
+            "Parakeet model does not support change_attention_model; skipping long-audio settings."
+        )
+        return
+
+    logger.info(
+        "Audio duration %.1fs exceeds %.1fs; applying long-audio Parakeet settings "
+        "(rel_pos_local_attn=%s).",
+        duration_s,
+        LONG_AUDIO_THRESHOLD_S,
+        list(desired_window),
+    )
+    model.change_attention_model("rel_pos_local_attn", list(desired_window))
+    setattr(model, "_parakeet_rel_pos_local_attn_window", desired_window)
 
 
 def _detect_cuda_available() -> bool:
@@ -314,9 +384,11 @@ def generate_optimized_events(
     max_chars: int = 84,
     max_dur_s: float = 7.0,
     word_timestamps_out: Optional[str] = None,
+    rel_pos_local_attn: Optional[Sequence[int]] = None,
 ) -> List[Dict[str, Any]]:
     logger.info("Generating optimized events with Parakeet (NeMo)... model=%s language=%s", model_name, language)
     model = load_parakeet_model(model_name, prefer_gpu=prefer_gpu)
+    _maybe_apply_long_audio_settings(model, audio_path, rel_pos_local_attn=rel_pos_local_attn)
 
     resolved_language = _resolve_language(model_name, language)
     transcript, words = _transcribe_with_timestamps(model, audio_path, language=resolved_language)
