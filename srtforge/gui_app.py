@@ -2006,17 +2006,16 @@ class OptionsDialog(QtWidgets.QDialog):
         )
         perf_form.addRow("Local attention window (Parakeet)", local_attn_widget)
 
-        chunking_factor = int(
-            getattr(initial_settings.whisper, "subsampling_conv_chunking_factor", 1) or 1
-        )
-        self.subsampling_conv_chunking_factor = QtWidgets.QCheckBox("Use value 1")
+        chunking_factor_value = getattr(initial_settings.whisper, "subsampling_conv_chunking_factor", 1)
+        chunking_factor = int(1 if chunking_factor_value is None else chunking_factor_value)
+        self.subsampling_conv_chunking_factor = QtWidgets.QCheckBox("Enable")
         self.subsampling_conv_chunking_factor.setChecked(chunking_factor == 1)
         self.subsampling_conv_chunking_factor.setToolTip(
             "Parakeet-focused option: toggle the subsampling convolution chunking factor between "
             "1 (enabled) and 0 (disabled). Whisper engine may ignore this setting."
         )
         perf_form.addRow(
-            "Subsampling conv chunking factor (Parakeet)",
+            "Subsampling conv chunking checkbox enable (factor =1)",
             self.subsampling_conv_chunking_factor,
         )
 
@@ -2285,8 +2284,9 @@ class OptionsDialog(QtWidgets.QDialog):
             default_rel_pos_local_attn = [768, 768]
         self.local_attn_left.setValue(int(default_rel_pos_local_attn[0] or 768))
         self.local_attn_right.setValue(int(default_rel_pos_local_attn[1] or 768))
+        default_chunking_factor = getattr(settings.whisper, "subsampling_conv_chunking_factor", 1)
         self.subsampling_conv_chunking_factor.setChecked(
-            int(getattr(settings.whisper, "subsampling_conv_chunking_factor", 1) or 1) == 1
+            int(1 if default_chunking_factor is None else default_chunking_factor) == 1
         )
         self.gemini_model_id.setText(
             str(getattr(settings.gemini, "model_id", "gemini-3-flash-preview") or "gemini-3-flash-preview")

@@ -81,3 +81,44 @@ def test_worker_emits_srt_written_and_job_completed_on_success(monkeypatch, tmp_
 
     srt_written = next(event for event in events if event.get("event") == "srt_written" and event.get("id") == "job-2")
     assert srt_written["path"] == str(srt)
+
+
+def test_build_pipeline_config_preserves_zero_chunking_factor(monkeypatch, tmp_path):
+    media = tmp_path / "episode-zero.mkv"
+    media.write_text("stub")
+
+    class _Whisper:
+        engine = "parakeet"
+        model = "nvidia/parakeet-tdt_ctc-110m"
+        language = "en"
+        force_float32 = False
+        rel_pos_local_attn = [768, 768]
+        subsampling_conv_chunking_factor = 1
+
+    class _Gemini:
+        enabled = False
+        model_id = "gemini-3-flash-preview"
+        api_key = None
+
+    class _Separation:
+        allow_untagged_english = False
+
+    class _Settings:
+        whisper = _Whisper()
+        gemini = _Gemini()
+        separation = _Separation()
+
+    monkeypatch.setattr(cli, "load_settings", lambda: _Settings())
+
+    config = cli._build_pipeline_config(
+        media,
+        None,
+        {
+            "whisper": {
+                "subsampling_conv_chunking_factor": 0,
+            }
+        },
+        default_prefer_gpu=True,
+    )
+
+    assert config.parakeet_subsampling_conv_chunking_factor == 0
