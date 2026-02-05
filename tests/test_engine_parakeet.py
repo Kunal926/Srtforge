@@ -183,3 +183,27 @@ def test_transcribe_extracts_words_from_nested_hypothesis_output() -> None:
         {"word": "hello", "start": 0.0, "end": 0.4},
         {"word": "world", "start": 0.5, "end": 0.9},
     ]
+
+
+def test_transcribe_extracts_words_from_dict_hypothesis_with_offsets() -> None:
+    class Model:
+        def transcribe(self, audio_file, return_hypotheses=True, timestamps=False):
+            return [
+                {
+                    "text": "hello world",
+                    "timestep": {
+                        "word": [
+                            {"word": "hello", "start_offset": 0.0, "end_offset": 0.4},
+                            {"word": "world", "start_offset": 0.45, "end_offset": 0.9},
+                        ]
+                    },
+                }
+            ]
+
+    transcript, words = _transcribe_with_timestamps(Model(), "clip.wav")
+
+    assert transcript == "hello world"
+    assert words == [
+        {"word": "hello", "start": 0.0, "end": 0.4},
+        {"word": "world", "start": 0.45, "end": 0.9},
+    ]
