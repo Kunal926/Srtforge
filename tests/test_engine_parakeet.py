@@ -4,7 +4,12 @@ from typing import Any
 
 import pytest
 
-from srtforge.engine_parakeet import _maybe_apply_long_audio_settings, _transcribe_with_timestamps
+from srtforge.engine_parakeet import (
+    _maybe_apply_cuda_force_float32,
+    _maybe_apply_long_audio_settings,
+    _maybe_apply_subsampling_conv_chunking_factor,
+    _transcribe_with_timestamps,
+)
 
 
 class _Hypothesis:
@@ -251,3 +256,131 @@ def test_transcribe_uses_timestamp_utils_processed_outputs(monkeypatch: pytest.M
         {"word": "hello", "start": 0.0, "end": 0.4},
         {"word": "world", "start": 0.5, "end": 0.9},
     ]
+
+
+def test_apply_subsampling_conv_chunking_factor_applies_once() -> None:
+    calls: list[int] = []
+
+    class Model:
+        def set_subsampling_conv_chunking_factor(self, factor: int) -> None:
+            calls.append(factor)
+
+    model = Model()
+    _maybe_apply_subsampling_conv_chunking_factor(model, 4)
+    _maybe_apply_subsampling_conv_chunking_factor(model, 4)
+
+    assert calls == [4]
+
+
+def test_apply_subsampling_conv_chunking_factor_supports_encoder_hook() -> None:
+    calls: list[int] = []
+
+    class Encoder:
+        def set_subsampling_conv_chunking_factor(self, factor: int) -> None:
+            calls.append(factor)
+
+    class Model:
+        encoder = Encoder()
+
+    model = Model()
+    _maybe_apply_subsampling_conv_chunking_factor(model, 3)
+
+    assert calls == [3]
+    assert getattr(model, "_parakeet_subsampling_conv_chunking_factor") == 3
+
+
+def test_apply_subsampling_conv_chunking_factor_skips_without_api(caplog: pytest.LogCaptureFixture) -> None:
+    class Model:
+        pass
+
+    _maybe_apply_subsampling_conv_chunking_factor(Model(), 4)
+
+    assert "does not expose a subsampling conv chunking API" in caplog.text
+
+
+def test_apply_cuda_force_float32_skips_when_cuda_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FakeTorch:
+        class cuda:
+            @staticmethod
+            def is_available() -> bool:
+                return False
+
+    import builtins
+
+    real_import = builtins.__import__
+
+    def fake_import(name, *args, **kwargs):
+        if name == "torch":
+            return FakeTorch
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+
+    class Model:
+        pass
+
+    model = Model()
+    _maybe_apply_cuda_force_float32(model, force_float32=True)
+
+    assert not getattr(model, "_parakeet_force_float32", False)
+
+
+def test_apply_cuda_force_float32_marks_applied(monkeypatch: pytest.MonkeyPatch) -> None:
+    import builtins
+
+    class _Matmul:
+        allow_tf32 = True
+
+    class _CudaBackends:
+        matmul = _Matmul()
+
+    class _CudnnBackends:
+        allow_tf32 = True
+
+    class _Backends:
+        cuda = _CudaBackends()
+        cudnn = _CudnnBackends()
+
+    class FakeTorch:
+        backends = _Backends()
+
+        class cuda:
+            @staticmethod
+            def is_available() -> bool:
+                return True
+
+        @staticmethod
+        def set_float32_matmul_precision(_value: str) -> None:
+            return
+
+        @staticmethod
+        def device(name: str) -> str:
+            return name
+
+        float32 = "float32"
+
+    real_import = builtins.__import__
+
+    def fake_import(name, *args, **kwargs):
+        if name == "torch":
+            return FakeTorch
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+
+    class Model:
+        calls: list[tuple[str, object]] = []
+
+        def float(self) -> "Model":
+            self.calls.append(("float", None))
+            return self
+
+        def to(self, *, device=None, dtype=None):
+            self.calls.append(("to", (device, dtype)))
+            return self
+
+    model = Model()
+    _maybe_apply_cuda_force_float32(model, force_float32=True)
+
+    assert getattr(model, "_parakeet_force_float32", False) is True
+    assert model.calls
