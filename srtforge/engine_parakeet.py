@@ -153,6 +153,54 @@ def preload_parakeet_model(model_name: str = "nvidia/parakeet-tdt-0.6b-v3", *, p
     _ = load_parakeet_model(model_name, prefer_gpu=prefer_gpu)
 
 
+def _enable_parakeet_timestamping(model: Any) -> None:
+    if getattr(model, "_parakeet_timestamping_enabled", False):
+        return
+
+    decoding_cfg = None
+    for cfg_attr in ("cfg", "config"):
+        cfg = getattr(model, cfg_attr, None)
+        if cfg is None:
+            continue
+        if hasattr(cfg, "decoding"):
+            decoding_cfg = getattr(cfg, "decoding")
+            break
+        if isinstance(cfg, dict) and cfg.get("decoding") is not None:
+            decoding_cfg = cfg.get("decoding")
+            break
+
+    if decoding_cfg is None:
+        decoding_cfg = getattr(model, "decoding_cfg", None)
+
+    if decoding_cfg is None:
+        logger.warning(
+            "Parakeet model does not expose decoding config; unable to force preserve_alignments/compute_timestamps."
+        )
+        return
+
+    for key in ("preserve_alignments", "compute_timestamps"):
+        if isinstance(decoding_cfg, dict):
+            decoding_cfg[key] = True
+        else:
+            try:
+                setattr(decoding_cfg, key, True)
+            except Exception:
+                continue
+
+    if hasattr(model, "change_decoding_strategy"):
+        try:
+            model.change_decoding_strategy(decoding_cfg=decoding_cfg)
+        except TypeError:
+            try:
+                model.change_decoding_strategy(decoding_cfg)
+            except Exception:
+                logger.debug("Failed to apply Parakeet decoding strategy update.", exc_info=True)
+        except Exception:
+            logger.debug("Failed to apply Parakeet decoding strategy update.", exc_info=True)
+
+    setattr(model, "_parakeet_timestamping_enabled", True)
+
+
 def _normalize_word_timestamp_entries(entries: Sequence[Any]) -> List[Dict[str, Any]]:
     def _first_present(source: Dict[str, Any], keys: Sequence[str]) -> Any:
         for key in keys:
@@ -493,6 +541,7 @@ def _transcribe_with_timestamps(model: Any, audio_path: str, *, language: Option
         sig = None
 
     parameters = sig.parameters if sig else {}
+    _enable_parakeet_timestamping(model)
     audio_key_candidates = [
         ("paths2audio_files", True),
         ("audio", False),
@@ -523,6 +572,8 @@ def _transcribe_with_timestamps(model: Any, audio_path: str, *, language: Option
         selected_audio_key: selected_audio_value,
         "return_hypotheses": True,
     }
+    if sig and "batch_size" in sig.parameters:
+        transcribe_kwargs["batch_size"] = 1
     if language:
         if sig and "language" in sig.parameters:
             transcribe_kwargs["language"] = language
