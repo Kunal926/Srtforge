@@ -153,3 +153,33 @@ def test_apply_long_audio_settings_skips_short_audio(monkeypatch: pytest.MonkeyP
             raise AssertionError("should not be called")
 
     _maybe_apply_long_audio_settings(Model(), "clip.wav")
+
+
+def test_transcribe_extracts_words_from_nested_hypothesis_output() -> None:
+    class WordObj:
+        def __init__(self, word: str, start: float, end: float) -> None:
+            self.word = word
+            self.start = start
+            self.end = end
+
+    class Hypothesis:
+        def __init__(self) -> None:
+            self.text = "hello world"
+            self.timestamp = {
+                "word": [
+                    WordObj("hello", 0.0, 0.4),
+                    WordObj("world", 0.5, 0.9),
+                ]
+            }
+
+    class Model:
+        def transcribe(self, audio_file, return_hypotheses=True, timestamps=False):
+            return [[Hypothesis()]]
+
+    transcript, words = _transcribe_with_timestamps(Model(), "clip.wav")
+
+    assert transcript == "hello world"
+    assert words == [
+        {"word": "hello", "start": 0.0, "end": 0.4},
+        {"word": "world", "start": 0.5, "end": 0.9},
+    ]
