@@ -105,6 +105,113 @@ def _maybe_apply_long_audio_settings(
     setattr(model, "_parakeet_rel_pos_local_attn_window", desired_window)
 
 
+def _maybe_apply_subsampling_conv_chunking_factor(
+    model: Any,
+    subsampling_conv_chunking_factor: Optional[int],
+) -> None:
+    if subsampling_conv_chunking_factor is None:
+        return
+
+    try:
+        desired_factor = int(subsampling_conv_chunking_factor)
+    except Exception:
+        logger.warning(
+            "Invalid subsampling conv chunking factor %r; expected integer. Skipping.",
+            subsampling_conv_chunking_factor,
+        )
+        return
+
+    if desired_factor <= 1:
+        return
+
+    if getattr(model, "_parakeet_subsampling_conv_chunking_factor", None) == desired_factor:
+        return
+
+    apply_candidates = [
+        getattr(model, "set_subsampling_conv_chunking_factor", None),
+        getattr(getattr(model, "encoder", None), "set_subsampling_conv_chunking_factor", None),
+    ]
+    for apply_fn in apply_candidates:
+        if not callable(apply_fn):
+            continue
+        try:
+            apply_fn(desired_factor)
+            setattr(model, "_parakeet_subsampling_conv_chunking_factor", desired_factor)
+            logger.info(
+                "Applied Parakeet subsampling conv chunking factor: %s",
+                desired_factor,
+            )
+            return
+        except Exception:
+            logger.warning(
+                "Parakeet model exposed subsampling conv chunking hook but applying factor=%s failed.",
+                desired_factor,
+                exc_info=True,
+            )
+            return
+
+    logger.warning(
+        "Parakeet model does not expose a subsampling conv chunking API; requested factor=%s was skipped.",
+        desired_factor,
+    )
+
+
+def _maybe_apply_cuda_force_float32(model: Any, *, force_float32: bool) -> None:
+    if not force_float32:
+        return
+
+    if getattr(model, "_parakeet_force_float32", False):
+        return
+
+    try:
+        import torch  # heavy; only inside worker process paths
+    except Exception:
+        logger.warning("Unable to import torch while applying force_float32; continuing without fp32 override.")
+        return
+
+    if not torch.cuda.is_available():
+        logger.info("force_float32 requested but CUDA is not available; skipping fp32 override.")
+        return
+
+    applied_any_setting = False
+
+    try:
+        torch.set_float32_matmul_precision("highest")
+        applied_any_setting = True
+    except Exception:
+        logger.debug("torch.set_float32_matmul_precision('highest') is unavailable.", exc_info=True)
+
+    try:
+        if hasattr(torch.backends, "cuda") and hasattr(torch.backends.cuda, "matmul"):
+            torch.backends.cuda.matmul.allow_tf32 = False
+            applied_any_setting = True
+    except Exception:
+        logger.debug("Failed to set torch.backends.cuda.matmul.allow_tf32=False.", exc_info=True)
+
+    try:
+        if hasattr(torch.backends, "cudnn"):
+            torch.backends.cudnn.allow_tf32 = False
+            applied_any_setting = True
+    except Exception:
+        logger.debug("Failed to set torch.backends.cudnn.allow_tf32=False.", exc_info=True)
+
+    try:
+        model.float()
+        model.to(device=torch.device("cuda"), dtype=torch.float32)
+        applied_any_setting = True
+    except Exception:
+        logger.warning(
+            "force_float32 requested, but moving Parakeet model to float32 on CUDA failed; continuing with defaults.",
+            exc_info=True,
+        )
+
+    if applied_any_setting:
+        logger.info("Applied Parakeet CUDA float32 preference settings.")
+        setattr(model, "_parakeet_force_float32", True)
+    else:
+        logger.warning("force_float32 requested, but no supported CUDA fp32 hooks were available.")
+
+
 def _detect_cuda_available() -> bool:
     try:
         import torch  # heavy; only inside worker process paths
@@ -860,18 +967,20 @@ def generate_optimized_events(
     word_timestamps_out: Optional[str] = None,
     force_float32: bool = False,
     rel_pos_local_attn: Optional[Sequence[int]] = None,
-    subsampling_conv_chunking_factor: int = 1,
+    subsampling_conv_chunking_factor: Optional[int] = None,
 ) -> List[Dict[str, Any]]:
     logger.info("Generating optimized events with Parakeet (NeMo)... model=%s language=%s", model_name, language)
     if force_float32:
         logger.info("Parakeet option enabled: force_float32=true")
-    if subsampling_conv_chunking_factor > 1:
+    if subsampling_conv_chunking_factor is not None and subsampling_conv_chunking_factor > 1:
         logger.info(
             "Parakeet option enabled: subsampling_conv_chunking_factor=%s",
             subsampling_conv_chunking_factor,
         )
     model = load_parakeet_model(model_name, prefer_gpu=prefer_gpu)
     _maybe_apply_long_audio_settings(model, audio_path, rel_pos_local_attn=rel_pos_local_attn)
+    _maybe_apply_subsampling_conv_chunking_factor(model, subsampling_conv_chunking_factor)
+    _maybe_apply_cuda_force_float32(model, force_float32=force_float32)
 
     resolved_language = _resolve_language(model_name, language)
     transcript, words = _transcribe_with_timestamps(model, audio_path, language=resolved_language)
