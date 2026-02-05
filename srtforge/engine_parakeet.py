@@ -154,6 +154,14 @@ def preload_parakeet_model(model_name: str = "nvidia/parakeet-tdt-0.6b-v3", *, p
 
 
 def _enable_parakeet_timestamping(model: Any) -> None:
+    """Force NeMo/Parakeet to emit word/segment/char timestamps.
+
+    NeMo models commonly store decoding configuration in OmegaConf's DictConfig.
+    DictConfig supports both attribute-style and mapping-style access, but some
+    objects may be read-only depending on how they were constructed. To be
+    defensive across NeMo/NVIDIA releases, we try multiple set/get patterns.
+    """
+
     if getattr(model, "_parakeet_timestamping_enabled", False):
         return
 
@@ -162,7 +170,6 @@ def _enable_parakeet_timestamping(model: Any) -> None:
             return None
         if isinstance(obj, dict):
             return obj.get(key)
-        # OmegaConf / DictConfig often supports .get()
         getter = getattr(obj, "get", None)
         if callable(getter):
             try:
@@ -180,13 +187,14 @@ def _enable_parakeet_timestamping(model: Any) -> None:
         if isinstance(obj, dict):
             obj[key] = value
             return
+        # OmegaConf DictConfig reliably supports item assignment.
         try:
-            setattr(obj, key, value)
+            obj[key] = value  # type: ignore[index]
             return
         except Exception:
             pass
         try:
-            obj[key] = value  # type: ignore[index]
+            setattr(obj, key, value)
         except Exception:
             return
 
@@ -195,11 +203,13 @@ def _enable_parakeet_timestamping(model: Any) -> None:
         cfg = getattr(model, cfg_attr, None)
         if cfg is None:
             continue
+        # Prefer mapping-style access when available.
+        maybe = _cfg_get(cfg, "decoding")
+        if maybe is not None:
+            decoding_cfg = maybe
+            break
         if hasattr(cfg, "decoding"):
             decoding_cfg = getattr(cfg, "decoding")
-            break
-        if isinstance(cfg, dict) and cfg.get("decoding") is not None:
-            decoding_cfg = cfg.get("decoding")
             break
 
     if decoding_cfg is None:
@@ -211,18 +221,21 @@ def _enable_parakeet_timestamping(model: Any) -> None:
         )
         return
 
-    # ✅ Force at top-level
+    # Force at top-level.
     for key in ("preserve_alignments", "compute_timestamps"):
         _cfg_set(decoding_cfg, key, True)
 
-    # ✅ ALSO force inside greedy/beam (this is where NeMo often reads them)
-    for child_name in ("greedy", "beam"):
-        child = _cfg_get(decoding_cfg, child_name)
-        if child is None:
+    # NeMo often reads these flags from the active decoding strategy.
+    for strategy_key in ("greedy", "beam"):
+        sub_cfg = _cfg_get(decoding_cfg, strategy_key)
+        if sub_cfg is None:
+            sub_cfg = getattr(decoding_cfg, strategy_key, None)
+        if sub_cfg is None:
             continue
         for key in ("preserve_alignments", "compute_timestamps"):
-            _cfg_set(child, key, True)
+            _cfg_set(sub_cfg, key, True)
 
+    # Apply the updated config to the model decoder (best-effort).
     if hasattr(model, "change_decoding_strategy"):
         try:
             model.change_decoding_strategy(decoding_cfg=decoding_cfg)
@@ -347,12 +360,27 @@ def _derive_words_from_segment_timestamps(entries: Sequence[Any], transcript: st
 
 
 def _extract_word_timestamps_from_hypothesis(hyp: Any) -> List[Dict[str, Any]]:
+    """Extract normalized word timestamps from a NeMo Hypothesis-like object.
+
+    NeMo has changed timestamp container shapes across releases. We therefore
+    support:
+      - direct fields (word_timestamps / word_ts / words)
+      - nested containers (timestamps / timestamp / timestep)
+      - helper outputs that return {word:[...], segment:[...], char:[...]} directly
+    """
+
     if hyp is None:
         return []
 
-    # Treat OmegaConf/DictConfig/etc. as mapping-like when possible.
     def _is_mapping_like(obj: Any) -> bool:
-        return isinstance(obj, dict) or hasattr(obj, "get") or hasattr(obj, "__getitem__")
+        if obj is None:
+            return False
+        if isinstance(obj, dict):
+            return True
+        # Avoid classifying sequences as mappings.
+        if isinstance(obj, (list, tuple, str, bytes)):
+            return False
+        return hasattr(obj, "get") or hasattr(obj, "__getitem__")
 
     def _get(obj: Any, key: str) -> Any:
         if obj is None:
@@ -370,28 +398,15 @@ def _extract_word_timestamps_from_hypothesis(hyp: Any) -> List[Dict[str, Any]]:
         except Exception:
             return getattr(obj, key, None)
 
-    # 1) Direct fields that some outputs use
-    if _is_mapping_like(hyp):
-        for key in ("word_timestamps", "words", "word_ts"):
-            data = _get(hyp, key)
-            if isinstance(data, dict) and "word" in data:
-                return _normalize_word_timestamp_entries(data["word"])
-            if isinstance(data, (list, tuple)):
-                return _normalize_word_timestamp_entries(data)
-
-    for attr in ("word_timestamps", "words", "word_ts"):
-        data = getattr(hyp, attr, None)
-        if data:
-            if isinstance(data, dict) and "word" in data:
-                return _normalize_word_timestamp_entries(data["word"])
-            if isinstance(data, (list, tuple)):
-                return _normalize_word_timestamp_entries(data)
-
-    # 2) Timestamp containers
-    timestamp_containers = []
-    if _is_mapping_like(hyp):
-        timestamp_containers.extend([_get(hyp, "timestamps"), _get(hyp, "timestamp"), _get(hyp, "timestep")])
-    timestamp_containers.extend([getattr(hyp, "timestamps", None), getattr(hyp, "timestamp", None), getattr(hyp, "timestep", None)])
+    def _norm(entries: Any) -> List[Dict[str, Any]]:
+        if entries is None:
+            return []
+        if isinstance(entries, dict):
+            return []
+        try:
+            return _normalize_word_timestamp_entries(entries)
+        except Exception:
+            return []
 
     transcript = ""
     if _is_mapping_like(hyp):
@@ -399,16 +414,74 @@ def _extract_word_timestamps_from_hypothesis(hyp: Any) -> List[Dict[str, Any]]:
     else:
         transcript = str(getattr(hyp, "text", "") or getattr(hyp, "transcript", ""))
 
+    # 0) Some helpers return a dict like {"word": [...], "segment": [...], "char": [...]}.
+    if _is_mapping_like(hyp):
+        for key in ("word", "words"):
+            data = _get(hyp, key)
+            if isinstance(data, dict) and "word" in data:
+                words = _norm(_get(data, "word") or data.get("word"))
+                if words:
+                    return words
+            else:
+                words = _norm(data)
+                if words:
+                    return words
+
+        char_data = _get(hyp, "char")
+        if char_data:
+            words = _derive_words_from_char_timestamps(char_data)
+            if words:
+                return words
+
+        seg_data = _get(hyp, "segment") or _get(hyp, "segments")
+        if seg_data and transcript:
+            words = _derive_words_from_segment_timestamps(seg_data, transcript)
+            if words:
+                return words
+
+    # 1) Direct fields that some outputs use.
+    if _is_mapping_like(hyp):
+        for key in ("word_timestamps", "words", "word_ts"):
+            data = _get(hyp, key)
+            if isinstance(data, dict) and "word" in data:
+                words = _norm(_get(data, "word") or data.get("word"))
+                if words:
+                    return words
+            else:
+                words = _norm(data)
+                if words:
+                    return words
+
+    for attr in ("word_timestamps", "words", "word_ts"):
+        data = getattr(hyp, attr, None)
+        if not data:
+            continue
+        if isinstance(data, dict) and "word" in data:
+            words = _norm(data.get("word"))
+        else:
+            words = _norm(data)
+        if words:
+            return words
+
+    # 2) Timestamp containers: timestamps / timestamp / timestep.
+    timestamp_containers: List[Any] = []
+    if _is_mapping_like(hyp):
+        timestamp_containers.extend([_get(hyp, "timestamps"), _get(hyp, "timestamp"), _get(hyp, "timestep")])
+    timestamp_containers.extend([getattr(hyp, "timestamps", None), getattr(hyp, "timestamp", None), getattr(hyp, "timestep", None)])
+
     for timestamps in timestamp_containers:
         if timestamps is None:
             continue
 
-        # Mapping-like (dict, DictConfig, etc.)
         if _is_mapping_like(timestamps):
             for key in ("word", "words"):
                 data = _get(timestamps, key)
-                if data:
-                    words = _normalize_word_timestamp_entries(data)
+                if isinstance(data, dict) and "word" in data:
+                    words = _norm(_get(data, "word") or data.get("word"))
+                    if words:
+                        return words
+                else:
+                    words = _norm(data)
                     if words:
                         return words
 
@@ -424,15 +497,21 @@ def _extract_word_timestamps_from_hypothesis(hyp: Any) -> List[Dict[str, Any]]:
                 if words:
                     return words
 
-        # Object-like
         for key in ("word", "words"):
             if hasattr(timestamps, key):
-                words = _normalize_word_timestamp_entries(getattr(timestamps, key))
+                words = _norm(getattr(timestamps, key))
                 if words:
                     return words
+        if hasattr(timestamps, "char"):
+            words = _derive_words_from_char_timestamps(getattr(timestamps, "char"))
+            if words:
+                return words
+        if hasattr(timestamps, "segment") and transcript:
+            words = _derive_words_from_segment_timestamps(getattr(timestamps, "segment"), transcript)
+            if words:
+                return words
 
     return []
-
 
 
 def _unwrap_first_hypothesis(outputs: Any) -> Any:
@@ -505,6 +584,14 @@ def _derive_word_timestamps_with_alignment(
     *,
     outputs: Any = None,
 ) -> List[Dict[str, Any]]:
+    """Best-effort timestamp derivation via NeMo timestamp_utils.
+
+    Different NeMo versions expose different helpers. Some helpers return a list
+    of Hypothesis objects (with .timestamp/.timestep populated), while others
+    return dicts like {"word": [...], "segment": [...], ...}. This function
+    normalizes all of the above into our internal [{"word","start","end"}] list.
+    """
+
     try:
         from nemo.collections.asr.parts.utils import timestamp_utils  # type: ignore
     except Exception as exc:
@@ -527,29 +614,108 @@ def _derive_word_timestamps_with_alignment(
     for func in helpers:
         if func is None:
             continue
-        if outputs is not None and func.__name__ in {"process_timestamp_outputs", "process_aed_timestamp_outputs"}:
+
+        func_name = getattr(func, "__name__", "")
+
+        # Some helpers accept the raw transcribe outputs directly.
+        if outputs is not None and func_name in {"process_timestamp_outputs", "process_aed_timestamp_outputs"}:
             try:
                 result = func(outputs)
             except Exception:
                 continue
+            if not result:
+                continue
+
+            # Common: helper returns a list of processed Hypothesis objects.
             words = _extract_words_from_outputs(result)
             if words:
                 return words
+
+            # Some versions return a dict like {"word": [...], "segment": [...], ...}.
+            if isinstance(result, dict):
+                for key in ("word", "words"):
+                    data = result.get(key)
+                    if isinstance(data, dict) and "word" in data:
+                        words = _normalize_word_timestamp_entries(data.get("word") or [])
+                        if words:
+                            return words
+                    else:
+                        try:
+                            words = _normalize_word_timestamp_entries(data)
+                        except Exception:
+                            words = []
+                        if words:
+                            return words
+
+                char_data = result.get("char")
+                if char_data:
+                    words = _derive_words_from_char_timestamps(char_data)
+                    if words:
+                        return words
+
+                seg_data = result.get("segment") or result.get("segments")
+                if seg_data and transcript:
+                    words = _derive_words_from_segment_timestamps(seg_data, transcript)
+                    if words:
+                        return words
+
+            # Some versions return the list of word entries directly (or other iterables).
+            try:
+                words = _normalize_word_timestamp_entries(result)
+            except Exception:
+                words = []
+            if words:
+                return words
+
             continue
+
+        # Other helpers tend to accept (model, audio_file, transcript) in some shape.
         result = _call_timestamp_helper(func, model, audio_path, transcript)
         if result:
             return result
 
-    sigs = []
+    sigs: List[str] = []
     for func in helpers:
         if func is None:
             continue
         try:
             sigs.append(f"{func.__name__}{inspect.signature(func)}")
         except Exception:
-            sigs.append(func.__name__)
+            sigs.append(getattr(func, "__name__", str(func)))
     helper_details = ", ".join(sigs) if sigs else "<no compatible timestamp helpers found>"
     raise RuntimeError("Unable to derive word timestamps from NeMo. Tried helpers: " + helper_details)
+
+def _fallback_word_timestamps_uniform(audio_path: str, transcript: str) -> List[Dict[str, Any]]:
+    """Last-resort word timestamps.
+
+    If NeMo fails to provide/derive timestamps, we generate a monotonic timeline
+    by distributing words uniformly across the clip duration. This is less
+    accurate than true alignments, but avoids hard pipeline failure.
+    """
+
+    tokens = [w for w in (transcript or "").strip().split() if w]
+    if not tokens:
+        return []
+
+    duration = _probe_audio_duration_seconds(Path(audio_path))
+    if duration is None or duration <= 0:
+        # Conservative fallback: ~2.5 words/sec (150 wpm).
+        duration = max(1.0, len(tokens) / 2.5)
+
+    start = 0.0
+    end = float(duration)
+    if end <= start:
+        end = start + 0.1
+
+    step = (end - start) / max(1, len(tokens))
+    out: List[Dict[str, Any]] = []
+    t0 = start
+    for tok in tokens:
+        t1 = t0 + step
+        out.append({"word": tok, "start": float(t0), "end": float(t1)})
+        t0 = t1
+    return out
+
 
 
 _PARAKEET_V3_LANGS = {
@@ -670,7 +836,14 @@ def _transcribe_with_timestamps(model: Any, audio_path: str, *, language: Option
     transcript = _extract_transcript_from_outputs(outputs)
     words = _extract_words_from_outputs(outputs)
     if not words and transcript:
-        words = _derive_word_timestamps_with_alignment(model, audio_path, transcript, outputs=outputs)
+        try:
+            words = _derive_word_timestamps_with_alignment(model, audio_path, transcript, outputs=outputs)
+        except Exception as exc:
+            logger.warning(
+                "Parakeet was unable to provide/derive word timestamps (%s). Falling back to uniform timestamps.",
+                exc,
+            )
+            words = _fallback_word_timestamps_uniform(audio_path, transcript)
 
     return transcript, words
 
