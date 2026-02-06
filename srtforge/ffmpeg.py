@@ -16,7 +16,7 @@ from .logging import get_console
 
 
 def _as_ffmpeg_path(path: Path) -> str:
-    """
+    r"""
     Return a path string safe for ffmpeg/ffprobe on Windows.
 
     For long absolute paths, use the extended-length prefix (\\?\ or \\?\UNC\)
