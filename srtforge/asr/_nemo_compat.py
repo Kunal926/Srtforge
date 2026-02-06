@@ -227,15 +227,24 @@ def ensure_cuda_python_available(min_version: str = "12.3.0") -> None:
         ) from exc
 
     try:
-        importlib.import_module("cuda.cudart")
-    except ModuleNotFoundError as exc:  # pragma: no cover - exercised in tests
-        raise RuntimeError(
-            "cuda-python is installed but its CUDA runtime bindings are missing. "
-            "Install the NVIDIA CUDA Toolkit 12.3 or newer so that cuda.cudart is available."
-        ) from exc
+        importlib.import_module("cuda.bindings.runtime")
+    except ModuleNotFoundError:
+        try:
+            importlib.import_module("cuda.cudart")
+        except ModuleNotFoundError as exc:  # pragma: no cover - exercised in tests
+            raise RuntimeError(
+                "cuda-python is installed but its CUDA runtime bindings are missing. "
+                "Install the NVIDIA CUDA Toolkit 12.3 or newer so that "
+                "cuda.bindings.runtime or cuda.cudart is available."
+            ) from exc
+        except Exception as exc:  # pragma: no cover - defensive: unexpected failure
+            raise RuntimeError(
+                "cuda-python failed to load the CUDA runtime bindings (cuda.cudart). "
+                "Ensure the NVIDIA CUDA Toolkit is installed and visible on your system PATH."
+            ) from exc
     except Exception as exc:  # pragma: no cover - defensive: unexpected failure
         raise RuntimeError(
-            "cuda-python failed to load the CUDA runtime bindings (cuda.cudart). "
+            "cuda-python failed to load the CUDA runtime bindings (cuda.bindings.runtime). "
             "Ensure the NVIDIA CUDA Toolkit is installed and visible on your system PATH."
         ) from exc
 

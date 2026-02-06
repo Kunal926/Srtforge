@@ -69,15 +69,15 @@ def test_ensure_cuda_python_available_happy_path(monkeypatch):
     monkeypatch.setitem(sys.modules, "cuda", dummy_module)
     original_import = importlib.import_module
 
-    cudart_module = SimpleNamespace(__name__="cuda.cudart")
+    runtime_module = SimpleNamespace(__name__="cuda.bindings.runtime")
     import_calls: list[str] = []
 
     def fake_import(name, package=None):
         import_calls.append(name)
         if name == "cuda":
             return dummy_module
-        if name == "cuda.cudart":
-            return cudart_module
+        if name == "cuda.bindings.runtime":
+            return runtime_module
         return original_import(name, package=package)
 
     monkeypatch.setattr(importlib, "import_module", fake_import)
@@ -91,7 +91,7 @@ def test_ensure_cuda_python_available_happy_path(monkeypatch):
     monkeypatch.setattr(_nemo_compat.metadata, "version", fake_version, raising=False)
 
     _nemo_compat.ensure_cuda_python_available()
-    assert "cuda.cudart" in import_calls
+    assert "cuda.bindings.runtime" in import_calls
 
 
 def test_ensure_cuda_python_available_missing_module(monkeypatch):
@@ -117,6 +117,8 @@ def test_ensure_cuda_python_available_missing_cudart(monkeypatch):
     def fake_import(name, package=None):
         if name == "cuda":
             return dummy_module
+        if name == "cuda.bindings.runtime":
+            raise ModuleNotFoundError("cuda.bindings.runtime not found")
         if name == "cuda.cudart":
             raise ModuleNotFoundError("cuda.cudart not found")
         return original_import(name, package=package)
@@ -126,4 +128,4 @@ def test_ensure_cuda_python_available_missing_cudart(monkeypatch):
     with pytest.raises(RuntimeError) as excinfo:
         _nemo_compat.ensure_cuda_python_available()
 
-    assert "cuda.cudart" in str(excinfo.value)
+    assert "cuda.bindings.runtime" in str(excinfo.value)
