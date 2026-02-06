@@ -703,10 +703,10 @@ $global:ffmpegDownloadUrls = @(
     # GitHub-hosted nightly build maintained by BtbN. Stable URL that always
     # serves the most recent GPL-configured Win64 build with ffmpeg/ffprobe
     # binaries in the ./bin directory.
-    'https://github.com/BtbN/FFmpeg-Builds/releases/latest/download/ffmpeg-master-latest-win64-gpl.zip',
+    'https://github.com/BtbN/FFmpeg-Builds/releases/latest/download/ffmpeg-master-latest-win64-gpl-shared.zip',
     # Legacy mirror (gyan.dev). This site occasionally responds with 404s, so
     # keep it as a fallback instead of the primary source.
-    'https://www.gyan.dev/ffmpeg/builds/packages/ffmpeg-6.1.1-essentials_build.zip'
+    'https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip'
 )
 
 function Ensure-Directory {
