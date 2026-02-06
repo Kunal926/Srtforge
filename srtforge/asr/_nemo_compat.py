@@ -203,7 +203,7 @@ def install_megatron_microbatch_stub() -> None:
     _install_stub_module()
 
 
-def ensure_cuda_python_available(min_version: str = "12.3.0") -> None:
+def ensure_cuda_python_available(min_version: str = "12.3.0", max_version: str = "13.0.0") -> None:
     """Validate that the ``cuda-python`` bindings are importable.
 
     Parameters
@@ -211,14 +211,17 @@ def ensure_cuda_python_available(min_version: str = "12.3.0") -> None:
     min_version:
         Minimum acceptable version string.  Defaults to ``"12.3.0"`` which is
         the level required by NeMo for CUDA graph conditional nodes.
+    max_version:
+        First unsupported version string. Defaults to ``"13.0.0"`` to keep
+        ``cuda-python`` below the CUDA 13 release line.
     """
 
     try:
         importlib.import_module("cuda")
     except ModuleNotFoundError as exc:  # pragma: no cover - exercised in tests
         raise RuntimeError(
-            "cuda-python>=12.3 is required for GPU inference. Install it with "
-            "'pip install cuda-python>=12.3' before running srtforge."
+            "cuda-python>=12.3,<13 is required for GPU inference. Install it with "
+            "'pip install \"cuda-python>=12.3,<13\"' before running srtforge."
         ) from exc
     except Exception as exc:  # pragma: no cover - defensive: unexpected failure
         raise RuntimeError(
@@ -257,10 +260,16 @@ def ensure_cuda_python_available(min_version: str = "12.3.0") -> None:
         return
 
     required = Version(min_version)
+    maximum = Version(max_version)
     if installed_version < required:
         raise RuntimeError(
-            f"cuda-python>={min_version} is required, found version {installed_version}. "
-            "Upgrade with 'pip install --upgrade cuda-python'."
+            f"cuda-python>={min_version},<{max_version} is required, found version {installed_version}. "
+            "Upgrade with 'pip install --upgrade \"cuda-python<13\"'."
+        )
+    if installed_version >= maximum:
+        raise RuntimeError(
+            f"cuda-python>={min_version},<{max_version} is required, found version {installed_version}. "
+            "Install a CUDA 12.x compatible build with 'pip install --upgrade \"cuda-python<13\"'."
         )
 
 
