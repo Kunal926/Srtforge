@@ -15,6 +15,41 @@ from typing import Iterable, List, Mapping, Optional, Sequence
 from .logging import get_console
 
 
+def _as_ffmpeg_path(path: Path) -> str:
+    """
+    Return a path string safe for ffmpeg/ffprobe on Windows.
+
+    For long absolute paths, use the extended-length prefix (\\?\ or \\?\UNC\)
+    to bypass MAX_PATH issues.
+    """
+    p = str(path)
+
+    if os.name != "nt":
+        return p
+
+    # Make sure it's absolute
+    try:
+        p = str(path.resolve())
+    except Exception:
+        p = os.path.abspath(p)
+
+    # Already extended-length
+    if p.startswith("\\\\?\\"):
+        return p
+
+    # Only rewrite when it's actually long (avoid surprising behavior on short paths)
+    # 240 is a conservative threshold to stay clear of 260 once ffmpeg adds its own parsing.
+    if len(p) < 240:
+        return p
+
+    # UNC path -> \\?\UNC\server\share\...
+    if p.startswith("\\\\"):
+        return "\\\\?\\UNC\\" + p.lstrip("\\")
+
+    # Drive path -> \\?\D:\...
+    return "\\\\?\\" + p
+
+
 @dataclass(slots=True)
 class AudioStream:
     """Representation of an audio stream reported by ``ffprobe``."""
@@ -160,7 +195,7 @@ class FFmpegTooling:
             "stream=index,codec_name,channels,sample_rate,channel_layout,ch_layout:stream_tags=language,LANGUAGE",
             "-of",
             "json",
-            str(media),
+            _as_ffmpeg_path(media),
         ]
         result = subprocess.run(command, capture_output=True, text=True, check=False)
         if result.returncode != 0:
@@ -200,7 +235,7 @@ class FFmpegTooling:
             self.ffmpeg_bin,
             "-y",
             "-i",
-            str(media),
+            _as_ffmpeg_path(media),
             "-map",
             f"0:{stream_index}",
             "-af",
@@ -211,7 +246,7 @@ class FFmpegTooling:
             str(channels),
             "-ar",
             str(sample_rate),
-            str(output),
+            _as_ffmpeg_path(output),
         ]
         self._run(command)
         return output
@@ -234,7 +269,7 @@ class FFmpegTooling:
             self.ffmpeg_bin,
             "-y",
             "-i",
-            str(source),
+            _as_ffmpeg_path(source),
             "-vn",
             "-af",
             chain,
@@ -242,7 +277,7 @@ class FFmpegTooling:
             "pcm_f32le",
             "-ac",
             "1",
-            str(destination),
+            _as_ffmpeg_path(destination),
         ]
         self._run(command)
         return destination
