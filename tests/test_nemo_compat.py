@@ -94,6 +94,35 @@ def test_ensure_cuda_python_available_happy_path(monkeypatch):
     assert "cuda.bindings.runtime" in import_calls
 
 
+def test_ensure_cuda_python_available_rejects_cuda_13(monkeypatch):
+    dummy_module = SimpleNamespace(__name__="cuda")
+
+    monkeypatch.setitem(sys.modules, "cuda", dummy_module)
+    original_import = importlib.import_module
+
+    runtime_module = SimpleNamespace(__name__="cuda.bindings.runtime")
+
+    def fake_import(name, package=None):
+        if name == "cuda":
+            return dummy_module
+        if name == "cuda.bindings.runtime":
+            return runtime_module
+        return original_import(name, package=package)
+
+    monkeypatch.setattr(importlib, "import_module", fake_import)
+    original_version = _nemo_compat.metadata.version
+
+    def fake_version(package: str) -> str:
+        if package == "cuda-python":
+            return "13.0.0"
+        return original_version(package)
+
+    monkeypatch.setattr(_nemo_compat.metadata, "version", fake_version, raising=False)
+
+    with pytest.raises(RuntimeError):
+        _nemo_compat.ensure_cuda_python_available()
+
+
 def test_ensure_cuda_python_available_missing_module(monkeypatch):
     original_import = importlib.import_module
 

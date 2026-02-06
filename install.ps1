@@ -601,7 +601,7 @@ function Install-Torch($device) {
         Invoke-Pip -Args @(
             'install',
             '--upgrade',
-            'cuda-python>=12.3'
+            'cuda-python>=12.3,<13'
         )
 
         $torchInfo = Get-TorchCudaInfo
