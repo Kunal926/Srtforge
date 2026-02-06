@@ -13,12 +13,12 @@ separation:
     cfg: ./models/voc_gabox.yaml
     ckpt: ./models/voc_fv4.ckpt
 whisper:
-  engine: whisper
-  model: large-v3-turbo
+  engine: parakeet
+  model: nvidia/parakeet-tdt-0.6b-v2
   language: en
   force_float32: false
   rel_pos_local_attn: [768, 768]
-  subsampling_conv_chunking_factor: 1
+  subsampling_conv_chunking_factor: 0
 gemini:
   enabled: false
   model_id: gemini-3-flash-preview
