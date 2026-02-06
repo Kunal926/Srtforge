@@ -36,7 +36,7 @@ DEFAULT_REL_POS_LOCAL_ATTN: Tuple[int, int] = (768, 768)
 
 @dataclass(frozen=True)
 class ParakeetEngineConfig:
-    model: str = "nvidia/parakeet-tdt-0.6b-v3"
+    model: str = "nvidia/parakeet-tdt-0.6b-v2"
     language: str = "en"
     prefer_gpu: bool = True
 
@@ -262,7 +262,7 @@ def load_parakeet_model(model_name: str, *, prefer_gpu: bool = True) -> Any:
     return model
 
 
-def preload_parakeet_model(model_name: str = "nvidia/parakeet-tdt-0.6b-v3", *, prefer_gpu: bool = True) -> None:
+def preload_parakeet_model(model_name: str = "nvidia/parakeet-tdt-0.6b-v2", *, prefer_gpu: bool = True) -> None:
     _ = load_parakeet_model(model_name, prefer_gpu=prefer_gpu)
 
 
@@ -964,7 +964,7 @@ def _transcribe_with_timestamps(model: Any, audio_path: str, *, language: Option
 def generate_optimized_events(
     audio_path: str,
     *,
-    model_name: str = "nvidia/parakeet-tdt-0.6b-v3",
+    model_name: str = "nvidia/parakeet-tdt-0.6b-v2",
     language: str = "en",
     prefer_gpu: bool = True,
     pause_ms: int = 400,

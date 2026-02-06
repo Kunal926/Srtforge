@@ -58,7 +58,7 @@ def _startup_trace(msg: str) -> None:
 DEFAULT_BASIC_OPTIONS: dict[str, object] = {
     "prefer_gpu": True,
     "gemini_enabled": False,
-    "embed_subtitles": True,
+    "embed_subtitles": False,
     "burn_subtitles": False,
     "cleanup_gpu": True,
     "word_timestamps": False,
@@ -68,7 +68,7 @@ DEFAULT_BASIC_OPTIONS: dict[str, object] = {
     "srt_language": "eng",
     "srt_default": True,
     "srt_forced": True,
-    "srt_next_to_media": False,
+    "srt_next_to_media": True,
 }
 
 PARAKEET_MODEL_V2 = "nvidia/parakeet-tdt-0.6b-v2"
