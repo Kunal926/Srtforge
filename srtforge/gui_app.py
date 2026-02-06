@@ -2008,14 +2008,14 @@ class OptionsDialog(QtWidgets.QDialog):
 
         chunking_factor_value = getattr(initial_settings.whisper, "subsampling_conv_chunking_factor", 1)
         chunking_factor = int(1 if chunking_factor_value is None else chunking_factor_value)
-        self.subsampling_conv_chunking_factor = QtWidgets.QCheckBox("Enable")
+        self.subsampling_conv_chunking_factor = QtWidgets.QCheckBox("Enable (factor =1)")
         self.subsampling_conv_chunking_factor.setChecked(chunking_factor == 1)
         self.subsampling_conv_chunking_factor.setToolTip(
             "Parakeet-focused option: toggle the subsampling convolution chunking factor between "
             "1 (enabled) and 0 (disabled). Whisper engine may ignore this setting."
         )
         perf_form.addRow(
-            "Subsampling conv chunking checkbox enable (factor =1)",
+            "Subsampling conv chunking",
             self.subsampling_conv_chunking_factor,
         )
 
