@@ -19,32 +19,25 @@ def _as_ffmpeg_path(path: Path) -> str:
     r"""
     Return a path string safe for ffmpeg/ffprobe on Windows.
 
-    For long absolute paths, use the extended-length prefix (\\?\ or \\?\UNC\)
-    to bypass MAX_PATH issues.
+    On Windows, ffmpeg/ffprobe often fail on paths > 260 chars unless you use the
+    extended-length prefix:
+      - \\?\D:\...
+      - \\?\UNC\server\share\...
     """
     p = str(path)
-
     if os.name != "nt":
         return p
 
-    # Make sure it's absolute
-    try:
-        p = str(path.resolve())
-    except Exception:
-        p = os.path.abspath(p)
+    # Avoid Path.resolve() here; on some systems it can misbehave with long paths.
+    p = os.path.abspath(p).replace("/", "\\")
 
     # Already extended-length
     if p.startswith("\\\\?\\"):
         return p
 
-    # Only rewrite when it's actually long (avoid surprising behavior on short paths)
-    # 240 is a conservative threshold to stay clear of 260 once ffmpeg adds its own parsing.
-    if len(p) < 240:
-        return p
-
-    # UNC path -> \\?\UNC\server\share\...
+    # UNC -> \\?\UNC\server\share\...
     if p.startswith("\\\\"):
-        return "\\\\?\\UNC\\" + p.lstrip("\\")
+        return "\\\\?\\UNC\\" + p[2:]
 
     # Drive path -> \\?\D:\...
     return "\\\\?\\" + p
@@ -199,7 +192,12 @@ class FFmpegTooling:
         ]
         result = subprocess.run(command, capture_output=True, text=True, check=False)
         if result.returncode != 0:
-            raise FFmpegError(result.stderr.strip() or "ffprobe failed")
+            stderr = (result.stderr or "").strip()
+            stdout = (result.stdout or "").strip()
+            details = stderr or stdout or ""
+            raise FFmpegError(
+                f"ffprobe failed (rc={result.returncode}). {details}".strip()
+            )
         payload = json.loads(result.stdout or "{}")
         return [AudioStream.from_probe(stream) for stream in payload.get("streams", [])]
 
