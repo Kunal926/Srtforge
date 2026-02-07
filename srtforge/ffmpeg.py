@@ -177,27 +177,46 @@ class FFmpegTooling:
 
     def probe_audio_streams(self, media: Path) -> List[AudioStream]:
         """Return the list of audio streams contained in ``media``."""
-
-        command = [
-            self.ffprobe_bin,
-            "-v",
-            "error",
-            "-select_streams",
-            "a",
-            "-show_entries",
-            "stream=index,codec_name,channels,sample_rate,channel_layout,ch_layout:stream_tags=language,LANGUAGE",
-            "-of",
-            "json",
-            _as_ffmpeg_path(media),
-        ]
-        result = subprocess.run(command, capture_output=True, text=True, check=False)
-        if result.returncode != 0:
-            stderr = (result.stderr or "").strip()
-            stdout = (result.stdout or "").strip()
-            details = stderr or stdout or ""
-            raise FFmpegError(
-                f"ffprobe failed (rc={result.returncode}). {details}".strip()
+        def _run_probe(show_entries: str) -> subprocess.CompletedProcess[str]:
+            command = [
+                self.ffprobe_bin,
+                "-v",
+                "error",
+                "-select_streams",
+                "a",
+                "-show_entries",
+                show_entries,
+                "-of",
+                "json",
+                str(media),
+            ]
+            return subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                check=False,
             )
+
+        # Newer FFmpeg exposes `ch_layout`; older builds can error if you request it.
+        primary = (
+            "stream=index,codec_name,channels,sample_rate,channel_layout,ch_layout:"
+            "stream_tags=language,LANGUAGE"
+        )
+        fallback = (
+            "stream=index,codec_name,channels,sample_rate,channel_layout:"
+            "stream_tags=language,LANGUAGE"
+        )
+
+        result = _run_probe(primary)
+        if result.returncode != 0:
+            result2 = _run_probe(fallback)
+            if result2.returncode != 0:
+                msg = (result2.stderr or result2.stdout or result.stderr or result.stdout or "").strip()
+                raise FFmpegError(msg or "ffprobe failed")
+            result = result2
+
         payload = json.loads(result.stdout or "{}")
         return [AudioStream.from_probe(stream) for stream in payload.get("streams", [])]
 
