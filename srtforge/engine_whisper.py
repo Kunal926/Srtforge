@@ -219,9 +219,11 @@ def correct_text_only_with_gemini(
         show_context_lines.append(f"Source filename: {audio_basename}")
     show_context = "\n".join(show_context_lines).strip()
 
+    pipe_token = "<PIPE>"
     payload_lines: List[str] = []
     for i, ev in enumerate(events, 1):
         clean_text = str(ev.get("text") or "").replace("\n", " ")
+        clean_text = clean_text.replace("|", pipe_token)
         payload_lines.append(f"{i}|{clean_text}")
     full_payload = "\n".join(payload_lines)
 
@@ -257,6 +259,10 @@ STYLE GUIDE:
 OUTPUT FORMAT:
 - Output ONLY the corrected list in 'ID|Corrected Text' format.
 - Do NOT include timestamps.
+- Use exactly one '|' delimiter per line.
+- If the subtitle text contains a literal pipe character, it will appear in the
+  input as the sentinel token "{pipe_token}". Preserve that token, and do NOT
+  introduce additional pipe characters.
 - Do NOT merge or split lines. Keep line count identical.
 
 INPUT DATA:
@@ -279,7 +285,7 @@ INPUT DATA:
             parts = line.split("|", 1)
             if len(parts) == 2 and parts[0].strip().isdigit():
                 idx = int(parts[0].strip())
-                new_text = parts[1].strip()
+                new_text = parts[1].strip().replace(pipe_token, "|")
                 corrected_map[idx] = new_text
 
     logger.info("Gemini returned %d corrected lines.", len(corrected_map))

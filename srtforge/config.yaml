@@ -18,7 +18,7 @@ whisper:
   language: en
   force_float32: false
   rel_pos_local_attn: [768, 768]
-  subsampling_conv_chunking_factor: 0
+  subsampling_conv_chunking_factor: 1
 gemini:
   enabled: false
   model_id: gemini-3-flash-preview
