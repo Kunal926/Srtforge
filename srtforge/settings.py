@@ -154,7 +154,7 @@ class WhisperSettings:
     language: str = "en"
     force_float32: bool = False
     rel_pos_local_attn: list[int] = field(default_factory=lambda: [768, 768])
-    subsampling_conv_chunking_factor: int = 0
+    subsampling_conv_chunking_factor: int = 1
 
 
 @dataclass(slots=True)

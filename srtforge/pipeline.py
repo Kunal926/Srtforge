@@ -327,8 +327,20 @@ class Pipeline:
                         write_srt(events, str(output_path))
                 finally:
                     # Time deletion of the per-run temp directory
+                    #
+                    # NOTE: On Windows it is common for the temp directory cleanup to fail
+                    # transiently (e.g., ffmpeg/ONNX still holding a file handle briefly).
+                    # Cleanup failure should not flip an otherwise successful run into a
+                    # pipeline failure (SRTs may already be written).
                     with run_logger.step("Cleanup run temporary directory"):
-                        tmp_ctx.cleanup()
+                        try:
+                            tmp_ctx.cleanup()
+                        except Exception as exc:
+                            # Best-effort cleanup: warn and continue.
+                            run_logger.log(
+                                "WARNING: Failed to cleanup run temporary directory "
+                                f"{getattr(tmp_ctx, 'name', '')!r}: {exc}"
+                            )
 
         except Exception as exc:
             self.console.log(f"[bold red]Pipeline failed[/bold red] {media_path}: {exc}")

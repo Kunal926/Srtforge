@@ -444,7 +444,14 @@ class FFmpegTooling:
         return destination
 
     def _run(self, command: Iterable[str]) -> None:
-        result = subprocess.run(command, capture_output=True, text=True, check=False)
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            check=False,
+            encoding="utf-8",
+            errors="replace",
+        )
         if result.returncode != 0:
             get_console().log("[bold red]FFmpeg error[/bold red]", " ".join(command))
             raise FFmpegError(result.stderr.strip() or "ffmpeg failed")
