@@ -118,7 +118,7 @@ class FFmpegSettings:
     """Controls applied to FFmpeg processing steps."""
 
     # See EXTRACTION_MODE_* constants above.
-    extraction_mode: str = EXTRACTION_MODE_STEREO_MIX
+    extraction_mode: str = EXTRACTION_MODE_DUAL_MONO_CENTER
     filter_chain: str = (
         "highpass=f=60,lowpass=f=10000,aformat=sample_fmts=flt,"
         "aresample=resampler=soxr:osf=flt:osr=16000"
@@ -138,8 +138,8 @@ class SeparationSettings:
     """Options for the vocal separation stage."""
 
     backend: str = "fv4"
-    sep_hz: int = 48000
-    prefer_center: bool = False
+    sep_hz: int = 44100
+    prefer_center: bool = True
     prefer_gpu: bool = True
     allow_untagged_english: bool = False
     fv4: FV4Settings = field(default_factory=FV4Settings)
@@ -154,7 +154,7 @@ class WhisperSettings:
     language: str = "en"
     force_float32: bool = False
     rel_pos_local_attn: list[int] = field(default_factory=lambda: [768, 768])
-    subsampling_conv_chunking_factor: int = 1
+    subsampling_conv_chunking_factor: int = 0
 
 
 @dataclass(slots=True)

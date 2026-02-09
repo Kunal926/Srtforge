@@ -2,7 +2,7 @@ paths:
   temp_dir: ./tmp
   output_dir: ./output
 ffmpeg:
-  extraction_mode: stereo_mix
+  extraction_mode: dual_mono_center
   filter_chain: "highpass=f=60,lowpass=f=10000,aformat=sample_fmts=flt,aresample=resampler=soxr:osf=flt:osr=16000"
 separation:
   backend: fv4
@@ -18,8 +18,10 @@ whisper:
   language: en
   force_float32: false
   rel_pos_local_attn: [768, 768]
-  subsampling_conv_chunking_factor: 1
+  subsampling_conv_chunking_factor: 0
 gemini:
   enabled: false
   model_id: gemini-3-flash-preview
   api_key: null
+gui:
+  dark_mode: false
