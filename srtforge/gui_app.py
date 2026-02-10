@@ -2365,10 +2365,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self._dark_mode: bool = False
         # Single source of truth for user options (kept only in the Options dialog)
         self._basic_options = dict(DEFAULT_BASIC_OPTIONS)
-        self.ffmpeg_paths = locate_ffmpeg_binaries()
-        _startup_trace("MainWindow: locate_ffmpeg_binaries done")
-        self.mkv_paths = locate_mkvmerge_binary()
-        _startup_trace("MainWindow: locate_mkvmerge_binary done")
+        self.ffmpeg_paths: Optional[FFmpegBinaries] = None
+        self.mkv_paths: Optional[MKVToolNixBinaries] = None
         self._qsettings = QtCore.QSettings("srtforge", "SrtforgeStudio")
         # Persist the last folder used in the "Add files…" dialog across app restarts.
         # (Qt remembers it only for the current process by default.)
@@ -2423,6 +2421,25 @@ class MainWindow(QtWidgets.QMainWindow):
         self._log_tailer = LogTailer(self._append_log, self)
         self._load_persistent_options()
         _startup_trace("MainWindow: _load_persistent_options done")
+
+        # Defer expensive startup work until after first paint.
+        self._post_show_init_scheduled = False
+
+    def schedule_post_show_init(self) -> None:
+        """Schedule expensive startup tasks after the first event-loop tick."""
+
+        if getattr(self, "_post_show_init_scheduled", False):
+            return
+        self._post_show_init_scheduled = True
+        QtCore.QTimer.singleShot(0, self._post_show_init)
+
+    def _post_show_init(self) -> None:
+        """Run expensive startup tasks after the initial window paint."""
+
+        self.ffmpeg_paths = locate_ffmpeg_binaries()
+        _startup_trace("MainWindow: locate_ffmpeg_binaries done")
+        self.mkv_paths = locate_mkvmerge_binary()
+        _startup_trace("MainWindow: locate_mkvmerge_binary done")
         self._apply_styles()
         _startup_trace("MainWindow: _apply_styles done")
         self._update_tool_status()
@@ -6162,6 +6179,10 @@ def main() -> None:
     _startup_trace("main: MainWindow constructed")
     window.show()
     _startup_trace("main: window.show() returned")
+    app.processEvents()
+    _startup_trace("main: app.processEvents() returned")
+    window.schedule_post_show_init()
+    _startup_trace("main: schedule_post_show_init() called")
     sys.exit(app.exec())
 
 
