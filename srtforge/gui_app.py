@@ -2421,6 +2421,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self._log_tailer = LogTailer(self._append_log, self)
         self._load_persistent_options()
         _startup_trace("MainWindow: _load_persistent_options done")
+        self._apply_styles()
+        _startup_trace("MainWindow: _apply_styles done")
 
         # Defer expensive startup work until after first paint.
         self._post_show_init_scheduled = False
@@ -2440,8 +2442,6 @@ class MainWindow(QtWidgets.QMainWindow):
         _startup_trace("MainWindow: locate_ffmpeg_binaries done")
         self.mkv_paths = locate_mkvmerge_binary()
         _startup_trace("MainWindow: locate_mkvmerge_binary done")
-        self._apply_styles()
-        _startup_trace("MainWindow: _apply_styles done")
         self._update_tool_status()
         _startup_trace("MainWindow: _update_tool_status done")
         apply_win11_look(self)
