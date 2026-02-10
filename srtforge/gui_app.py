@@ -2448,6 +2448,7 @@ class MainWindow(QtWidgets.QMainWindow):
         _startup_trace("MainWindow: apply_win11_look done")
 
     def _boot_mark(self, label: str) -> None:
+        _startup_trace(label)
         t0 = getattr(self, "_boot_t0", None)
         if t0 is None:
             return
@@ -2581,10 +2582,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.options_button.setCursor(pointer_cursor)
         self.options_button.setToolTip("Options")
 
-        # Prefer a gear icon from the current icon theme, with a Unicode fallback.
-        gear_icon = QtGui.QIcon.fromTheme("settings")
-        if gear_icon.isNull():
-            gear_icon = QtGui.QIcon.fromTheme("preferences-system")
+        # Avoid QIcon.fromTheme() on Windows because theme probing can be slow.
+        style = self.style() or QtWidgets.QApplication.style()
+        gear_icon = style.standardIcon(QtWidgets.QStyle.StandardPixmap.SP_FileDialogDetailedView)
 
         if not gear_icon.isNull():
             self.options_button.setIcon(gear_icon)
@@ -3125,14 +3125,31 @@ class MainWindow(QtWidgets.QMainWindow):
 
     # --- log font zoom helpers (Ctrl+, Ctrl-, Ctrl+0) ----------------------------
     def _init_log_zoom(self) -> None:
+        # Don't touch QFontDatabase on cold start; console is hidden anyway.
         self._log_zoom_delta = 0
-        self._apply_log_font()
+        self._log_font_ready = False
+        self._log_base_font: Optional[QtGui.QFont] = None
         QtGui.QShortcut(QtGui.QKeySequence.ZoomIn, self, activated=self._zoom_in)
         QtGui.QShortcut(QtGui.QKeySequence.ZoomOut, self, activated=self._zoom_out)
         QtGui.QShortcut(QtGui.QKeySequence("Ctrl+0"), self, activated=self._zoom_reset)
 
+    def _ensure_log_font(self) -> None:
+        if getattr(self, "_log_font_ready", False):
+            return
+        self._log_font_ready = True
+        self._apply_log_font()
+
     def _apply_log_font(self) -> None:
-        font = QtGui.QFontDatabase.systemFont(QtGui.QFontDatabase.FixedFont)
+        # Cache the base fixed-width font so we don't keep hitting QFontDatabase.
+        base = getattr(self, "_log_base_font", None)
+        if base is None:
+            try:
+                base = QtGui.QFontDatabase.systemFont(QtGui.QFontDatabase.FixedFont)
+            except Exception:
+                base = QtGui.QFont("Consolas")
+            self._log_base_font = base
+
+        font = QtGui.QFont(base)
         size = max(8, (font.pointSize() or 10) + self._log_zoom_delta)
         font.setPointSize(size)
         self.log_view.setFont(font)
@@ -3140,6 +3157,9 @@ class MainWindow(QtWidgets.QMainWindow):
     def _toggle_log_panel(self, checked: bool) -> None:
         if getattr(self, "log_container", None) is None:
             return
+
+        if checked:
+            self._ensure_log_font()
 
         self.log_container.setVisible(checked)
 
@@ -3154,14 +3174,17 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _zoom_in(self) -> None:
         self._log_zoom_delta += 1
+        self._ensure_log_font()
         self._apply_log_font()
 
     def _zoom_out(self) -> None:
         self._log_zoom_delta = max(-6, self._log_zoom_delta - 1)
+        self._ensure_log_font()
         self._apply_log_font()
 
     def _zoom_reset(self) -> None:
         self._log_zoom_delta = 0
+        self._ensure_log_font()
         self._apply_log_font()
     def _apply_styles(self) -> None:
         """Apply theme palette + QSS.
