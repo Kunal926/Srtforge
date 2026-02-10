@@ -11,14 +11,15 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from time import monotonic
-from typing import Iterator, Optional
+from typing import TYPE_CHECKING, Iterator, Optional
 from uuid import uuid4
-
-from rich.console import Console
 
 from .config import PROJECT_ROOT
 
-_console = Console()
+if TYPE_CHECKING:
+    from rich.console import Console
+
+_console: Optional["Console"] = None
 _cleanup_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="log-cleanup")
 
 
@@ -41,9 +42,14 @@ LOGS_DIR = PROJECT_ROOT / "logs"
 LATEST_LOG = LOGS_DIR / "srtforge.log"
 
 
-def get_console() -> Console:
-    """Return the shared :class:`~rich.console.Console` instance."""
+def get_console() -> "Console":
+    """Return the shared Rich console (created lazily)."""
 
+    global _console
+    if _console is None:
+        from rich.console import Console
+
+        _console = Console()
     return _console
 
 
@@ -51,7 +57,7 @@ def get_console() -> Console:
 def status(message: str) -> Iterator[None]:
     """Show a transient status spinner when running slow operations."""
 
-    with _console.status(message, spinner="dots"):
+    with get_console().status(message, spinner="dots"):
         yield
 
 
