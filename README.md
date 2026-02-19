@@ -64,7 +64,7 @@ Run after activating the virtual environment:
 srtforge-gui
 ```
 
-![Srtforge GUI](assets/gui.png)
+![Srtforge GUI](srtforge/assets/images/gui.png)
 
 GUI highlights:
 
