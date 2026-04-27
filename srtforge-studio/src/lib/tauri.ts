@@ -7,12 +7,13 @@ import { open as openDialog } from "@tauri-apps/plugin-dialog";
 
 import type { Settings, WorkerEvent } from "../types";
 
-export const enqueue = (file: string, config: Partial<Settings>): Promise<string> =>
-  invoke<string>("enqueue", { file, config });
+export const enqueue = (
+  file: string,
+  config: Partial<Settings>,
+  output?: string,
+): Promise<string> => invoke<string>("enqueue", { file, output, config });
 
-export const pauseQueue = (): Promise<void> => invoke("pause_queue");
-export const resumeQueue = (): Promise<void> => invoke("resume_queue");
-export const cancelJob = (id: string): Promise<void> => invoke("cancel_job", { id });
+export const shutdownWorker = (): Promise<void> => invoke("shutdown_worker");
 export const restartWorker = (): Promise<void> => invoke("restart_worker");
 
 export const onWorkerEvent = (

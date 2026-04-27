@@ -15,19 +15,18 @@ use tauri_plugin_shell::ShellExt;
 use tokio::sync::mpsc;
 
 /// Outbound command shapes sent down the worker's stdin.
-/// Mirrors the JSON contract used by `srtforge.gui_app.MainWindow`.
+/// Mirrors the JSON contract used by `srtforge.cli.worker` (only
+/// `transcribe` and `shutdown` are accepted today; pause/resume/cancel
+/// would need to be added on the Python side first).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "action", rename_all = "snake_case")]
 enum WorkerRequest {
     Transcribe {
         id: String,
         file: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        output: Option<String>,
         config: serde_json::Value,
-    },
-    Pause,
-    Resume,
-    Cancel {
-        id: String,
     },
     Shutdown,
 }
@@ -69,7 +68,11 @@ fn spawn_worker(app: &AppHandle, state: &WorkerState) -> anyhow::Result<()> {
     let sidecar = app
         .shell()
         .sidecar("srtforge_worker")
-        .map_err(|e| anyhow::anyhow!("sidecar lookup failed: {e}"))?;
+        .map_err(|e| anyhow::anyhow!("sidecar lookup failed: {e}"))?
+        // The bundled exe ships `python -m srtforge` as a whole; the
+        // persistent stdin/stdout JSON loop lives behind the `worker`
+        // subcommand (see srtforge/cli.py).
+        .args(["worker"]);
 
     let (mut rx, child) = sidecar
         .spawn()
@@ -167,6 +170,7 @@ fn send_to_worker(state: &WorkerState, req: &WorkerRequest) -> Result<(), String
 fn enqueue(
     state: State<'_, WorkerState>,
     file: String,
+    output: Option<String>,
     config: serde_json::Value,
 ) -> Result<String, String> {
     let id = uuid::Uuid::new_v4().to_string();
@@ -175,6 +179,7 @@ fn enqueue(
         &WorkerRequest::Transcribe {
             id: id.clone(),
             file,
+            output,
             config,
         },
     )?;
@@ -182,18 +187,8 @@ fn enqueue(
 }
 
 #[tauri::command]
-fn pause_queue(state: State<'_, WorkerState>) -> Result<(), String> {
-    send_to_worker(&state, &WorkerRequest::Pause)
-}
-
-#[tauri::command]
-fn resume_queue(state: State<'_, WorkerState>) -> Result<(), String> {
-    send_to_worker(&state, &WorkerRequest::Resume)
-}
-
-#[tauri::command]
-fn cancel_job(state: State<'_, WorkerState>, id: String) -> Result<(), String> {
-    send_to_worker(&state, &WorkerRequest::Cancel { id })
+fn shutdown_worker(state: State<'_, WorkerState>) -> Result<(), String> {
+    send_to_worker(&state, &WorkerRequest::Shutdown)
 }
 
 #[tauri::command]
@@ -209,9 +204,7 @@ pub fn run() {
         .manage(WorkerState::new())
         .invoke_handler(tauri::generate_handler![
             enqueue,
-            pause_queue,
-            resume_queue,
-            cancel_job,
+            shutdown_worker,
             restart_worker,
         ])
         .setup(|app| {
