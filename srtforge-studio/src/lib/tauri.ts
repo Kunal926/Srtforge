@@ -10,8 +10,14 @@ import type { Settings, WorkerEvent } from "../types";
 export const enqueue = (
   file: string,
   config: Partial<Settings>,
-  output?: string,
-): Promise<string> => invoke<string>("enqueue", { file, output, config });
+  options?: { id?: string; output?: string },
+): Promise<string> =>
+  invoke<string>("enqueue", {
+    file,
+    id: options?.id,
+    output: options?.output,
+    config,
+  });
 
 export const shutdownWorker = (): Promise<void> => invoke("shutdown_worker");
 export const restartWorker = (): Promise<void> => invoke("restart_worker");
