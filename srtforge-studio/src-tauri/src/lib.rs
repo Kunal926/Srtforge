@@ -195,10 +195,14 @@ fn send_to_worker(state: &WorkerState, req: &WorkerRequest) -> Result<(), String
 fn enqueue(
     state: State<'_, WorkerState>,
     file: String,
+    id: Option<String>,
     output: Option<String>,
     config: serde_json::Value,
 ) -> Result<String, String> {
-    let id = uuid::Uuid::new_v4().to_string();
+    // The UI generates an id when it adds the row to its local queue so
+    // the Tauri shell, the React store, and the Python worker all agree
+    // on the same id from the moment the user clicks "Add files".
+    let id = id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
     send_to_worker(
         &state,
         &WorkerRequest::Transcribe {
