@@ -32,10 +32,11 @@ block_cipher = None
 # pyinstaller is invoked from.
 PROJECT_ROOT = os.path.abspath(os.path.join(SPECPATH, "..", "..", ".."))
 
-# The actual entry point — `python -m srtforge` exposes the CLI; the
-# `worker` subcommand is the persistent JSON-IPC loop the Tauri shell
-# spawns and writes to.
-worker_entry = os.path.join(PROJECT_ROOT, "srtforge", "__main__.py")
+# The actual entry point. We don't bundle `srtforge/__main__.py` directly
+# because it uses `from .cli import app` (relative import) which requires
+# being run as `python -m srtforge`; PyInstaller runs the entry as a
+# top-level script, so we use a tiny shim with an absolute import.
+worker_entry = os.path.join(SPECPATH, "srtforge_worker_entry.py")
 
 datas = []
 binaries = []
