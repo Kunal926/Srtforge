@@ -2,7 +2,7 @@
 // Knows what to open for each menu item (SRT file / run log / containing
 // folder) based on the file's status and which paths are populated.
 
-import { openPath, revealInFolder } from "./tauri";
+import { getLogsDir, openPath, revealInFolder } from "./tauri";
 import { useUi } from "../store";
 import type { QueueFile } from "../types";
 
@@ -34,10 +34,11 @@ export const locateFile = (file: QueueFile, kind: LocateKind) => {
     return;
   }
 
-  // "log" — the worker doesn't persist per-job logs yet, so this opens
-  // the global logs/ directory next to the configured output dir.
-  const outputDir = useUi.getState().settings.outputDir;
-  const root = outputDir.replace(/[\\/]output\/?$/, "");
-  const logsDir = `${root}\\logs`;
-  openPath(logsDir).catch(fail);
+  // "log" — the worker doesn't yet emit a run-id JSON event we can latch
+  // onto, so we open the project's logs/ directory and let the user pick
+  // the right run file. Resolved server-side because the React layer
+  // doesn't know the absolute project root.
+  getLogsDir()
+    .then((dir) => openPath(dir))
+    .catch(fail);
 };

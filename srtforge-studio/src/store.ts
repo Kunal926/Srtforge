@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { persist, createJSONStorage } from "zustand/middleware";
 
 import type {
   Density,
@@ -84,6 +85,7 @@ interface UiState {
 
   setRunning: (r: boolean) => void;
   setPaused: (p: boolean) => void;
+  resetSettings: () => void;
 
   addFiles: (files: QueueFile[]) => void;
   /** Add raw file paths picked from disk; the pump turns them into worker jobs. */
@@ -101,7 +103,9 @@ interface UiState {
 
 let toastTimer: ReturnType<typeof setTimeout> | null = null;
 
-export const useUi = create<UiState>((set, get) => ({
+export const useUi = create<UiState>()(
+  persist(
+    (set, get) => ({
   files: [],
   selectedId: null,
   checked: new Set(),
@@ -139,6 +143,7 @@ export const useUi = create<UiState>((set, get) => ({
 
   setRunning: (r) => set({ running: r }),
   setPaused: (p) => set({ paused: p }),
+  resetSettings: () => set({ settings: DEFAULT_SETTINGS }),
 
   addFiles: (incoming) =>
     set((s) => ({ files: [...s.files, ...incoming] })),
@@ -308,4 +313,19 @@ export const useUi = create<UiState>((set, get) => ({
       }
     }
   },
-}));
+    }),
+    {
+      name: "srtforge-studio:ui",
+      storage: createJSONStorage(() => localStorage),
+      // Only persist user-tunable preferences, not transient runtime
+      // state (files in queue, current selection, toast text, etc.).
+      partialize: (s) => ({
+        theme: s.theme,
+        layout: s.layout,
+        density: s.density,
+        settings: s.settings,
+      }),
+      version: 1,
+    },
+  ),
+);
