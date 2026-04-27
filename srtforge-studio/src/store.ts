@@ -87,9 +87,11 @@ interface UiState {
 
   addFiles: (files: QueueFile[]) => void;
   /** Add raw file paths picked from disk; the pump turns them into worker jobs. */
-  enqueuePaths: (paths: string[]) => void;
+  enqueuePaths: (paths: string[]) => string[];
   /** Promote one queued file to "sent" before invoking enqueue() on the Rust side. */
   markSending: (id: string) => void;
+  /** Patch one row's metadata (post-probe). */
+  updateFileMeta: (id: string, meta: Partial<QueueFile>) => void;
   removeChecked: () => void;
   clearQueue: () => void;
   showToast: (msg: string) => void;
@@ -141,25 +143,25 @@ export const useUi = create<UiState>((set, get) => ({
   addFiles: (incoming) =>
     set((s) => ({ files: [...s.files, ...incoming] })),
 
-  enqueuePaths: (paths) =>
-    set((s) => {
-      const fresh: QueueFile[] = paths.map((path) => ({
-        id: crypto.randomUUID(),
-        name: path.split(/[\\/]/).pop() ?? path,
-        path,
-        duration: "—",
-        durationSec: 0,
-        sampleRate: 48,
-        channels: 2,
-        fps: "—",
-        codec: "—",
-        status: "queued",
-        progress: 0,
-        eta: "—",
-        stage: 0,
-      }));
-      return { files: [...s.files, ...fresh] };
-    }),
+  enqueuePaths: (paths) => {
+    const fresh: QueueFile[] = paths.map((path) => ({
+      id: crypto.randomUUID(),
+      name: path.split(/[\\/]/).pop() ?? path,
+      path,
+      duration: "—",
+      durationSec: 0,
+      sampleRate: 0,
+      channels: 0,
+      fps: "—",
+      codec: "—",
+      status: "queued",
+      progress: 0,
+      eta: "—",
+      stage: 0,
+    }));
+    set((s) => ({ files: [...s.files, ...fresh] }));
+    return fresh.map((f) => f.id);
+  },
 
   markSending: (id) =>
     // The pump grabs one queued file at a time, calls enqueue() on the
@@ -170,6 +172,11 @@ export const useUi = create<UiState>((set, get) => ({
         f.id === id ? { ...f, status: "processing" as FileStatus } : f,
       ),
       selectedId: id,
+    })),
+
+  updateFileMeta: (id, meta) =>
+    set((s) => ({
+      files: s.files.map((f) => (f.id === id ? { ...f, ...meta } : f)),
     })),
 
   removeChecked: () =>
@@ -241,8 +248,8 @@ export const useUi = create<UiState>((set, get) => ({
             path: file,
             duration: "—",
             durationSec: 0,
-            sampleRate: 48,
-            channels: 2,
+            sampleRate: 0,
+            channels: 0,
             fps: "—",
             codec: "—",
             status: "processing",

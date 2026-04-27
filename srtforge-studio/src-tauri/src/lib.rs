@@ -273,6 +273,106 @@ fn open_path(path: String) -> Result<(), String> {
     }
 }
 
+/// Probe a media file with `ffprobe` and return enough metadata to fill in
+/// a queue row's Duration / sample rate / channels / fps / codec cells.
+/// The Tauri shell calls this right after the user adds files; the Python
+/// worker doesn't have to participate.
+#[derive(Debug, Clone, Serialize)]
+struct ProbeResult {
+    duration_sec: f64,
+    sample_rate: u32,
+    channels: u32,
+    codec: String,
+    fps: String,
+}
+
+#[tauri::command]
+fn probe_file(path: String) -> Result<ProbeResult, String> {
+    let output = std::process::Command::new("ffprobe")
+        .args([
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-show_entries",
+            "stream=codec_type,codec_name,sample_rate,channels,r_frame_rate",
+            "-of",
+            "json",
+            &path,
+        ])
+        .output()
+        .map_err(|e| format!("ffprobe spawn failed: {e}"))?;
+
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+    }
+
+    let data: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .map_err(|e| format!("ffprobe JSON parse failed: {e}"))?;
+
+    let duration_sec: f64 = data
+        .get("format")
+        .and_then(|f| f.get("duration"))
+        .and_then(|v| v.as_str())
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0.0);
+
+    let empty: Vec<serde_json::Value> = Vec::new();
+    let streams = data
+        .get("streams")
+        .and_then(|v| v.as_array())
+        .unwrap_or(&empty);
+    let audio = streams.iter().find(|s| s.get("codec_type").and_then(|c| c.as_str()) == Some("audio"));
+    let video = streams.iter().find(|s| s.get("codec_type").and_then(|c| c.as_str()) == Some("video"));
+
+    let sample_rate: u32 = audio
+        .and_then(|s| s.get("sample_rate"))
+        .and_then(|v| v.as_str())
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
+    let channels: u32 = audio
+        .and_then(|s| s.get("channels"))
+        .and_then(|v| v.as_u64())
+        .map(|n| n as u32)
+        .unwrap_or(0);
+    // Prefer the audio codec for the audio-centric pipeline; fall back to
+    // the video codec when probing audio-only files where there's no video
+    // stream at all.
+    let codec = audio
+        .or(video)
+        .and_then(|s| s.get("codec_name"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| "—".into());
+    let fps = video
+        .and_then(|s| s.get("r_frame_rate"))
+        .and_then(|v| v.as_str())
+        .map(|s| {
+            let mut parts = s.split('/');
+            let n: f64 = parts.next().and_then(|p| p.parse().ok()).unwrap_or(0.0);
+            let d: f64 = parts.next().and_then(|p| p.parse().ok()).unwrap_or(1.0);
+            if d > 0.0 && n > 0.0 {
+                let v = n / d;
+                if (v - v.round()).abs() < 0.05 {
+                    format!("{:.0}", v)
+                } else {
+                    format!("{:.2}", v)
+                }
+            } else {
+                "—".into()
+            }
+        })
+        .unwrap_or_else(|| "—".into());
+
+    Ok(ProbeResult {
+        duration_sec,
+        sample_rate,
+        channels,
+        codec,
+        fps,
+    })
+}
+
 /// Open File Explorer (or the platform equivalent) with the file at
 /// `path` already selected. Useful for "containing folder" — feels like
 /// a native macOS Finder reveal.
@@ -322,6 +422,7 @@ pub fn run() {
             restart_worker,
             open_path,
             reveal_in_folder,
+            probe_file,
         ])
         .setup(|app| {
             let handle = app.handle().clone();
