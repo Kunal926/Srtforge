@@ -86,6 +86,10 @@ interface UiState {
   setPaused: (p: boolean) => void;
 
   addFiles: (files: QueueFile[]) => void;
+  /** Add raw file paths picked from disk; the pump turns them into worker jobs. */
+  enqueuePaths: (paths: string[]) => void;
+  /** Promote one queued file to "sent" before invoking enqueue() on the Rust side. */
+  markSending: (id: string) => void;
   removeChecked: () => void;
   clearQueue: () => void;
   showToast: (msg: string) => void;
@@ -136,6 +140,37 @@ export const useUi = create<UiState>((set, get) => ({
 
   addFiles: (incoming) =>
     set((s) => ({ files: [...s.files, ...incoming] })),
+
+  enqueuePaths: (paths) =>
+    set((s) => {
+      const fresh: QueueFile[] = paths.map((path) => ({
+        id: crypto.randomUUID(),
+        name: path.split(/[\\/]/).pop() ?? path,
+        path,
+        duration: "—",
+        durationSec: 0,
+        sampleRate: 48,
+        channels: 2,
+        fps: "—",
+        codec: "—",
+        status: "queued",
+        progress: 0,
+        eta: "—",
+        stage: 0,
+      }));
+      return { files: [...s.files, ...fresh] };
+    }),
+
+  markSending: (id) =>
+    // The pump grabs one queued file at a time, calls enqueue() on the
+    // Rust side, and immediately marks it processing locally so the pump
+    // doesn't pick it up again before the worker emits `job_started`.
+    set((s) => ({
+      files: s.files.map((f) =>
+        f.id === id ? { ...f, status: "processing" as FileStatus } : f,
+      ),
+      selectedId: id,
+    })),
 
   removeChecked: () =>
     set((s) => {
