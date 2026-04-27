@@ -84,7 +84,10 @@ fn spawn_worker(app: &AppHandle, state: &WorkerState) -> anyhow::Result<()> {
     let writer_child = Arc::new(Mutex::new(Some(child)));
     {
         let writer_child = writer_child.clone();
-        tokio::spawn(async move {
+        // tauri::async_runtime::spawn works from any context; tokio::spawn
+        // would panic here because Tauri's `.setup()` callback runs before
+        // a Tokio reactor is attached to the calling thread.
+        tauri::async_runtime::spawn(async move {
             while let Some(line) = stdin_rx.recv().await {
                 let mut payload = line;
                 if !payload.ends_with('\n') {
@@ -102,7 +105,7 @@ fn spawn_worker(app: &AppHandle, state: &WorkerState) -> anyhow::Result<()> {
 
     // Inbound reader pump: each stdout line is forwarded to the frontend.
     let app_handle = app.clone();
-    tokio::spawn(async move {
+    tauri::async_runtime::spawn(async move {
         while let Some(ev) = rx.recv().await {
             match ev {
                 CommandEvent::Stdout(line_bytes) => {
