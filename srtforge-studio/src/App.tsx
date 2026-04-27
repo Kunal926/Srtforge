@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import { ActiveDetail } from "./components/ActiveDetail";
 import { EmptyState } from "./components/EmptyState";
+import { HistoryView } from "./components/History";
 import {
   DropZone,
   QueueCards,
@@ -314,13 +315,7 @@ export const App = () => {
                 />
               ))}
 
-            {active === "history" && (
-              <EmptyState
-                icon={<I.Done size={32} />}
-                title="No completed runs yet"
-                body="Files you transcribe will appear here with their output paths."
-              />
-            )}
+            {active === "history" && <HistoryView files={visible} />}
 
             {(active === "watch" || active === "normalize" || active === "bgm") && (
               <EmptyState

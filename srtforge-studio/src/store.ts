@@ -257,7 +257,7 @@ export const useUi = create<UiState>((set, get) => ({
       case "srt_written":
       case "job_completed": {
         const id = (ev as unknown as { id: string }).id;
-        const path = (ev as unknown as { path?: string }).path;
+        const outputPath = (ev as unknown as { path?: string }).path;
         set((s) => ({
           files: s.files.map((f) =>
             f.id === id
@@ -266,7 +266,7 @@ export const useUi = create<UiState>((set, get) => ({
                   status: "done" as FileStatus,
                   progress: 1,
                   eta: "✓",
-                  path: path ?? f.path,
+                  outputPath: outputPath ?? f.outputPath,
                 }
               : f,
           ),

@@ -6,7 +6,8 @@ export type FileStatus = "queued" | "processing" | "done" | "error";
 export interface QueueFile {
   id: string;
   name: string;
-  path: string;
+  path: string;            // input media file path
+  outputPath?: string;     // SRT output path, set on srt_written
   duration: string;        // "23:54"
   durationSec: number;
   sampleRate: number;      // kHz
