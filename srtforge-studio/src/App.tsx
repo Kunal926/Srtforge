@@ -13,14 +13,7 @@ import { Sidebar } from "./components/Sidebar";
 import { StatusBar } from "./components/StatusBar";
 import { TitleBar } from "./components/TitleBar";
 import { I } from "./icons";
-import {
-  enqueue,
-  onWorkerEvent,
-  pauseQueue,
-  pickFiles,
-  pickFolder,
-  resumeQueue,
-} from "./lib/tauri";
+import { enqueue, onWorkerEvent, pickFiles, pickFolder } from "./lib/tauri";
 import { useUi } from "./store";
 
 export const App = () => {
@@ -134,25 +127,11 @@ export const App = () => {
     }
   };
 
-  const onStart = async () => {
-    if (paused) {
-      try {
-        await resumeQueue();
-      } catch (e) {
-        showToast(`Resume failed: ${e}`);
-      }
-    } else {
-      setRunning(true);
-    }
-  };
-
-  const onPause = async () => {
-    try {
-      await pauseQueue();
-      setPaused(true);
-    } catch (e) {
-      showToast(`Pause failed: ${e}`);
-    }
+  const onStart = () => {
+    // The worker auto-runs each enqueued job; "Start" is purely a UI affordance
+    // until pause/resume actions are added on the Python side.
+    setRunning(true);
+    setPaused(false);
   };
 
   const showQueueShell = active === "queue" || active === "active" || active === "history";
@@ -259,13 +238,9 @@ export const App = () => {
                 <button className="btn btn-danger" onClick={clearQueue}>
                   Clear queue
                 </button>
-                {paused || !running ? (
+                {!running && (
                   <button className="btn btn-primary" onClick={onStart}>
                     <I.Play size={12} /> Start
-                  </button>
-                ) : (
-                  <button className="btn btn-danger" onClick={onPause}>
-                    <I.Pause size={12} /> Pause
                   </button>
                 )}
                 <button

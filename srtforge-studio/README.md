@@ -146,35 +146,46 @@ pyinstaller packaging\windows\srtforge_worker.spec --distpath ..\srtforge-studio
 
 ## Worker JSON protocol
 
-This is the contract the React store dispatches on (`src/store.ts`,
-`handleWorkerEvent`). Both sides emit one JSON object per line.
+This is what `srtforge/cli.py worker` actually speaks today. Both sides
+emit one JSON object per line over stdin/stdout.
 
 **UI → worker (stdin):**
 
-| action       | payload                                              |
-|--------------|------------------------------------------------------|
-| `transcribe` | `{ id, file, config: <Settings> }`                   |
-| `pause`      | —                                                    |
-| `resume`     | —                                                    |
-| `cancel`     | `{ id }`                                             |
-| `shutdown`   | —                                                    |
+| action       | payload                                                       |
+|--------------|---------------------------------------------------------------|
+| `transcribe` | `{ id, file, output?, config: <Settings> }`                   |
+| `shutdown`   | —                                                             |
+
+> Pause / resume / cancel are **not implemented in the Python worker yet**
+> — adding them is a follow-up on the `srtforge/cli.py` side. The Rust
+> shell only forwards what the worker accepts.
 
 **Worker → UI (stdout):**
 
-| event          | payload                                            |
-|----------------|----------------------------------------------------|
-| `queued`       | `{ id, file, meta: { duration, durationSec, … } }` |
-| `started`      | `{ id }`                                           |
-| `stage`        | `{ id, stage: 0..6 }`                              |
-| `progress`     | `{ id, progress: 0..1, eta }`                      |
-| `log`          | `{ t, lvl: info\|ok\|warn\|err, msg }`             |
-| `srt_written`  | `{ id, path }`                                     |
-| `job_failed`   | `{ id, error }`                                    |
-| `paused`       | —                                                  |
-| `resumed`      | —                                                  |
+| event                    | payload                                  |
+|--------------------------|------------------------------------------|
+| `worker_starting`        | `{ pid, preload, cpu }`                  |
+| `worker_ready`           | `{ pid }`                                |
+| `worker_preload_skipped` | `{ reason }`                             |
+| `worker_preload_failed`  | `{ error }`                              |
+| `worker_stopping`        | —                                        |
+| `job_started`            | `{ id, file }`                           |
+| `srt_written`            | `{ id, path }`                           |
+| `job_completed`          | `{ id, seconds }`                        |
+| `job_failed`             | `{ id, error, traceback? }`              |
+| `bad_json` / `bad_payload` / `unknown_action` | `{ … }` (UI shows toast) |
 
-This matches what `srtforge.gui_app.MainWindow` already does on the legacy
-build — the worker module shouldn't need to change.
+**No granular progress today.** The worker doesn't emit per-stage or per-
+percent updates, so the UI's progress bar stays at 0 while a job runs and
+flips to 100 when `srt_written` lands. Adding `progress` / `stage` / `log`
+events would need:
+
+- emit calls inside `srtforge/pipeline.py` between probe → extract → FV4
+  → preprocess → ASR → polish → write
+- a small `_emit_worker_event` per stage transition, plus throttled
+  progress updates inside ASR
+- the React store already has the matching event handlers wired (see the
+  `progress` and `stage` cases that are currently unreachable)
 
 ## What's in / out of the MVP
 
