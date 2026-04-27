@@ -101,16 +101,17 @@ export const App = () => {
     return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
   })();
 
+  const enqueuePaths = useUi((s) => s.enqueuePaths);
+  const markSending = useUi((s) => s.markSending);
+
   const onAddFiles = async () => {
     try {
       const picks = await pickFiles();
-      for (const path of picks) {
-        try {
-          await enqueue(path, settings);
-        } catch (e) {
-          showToast(`Failed to enqueue: ${e}`);
-        }
-      }
+      if (picks.length === 0) return;
+      enqueuePaths(picks);
+      // First add → start running by default; the user can Pause from here.
+      setRunning(true);
+      setPaused(false);
     } catch (e) {
       showToast(`File picker failed: ${e}`);
     }
@@ -120,19 +121,40 @@ export const App = () => {
     try {
       const picked = await pickFolder();
       if (!picked) return;
-      // The worker is responsible for recursively scanning.
-      await enqueue(picked, { ...settings, dumpWords: settings.dumpWords });
+      enqueuePaths([picked]);
+      setRunning(true);
+      setPaused(false);
     } catch (e) {
       showToast(`Folder add failed: ${e}`);
     }
   };
 
   const onStart = () => {
-    // The worker auto-runs each enqueued job; "Start" is purely a UI affordance
-    // until pause/resume actions are added on the Python side.
     setRunning(true);
     setPaused(false);
   };
+
+  const onPause = () => {
+    // Client-side pause: the pump stops dispatching new jobs to the worker.
+    // The currently-processing job runs to completion (the Python worker
+    // doesn't yet support cancel/pause mid-job).
+    setPaused(true);
+    showToast("Pausing — current job will finish, then queue holds");
+  };
+
+  // Pump: send one queued file to the worker at a time when running.
+  // Triggers on every state change that could unblock dispatch.
+  useEffect(() => {
+    if (!running || paused) return;
+    const hasInflight = files.some((f) => f.status === "processing");
+    if (hasInflight) return;
+    const next = files.find((f) => f.status === "queued");
+    if (!next) return;
+    markSending(next.id);
+    enqueue(next.path, settings, { id: next.id }).catch((e) => {
+      showToast(`Failed to dispatch: ${e}`);
+    });
+  }, [files, running, paused, settings, markSending, showToast]);
 
   const showQueueShell = active === "queue" || active === "active" || active === "history";
   const status: "idle" | "warn" | "running" = paused ? "warn" : counts.active ? "running" : "idle";
@@ -238,9 +260,17 @@ export const App = () => {
                 <button className="btn btn-danger" onClick={clearQueue}>
                   Clear queue
                 </button>
-                {!running && (
+                {!running ? (
                   <button className="btn btn-primary" onClick={onStart}>
                     <I.Play size={12} /> Start
+                  </button>
+                ) : paused ? (
+                  <button className="btn btn-primary" onClick={onStart}>
+                    <I.Play size={12} /> Resume
+                  </button>
+                ) : (
+                  <button className="btn btn-danger" onClick={onPause}>
+                    <I.Pause size={12} /> Pause
                   </button>
                 )}
                 <button

@@ -123,12 +123,18 @@
    Reset + base
    ============================================================ */
 * { box-sizing: border-box; }
-html, body { margin:0; padding:0; }
+html, body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
 body {
   font-family: var(--font-ui);
   font-feature-settings: "ss01", "cv11";
   font-size: 13.5px;
-  background: oklch(15% 0.005 240);
+  background: var(--bg-app);
   color: var(--text-1);
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
@@ -142,18 +148,17 @@ button { font-family: inherit; }
    Win11 frame
    ============================================================ */
 .win-shell {
-  width: 1280px;
-  height: 860px;
-  margin: 24px auto;
+  /* In the Tauri build the win-shell IS the OS window, so it fills 100%
+     instead of the prototype's fixed 1280×860 + margin/box-shadow chrome. */
+  width: 100%;
+  height: 100%;
+  margin: 0;
   background: var(--bg-app);
   color: var(--text-1);
-  border-radius: 8px;
+  border-radius: 0;
+  border: none;
+  box-shadow: none;
   overflow: hidden;
-  box-shadow:
-    0 1px 0 rgba(255,255,255,.04) inset,
-    0 30px 80px -20px rgba(0,0,0,.55),
-    0 12px 30px -10px rgba(0,0,0,.35);
-  border: 1px solid rgba(255,255,255,.06);
   display: grid;
   grid-template-rows: 36px 1fr;
   position: relative;
