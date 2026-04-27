@@ -22,7 +22,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 
 import os
-from PyInstaller.utils.hooks import collect_submodules
+from PyInstaller.utils.hooks import collect_all, collect_submodules
 
 block_cipher = None
 
@@ -40,6 +40,41 @@ worker_entry = os.path.join(SPECPATH, "srtforge_worker_entry.py")
 
 datas = []
 binaries = []
+hidden = []
+
+# Heavy ML / audio packages: hidden-imports + collect_submodules misses
+# lazily-loaded submodules and native DLLs in one-file mode (e.g.
+# `torch.version`, ONNX Runtime's CUDA EPs, audio_separator's adapters).
+# `collect_all` walks the package and grabs every .py + every data file +
+# every binary, so the bundle behaves like the venv. Skips silently if a
+# package isn't installed in the build environment.
+for pkg in (
+    "torch",
+    "torchaudio",
+    "onnxruntime",
+    "audio_separator",
+    "pydub",
+    "librosa",
+    "soundfile",
+    "tqdm",
+    "rich",
+    "typer",
+):
+    try:
+        d, b, h = collect_all(pkg)
+        datas += d
+        binaries += b
+        hidden += h
+    except Exception as exc:
+        print(f"[srtforge spec] skip collect_all({pkg!r}): {exc}")
+
+# Optional: include nemo_toolkit if installed (only needed when the
+# Parakeet engine is selected at runtime).
+try:
+    d, b, h = collect_all("nemo_toolkit")
+    datas += d; binaries += b; hidden += h
+except Exception:
+    pass
 
 # Optionally bundle ffmpeg/ffprobe if a path is set in the build env.
 ffmpeg_dir = os.environ.get("SRTFORGE_FFMPEG_DIR")
@@ -54,18 +89,8 @@ default_config = os.path.join(PROJECT_ROOT, "srtforge", "config.yaml")
 if os.path.isfile(default_config):
     datas.append((default_config, "srtforge"))
 
-# Hidden imports — anything reflectively loaded by the pipeline.
-hidden = []
+# Project itself.
 hidden += collect_submodules("srtforge")
-hidden += [
-    "torch",
-    "torchaudio",
-    # Parakeet / NeMo (only present if the Parakeet engine is installed)
-    "nemo_toolkit",
-    "nemo.collections.asr",
-    # FV4 separation backend (only present if installed)
-    "audio_separator",
-]
 
 a = Analysis(
     [worker_entry],
