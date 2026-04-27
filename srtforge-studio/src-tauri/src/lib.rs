@@ -241,6 +241,75 @@ fn restart_worker(app: AppHandle, state: State<'_, WorkerState>) -> Result<(), S
     spawn_worker(&app, &state).map_err(|e| e.to_string())
 }
 
+/// Open a file or folder with the OS's default associated application.
+/// On Windows we use `cmd /c start "" <path>` so spaces in the path
+/// don't break things and `start` resolves the registered handler for
+/// the file's extension.
+#[tauri::command]
+fn open_path(path: String) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("cmd")
+            .args(["/C", "start", "", &path])
+            .spawn()
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    }
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg(&path)
+            .spawn()
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        std::process::Command::new("xdg-open")
+            .arg(&path)
+            .spawn()
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    }
+}
+
+/// Open File Explorer (or the platform equivalent) with the file at
+/// `path` already selected. Useful for "containing folder" — feels like
+/// a native macOS Finder reveal.
+#[tauri::command]
+fn reveal_in_folder(path: String) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("explorer")
+            .arg(format!("/select,{path}"))
+            .spawn()
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    }
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .args(["-R", &path])
+            .spawn()
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        // Most Linux file managers don't support "reveal"; fall back to
+        // opening the parent directory.
+        let parent = std::path::Path::new(&path)
+            .parent()
+            .map(|p| p.to_path_buf())
+            .ok_or_else(|| "no parent directory".to_string())?;
+        std::process::Command::new("xdg-open")
+            .arg(parent)
+            .spawn()
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -251,6 +320,8 @@ pub fn run() {
             enqueue,
             shutdown_worker,
             restart_worker,
+            open_path,
+            reveal_in_folder,
         ])
         .setup(|app| {
             let handle = app.handle().clone();

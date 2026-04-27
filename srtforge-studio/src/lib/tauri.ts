@@ -22,6 +22,12 @@ export const enqueue = (
 export const shutdownWorker = (): Promise<void> => invoke("shutdown_worker");
 export const restartWorker = (): Promise<void> => invoke("restart_worker");
 
+export const openPath = (path: string): Promise<void> =>
+  invoke("open_path", { path });
+
+export const revealInFolder = (path: string): Promise<void> =>
+  invoke("reveal_in_folder", { path });
+
 export const onWorkerEvent = (
   handler: (ev: WorkerEvent) => void,
 ): Promise<UnlistenFn> =>
