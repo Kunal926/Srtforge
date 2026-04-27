@@ -1,16 +1,19 @@
 # PyInstaller spec for the headless Srtforge worker, bundled as the
 # Tauri sidecar `srtforge_worker-x86_64-pc-windows-msvc.exe`.
 #
-# Build (from the Srtforge repo root, with the venv activated):
+# Build (from anywhere — paths are resolved relative to this spec file):
 #
-#   set SRTFORGE_FFMPEG_DIR=C:\path\to\ffmpeg\bin   (optional)
-#   pyinstaller packaging/windows/srtforge_worker.spec ^
-#       --distpath ../srtforge-studio/src-tauri/binaries
+#   pyinstaller srtforge-studio\packaging\windows\srtforge_worker.spec ^
+#       --distpath srtforge-studio\src-tauri\binaries
 #
 # Then rename the produced exe to add Rust's target triple suffix that
 # Tauri's sidecar lookup expects:
 #
-#   ren srtforge_worker.exe srtforge_worker-x86_64-pc-windows-msvc.exe
+#   ren srtforge-studio\src-tauri\binaries\srtforge_worker.exe ^
+#       srtforge_worker-x86_64-pc-windows-msvc.exe
+#
+# Optional: bundle ffmpeg/ffprobe if you set SRTFORGE_FFMPEG_DIR before
+# invoking PyInstaller.
 #
 # Models (.ckpt, .yaml, ~600 MB) are NOT bundled. The worker reads them
 # from %APPDATA%\Srtforge\models\ at runtime; first-run UX downloads them
@@ -19,13 +22,20 @@
 # -*- mode: python ; coding: utf-8 -*-
 
 import os
-from PyInstaller.utils.hooks import collect_data_files, collect_submodules
+from PyInstaller.utils.hooks import collect_submodules
 
 block_cipher = None
 
-# The actual entry point — the existing JSON-IPC worker module.
-# This must match `python -m srtforge worker`.
-worker_entry = os.path.join("srtforge", "__main__.py")
+# `SPECPATH` is provided by PyInstaller and points to the directory of
+# this .spec file (srtforge-studio\packaging\windows\). Walk three levels
+# up to reach the Srtforge repo root so paths work regardless of where
+# pyinstaller is invoked from.
+PROJECT_ROOT = os.path.abspath(os.path.join(SPECPATH, "..", "..", ".."))
+
+# The actual entry point — `python -m srtforge` exposes the CLI; the
+# `worker` subcommand is the persistent JSON-IPC loop the Tauri shell
+# spawns and writes to.
+worker_entry = os.path.join(PROJECT_ROOT, "srtforge", "__main__.py")
 
 datas = []
 binaries = []
@@ -39,8 +49,9 @@ if ffmpeg_dir:
             binaries.append((full, "."))
 
 # Pull in the default config so a fresh install has sane defaults.
-if os.path.isfile(os.path.join("srtforge", "config.yaml")):
-    datas.append((os.path.join("srtforge", "config.yaml"), "srtforge"))
+default_config = os.path.join(PROJECT_ROOT, "srtforge", "config.yaml")
+if os.path.isfile(default_config):
+    datas.append((default_config, "srtforge"))
 
 # Hidden imports — anything reflectively loaded by the pipeline.
 hidden = []
@@ -48,16 +59,16 @@ hidden += collect_submodules("srtforge")
 hidden += [
     "torch",
     "torchaudio",
-    # Parakeet / NeMo
+    # Parakeet / NeMo (only present if the Parakeet engine is installed)
     "nemo_toolkit",
     "nemo.collections.asr",
-    # FV4 separation backend
+    # FV4 separation backend (only present if installed)
     "audio_separator",
 ]
 
 a = Analysis(
     [worker_entry],
-    pathex=[],
+    pathex=[PROJECT_ROOT],
     binaries=binaries,
     datas=datas,
     hiddenimports=hidden,
