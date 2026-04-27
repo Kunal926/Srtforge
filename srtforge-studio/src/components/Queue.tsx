@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 
 import { I } from "../icons";
+import { locateFile } from "../lib/locate";
 import { useUi } from "../store";
 import type { FileStatus, QueueFile } from "../types";
 
@@ -169,7 +170,6 @@ export const QueueTable = ({ files }: QueueTableProps) => {
   const setSelectedId = useUi((s) => s.setSelectedId);
   const checked = useUi((s) => s.checked);
   const toggleChecked = useUi((s) => s.toggleChecked);
-  const showToast = useUi((s) => s.showToast);
 
   return (
     <div className="queue-wrap">
@@ -215,7 +215,7 @@ export const QueueTable = ({ files }: QueueTableProps) => {
           <div className="progress" style={{ opacity: f.status === "queued" ? 0.35 : 1 }}>
             <span style={{ width: `${f.progress * 100}%` }} />
           </div>
-          <OutputSplitButton onLocate={(k) => showToast(`Open ${k}: ${f.name}`)} />
+          <OutputSplitButton onLocate={(k) => locateFile(f, k)} />
         </div>
       ))}
     </div>
