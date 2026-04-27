@@ -5,11 +5,11 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 
-import type { Settings, WorkerEvent } from "../types";
+import type { WorkerEvent } from "../types";
 
 export const enqueue = (
   file: string,
-  config: Partial<Settings>,
+  config: Record<string, unknown>,
   options?: { id?: string; output?: string },
 ): Promise<string> =>
   invoke<string>("enqueue", {
@@ -38,6 +38,8 @@ export interface ProbeResult {
 
 export const probeFile = (path: string): Promise<ProbeResult> =>
   invoke<ProbeResult>("probe_file", { path });
+
+export const getLogsDir = (): Promise<string> => invoke<string>("get_logs_dir");
 
 export const onWorkerEvent = (
   handler: (ev: WorkerEvent) => void,
