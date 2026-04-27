@@ -44,7 +44,7 @@ const DEFAULT_SETTINGS: Settings = {
   sidecarSrt: false,
   dumpWords: false,
   freeGpuOnStop: true,
-  extract: "center",
+  extract: "dual_mono_center",
   filterChain:
     "highpass=f=60,lowpass=f=10000,aformat=sample_fmts=flt,aresample=resampler=soxr:osf=flt:osr=16000",
   geminiEnabled: false,
@@ -325,7 +325,10 @@ export const useUi = create<UiState>()(
         density: s.density,
         settings: s.settings,
       }),
-      version: 1,
+      // Bump when Settings union shapes change so old stored values that
+      // would now fail the type unions (e.g. device "gpu" → "cuda",
+      // style "default" → "bbc"|"custom") get discarded cleanly.
+      version: 2,
     },
   ),
 );
