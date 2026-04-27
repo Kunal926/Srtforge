@@ -14,7 +14,14 @@ import { Sidebar } from "./components/Sidebar";
 import { StatusBar } from "./components/StatusBar";
 import { TitleBar } from "./components/TitleBar";
 import { I } from "./icons";
-import { enqueue, onWorkerEvent, pickFiles, pickFolder } from "./lib/tauri";
+import { formatDuration, formatTotalDuration } from "./lib/format";
+import {
+  enqueue,
+  onWorkerEvent,
+  pickFiles,
+  pickFolder,
+  probeFile,
+} from "./lib/tauri";
 import { useUi } from "./store";
 
 export const App = () => {
@@ -85,31 +92,44 @@ export const App = () => {
     files.find((f) => f.id === selectedId);
 
   const totalSec = files.reduce((s, f) => s + f.durationSec, 0);
-  const totalDurStr = (() => {
-    const h = Math.floor(totalSec / 3600);
-    const m = Math.floor((totalSec % 3600) / 60);
-    const s = totalSec % 60;
-    return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
-  })();
+  const totalDurStr = formatTotalDuration(totalSec);
 
   const remainingSec = files
     .filter((f) => f.status !== "done" && f.status !== "error")
     .reduce((s, f) => s + (1 - f.progress) * f.durationSec * 0.22, 0);
-  const queueEtaStr = (() => {
-    const h = Math.floor(remainingSec / 3600);
-    const m = Math.floor((remainingSec % 3600) / 60);
-    const s = Math.floor(remainingSec % 60);
-    return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
-  })();
+  const queueEtaStr = formatTotalDuration(remainingSec);
 
   const enqueuePaths = useUi((s) => s.enqueuePaths);
   const markSending = useUi((s) => s.markSending);
+  const updateFileMeta = useUi((s) => s.updateFileMeta);
+
+  // Fire ffprobe per id; tolerate failures silently — the row keeps its
+  // "—" placeholders and the worker still runs the job. We do this in
+  // parallel because each call is a quick exec and they're independent.
+  const probeAll = (ids: string[], paths: string[]) => {
+    ids.forEach((id, i) => {
+      const path = paths[i];
+      probeFile(path)
+        .then((p) =>
+          updateFileMeta(id, {
+            duration: formatDuration(p.duration_sec),
+            durationSec: p.duration_sec,
+            sampleRate: Math.round(p.sample_rate / 1000),
+            channels: p.channels,
+            fps: p.fps,
+            codec: p.codec,
+          }),
+        )
+        .catch(() => {});
+    });
+  };
 
   const onAddFiles = async () => {
     try {
       const picks = await pickFiles();
       if (picks.length === 0) return;
-      enqueuePaths(picks);
+      const ids = enqueuePaths(picks);
+      probeAll(ids, picks);
       // First add → start running by default; the user can Pause from here.
       setRunning(true);
       setPaused(false);
@@ -122,7 +142,8 @@ export const App = () => {
     try {
       const picked = await pickFolder();
       if (!picked) return;
-      enqueuePaths([picked]);
+      const ids = enqueuePaths([picked]);
+      probeAll(ids, [picked]);
       setRunning(true);
       setPaused(false);
     } catch (e) {

@@ -1,4 +1,5 @@
 import { I } from "../icons";
+import { formatTotalDuration } from "../lib/format";
 import { locateFile } from "../lib/locate";
 import { useUi } from "../store";
 import type { QueueFile } from "../types";
@@ -8,14 +9,6 @@ import { EmptyState } from "./EmptyState";
 interface Props {
   files: QueueFile[];
 }
-
-const totalDurationLabel = (files: QueueFile[]) => {
-  const sec = files.reduce((s, f) => s + f.durationSec, 0);
-  const h = Math.floor(sec / 3600);
-  const m = Math.floor((sec % 3600) / 60);
-  const s = sec % 60;
-  return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
-};
 
 const fileExt = (n: string) => (n.split(".").pop() ?? "").toUpperCase();
 
@@ -59,7 +52,9 @@ export const HistoryView = ({ files }: Props) => {
         </div>
         <div className="stat">
           <span className="lbl">Total duration</span>
-          <span className="num mono">{totalDurationLabel(files)}</span>
+          <span className="num mono">
+            {formatTotalDuration(files.reduce((s, f) => s + f.durationSec, 0))}
+          </span>
         </div>
         <div className="stat">
           <span className="lbl">Output</span>
@@ -94,10 +89,16 @@ export const HistoryView = ({ files }: Props) => {
             <div className="hist-name">
               <div className="filename">{f.name}</div>
               <div className="meta">
-                <span className="pill">{f.duration}</span>
-                <span className="pill">{f.sampleRate} kHz</span>
-                <span className="pill">{f.channels} ch</span>
-                <span className="pill">{f.codec}</span>
+                {f.duration !== "—" && (
+                  <span className="pill">{f.duration}</span>
+                )}
+                {f.sampleRate > 0 && (
+                  <span className="pill">{f.sampleRate} kHz</span>
+                )}
+                {f.channels > 0 && (
+                  <span className="pill">{f.channels} ch</span>
+                )}
+                {f.codec !== "—" && <span className="pill">{f.codec}</span>}
                 {fileExt(f.name) && (
                   <span className="pill">{fileExt(f.name)}</span>
                 )}
