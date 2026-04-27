@@ -65,7 +65,7 @@ fn spawn_worker(app: &AppHandle, state: &WorkerState) -> anyhow::Result<()> {
         let _ = prev.kill();
     }
 
-    let sidecar = app
+    let mut sidecar = app
         .shell()
         .sidecar("srtforge_worker")
         .map_err(|e| anyhow::anyhow!("sidecar lookup failed: {e}"))?
@@ -73,6 +73,28 @@ fn spawn_worker(app: &AppHandle, state: &WorkerState) -> anyhow::Result<()> {
         // persistent stdin/stdout JSON loop lives behind the `worker`
         // subcommand (see srtforge/cli.py).
         .args(["worker"]);
+
+    // Pin the worker's "project root" so it can find the `models/` folder
+    // (FV4 ckpt + config). Inside a PyInstaller one-file bundle the package
+    // resolves to `_MEI*` (a temp extraction dir) and the wrong models
+    // location is computed. We override it explicitly:
+    //
+    //   - If the user sets SRTFORGE_PROJECT_ROOT in their environment,
+    //     pass it through.
+    //   - Otherwise, in dev (debug) builds, point at the parent of the
+    //     working directory — Tauri runs in `srtforge-studio/` and the
+    //     parent is the Srtforge repo root with `models/` inside.
+    //   - In release builds, leave it unset; srtforge/config.py will fall
+    //     back to `<exe dir>/models`, the install convention.
+    if let Ok(explicit) = std::env::var("SRTFORGE_PROJECT_ROOT") {
+        sidecar = sidecar.env("SRTFORGE_PROJECT_ROOT", explicit);
+    } else if cfg!(debug_assertions) {
+        if let Some(parent) = std::env::current_dir().ok().and_then(|cwd| {
+            cwd.parent().map(|p| p.to_path_buf())
+        }) {
+            sidecar = sidecar.env("SRTFORGE_PROJECT_ROOT", parent.display().to_string());
+        }
+    }
 
     let (mut rx, child) = sidecar
         .spawn()
