@@ -30,12 +30,12 @@ export interface LogLine {
 
 export interface Settings {
   // Compute
-  device: "auto" | "gpu" | "cpu";
+  device: "auto" | "cuda" | "cpu";
   gpuPct: number;
   fp32: boolean;
   preferGpu: boolean;
   // Separation
-  sep: "fv4" | "demucs" | "off";
+  sep: "fv4" | "none";
   preferCenter: boolean;
   sepHz: number;
   allowUntaggedEnglish: boolean;
@@ -53,8 +53,8 @@ export interface Settings {
   burn: boolean;
   outputDir: string;
   tempDir: string;
-  style: "netflix" | "default";
-  softEmbed: "auto" | "always" | "never";
+  style: "netflix" | "bbc" | "custom";
+  softEmbed: "auto" | "mkvtoolnix" | "ffmpeg";
   trackTitle: string;
   trackLang: string;
   defaultTrack: boolean;
@@ -64,7 +64,7 @@ export interface Settings {
   dumpWords: boolean;
   freeGpuOnStop: boolean;
   // FFmpeg
-  extract: "center" | "stereo_mix" | "dual_mono_center";
+  extract: "stereo_mix" | "dual_mono_center";
   filterChain: string;
   // Gemini
   geminiEnabled: boolean;
