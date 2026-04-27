@@ -81,18 +81,17 @@ fn spawn_worker(app: &AppHandle, state: &WorkerState) -> anyhow::Result<()> {
     //
     //   - If the user sets SRTFORGE_PROJECT_ROOT in their environment,
     //     pass it through.
-    //   - Otherwise, in dev (debug) builds, point at the parent of the
-    //     working directory — Tauri runs in `srtforge-studio/` and the
-    //     parent is the Srtforge repo root with `models/` inside.
-    //   - In release builds, leave it unset; srtforge/config.py will fall
-    //     back to `<exe dir>/models`, the install convention.
+    //   - Otherwise, in dev (debug) builds, walk up from cwd until we
+    //     find a directory that contains a `models/` subdirectory.
+    //     `pnpm tauri dev` runs from `src-tauri/`, so the search has to
+    //     climb two levels (or more) to reach the Srtforge repo root.
+    //   - In release builds, leave it unset; srtforge/config.py falls back
+    //     to `<exe dir>/models`, the install convention.
     if let Ok(explicit) = std::env::var("SRTFORGE_PROJECT_ROOT") {
         sidecar = sidecar.env("SRTFORGE_PROJECT_ROOT", explicit);
     } else if cfg!(debug_assertions) {
-        if let Some(parent) = std::env::current_dir().ok().and_then(|cwd| {
-            cwd.parent().map(|p| p.to_path_buf())
-        }) {
-            sidecar = sidecar.env("SRTFORGE_PROJECT_ROOT", parent.display().to_string());
+        if let Some(root) = find_dev_project_root() {
+            sidecar = sidecar.env("SRTFORGE_PROJECT_ROOT", root.display().to_string());
         }
     }
 
@@ -189,6 +188,23 @@ fn send_to_worker(state: &WorkerState, req: &WorkerRequest) -> Result<(), String
     let tx = guard.as_ref().ok_or("worker not running")?;
     tx.send(payload).map_err(|e| format!("worker channel closed: {e}"))?;
     Ok(())
+}
+
+/// Walk up from cwd until a directory containing `models/` is found. The
+/// dev launch path is `srtforge-studio/src-tauri/` (where `cargo run` is
+/// invoked), and the Srtforge repo root sits two levels up. Stops after a
+/// few ancestors so we never wander out of the repo.
+fn find_dev_project_root() -> Option<std::path::PathBuf> {
+    let start = std::env::current_dir().ok()?;
+    let mut cur: Option<&std::path::Path> = Some(start.as_path());
+    for _ in 0..6 {
+        let dir = cur?;
+        if dir.join("models").is_dir() {
+            return Some(dir.to_path_buf());
+        }
+        cur = dir.parent();
+    }
+    None
 }
 
 #[tauri::command]
