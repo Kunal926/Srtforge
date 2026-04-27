@@ -1,6 +1,5 @@
 import { create } from "zustand";
 
-import { STAGES } from "./lib/stages";
 import type {
   Density,
   FileStatus,
@@ -164,91 +163,84 @@ export const useUi = create<UiState>((set, get) => ({
   },
 
   handleWorkerEvent: (ev) => {
+    // Event names match srtforge/cli.py worker subcommand. The worker
+    // doesn't emit progress/stage/log streams today, so the UI stays
+    // pinned at "processing" between job_started and srt_written/
+    // job_completed. Adding granular events is a Python-side TODO.
     switch (ev.event) {
-      case "queued": {
-        const id = (ev as { id: string }).id;
-        const file = (ev as { file: string }).file;
-        const meta = (ev as { meta?: Partial<QueueFile> }).meta ?? {};
+      case "worker_starting":
+      case "worker_preload_skipped":
+        set({ running: false });
+        break;
+      case "worker_ready":
+        set({ running: true });
+        get().showToast("Worker ready");
+        break;
+      case "worker_stopping":
+      case "terminated":
+        set({ running: false });
+        break;
+      case "worker_preload_failed": {
+        const error = (ev as unknown as { error?: string }).error ?? "preload failed";
+        get().showToast(`Worker preload failed: ${error}`);
+        break;
+      }
+      case "job_started": {
+        const id = (ev as unknown as { id: string }).id;
+        const file = (ev as unknown as { file?: string }).file ?? "";
         const name = file.split(/[\\/]/).pop() ?? file;
-        const fresh: QueueFile = {
-          id,
-          name,
-          path: file,
-          duration: meta.duration ?? "—",
-          durationSec: meta.durationSec ?? 0,
-          sampleRate: meta.sampleRate ?? 48,
-          channels: meta.channels ?? 2,
-          fps: meta.fps ?? "—",
-          codec: meta.codec ?? "—",
-          status: "queued",
-          progress: 0,
-          eta: "—",
-          stage: 0,
-        };
-        set((s) => ({ files: [...s.files, fresh] }));
+        set((s) => {
+          const exists = s.files.some((f) => f.id === id);
+          if (exists) {
+            return {
+              files: s.files.map((f) =>
+                f.id === id ? { ...f, status: "processing" as FileStatus } : f,
+              ),
+              selectedId: id,
+            };
+          }
+          // Worker started a job we don't know about — synthesize a row.
+          const fresh: QueueFile = {
+            id,
+            name,
+            path: file,
+            duration: "—",
+            durationSec: 0,
+            sampleRate: 48,
+            channels: 2,
+            fps: "—",
+            codec: "—",
+            status: "processing",
+            progress: 0,
+            eta: "—",
+            stage: 0,
+          };
+          return { files: [...s.files, fresh], selectedId: id };
+        });
         break;
       }
-      case "started": {
-        const id = (ev as { id: string }).id;
-        set((s) => ({
-          files: s.files.map((f) =>
-            f.id === id ? { ...f, status: "processing" as FileStatus } : f,
-          ),
-          selectedId: id,
-          running: true,
-          paused: false,
-        }));
-        break;
-      }
-      case "stage": {
-        const id = (ev as { id: string }).id;
-        const stage = (ev as { stage: number }).stage;
-        set((s) => ({
-          files: s.files.map((f) => (f.id === id ? { ...f, stage } : f)),
-        }));
-        break;
-      }
-      case "progress": {
-        const id = (ev as { id: string }).id;
-        const progress = (ev as { progress: number }).progress;
-        const eta = (ev as { eta?: string }).eta ?? "—";
+      case "srt_written":
+      case "job_completed": {
+        const id = (ev as unknown as { id: string }).id;
+        const path = (ev as unknown as { path?: string }).path;
         set((s) => ({
           files: s.files.map((f) =>
             f.id === id
               ? {
                   ...f,
-                  progress,
-                  eta,
-                  stage: Math.min(STAGES.length - 1, Math.floor(progress * STAGES.length)),
+                  status: "done" as FileStatus,
+                  progress: 1,
+                  eta: "✓",
+                  path: path ?? f.path,
                 }
               : f,
           ),
         }));
         break;
       }
-      case "log": {
-        const line: LogLine = {
-          t: (ev as { t?: string }).t ?? "",
-          lvl: (ev as { lvl?: string }).lvl ?? "info",
-          msg: (ev as { msg?: string }).msg ?? "",
-        };
-        set((s) => ({ logs: [...s.logs.slice(-499), line] }));
-        break;
-      }
-      case "srt_written": {
-        const id = (ev as { id: string }).id;
-        set((s) => ({
-          files: s.files.map((f) =>
-            f.id === id
-              ? { ...f, status: "done" as FileStatus, progress: 1, eta: "✓" }
-              : f,
-          ),
-        }));
-        break;
-      }
       case "job_failed": {
-        const id = (ev as { id: string }).id;
-        const error = (ev as { error: string }).error;
+        const id = (ev as unknown as { id: string }).id;
+        const error = (ev as unknown as { error: string }).error;
         set((s) => ({
           files: s.files.map((f) =>
             f.id === id ? { ...f, status: "error", error } : f,
@@ -257,15 +249,21 @@ export const useUi = create<UiState>((set, get) => ({
         get().showToast(`Job failed: ${error}`);
         break;
       }
-      case "paused":
-        set({ paused: true });
+      case "bad_json":
+      case "bad_payload":
+      case "unknown_action": {
+        get().showToast(`Worker rejected message: ${ev.event}`);
         break;
-      case "resumed":
-        set({ paused: false, running: true });
+      }
+      case "log": {
+        const line: LogLine = {
+          t: (ev as unknown as { t?: string }).t ?? "",
+          lvl: (ev as unknown as { lvl?: string }).lvl ?? "info",
+          msg: (ev as unknown as { msg?: string }).msg ?? "",
+        };
+        set((s) => ({ logs: [...s.logs.slice(-499), line] }));
         break;
-      case "terminated":
-        set({ running: false });
-        break;
+      }
     }
   },
 }));
