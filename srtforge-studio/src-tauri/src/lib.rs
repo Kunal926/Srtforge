@@ -273,6 +273,25 @@ fn open_path(path: String) -> Result<(), String> {
     }
 }
 
+/// Resolve the absolute path of `<project_root>/logs/`. The Tauri shell
+/// already pins SRTFORGE_PROJECT_ROOT at startup (so the worker can find
+/// `models/`); we use the same root for runtime logs.
+#[tauri::command]
+fn get_logs_dir() -> Result<String, String> {
+    let root = std::env::var("SRTFORGE_PROJECT_ROOT")
+        .ok()
+        .map(std::path::PathBuf::from)
+        .or_else(find_dev_project_root)
+        .or_else(|| {
+            // Production fallback: <exe dir>/logs.
+            std::env::current_exe()
+                .ok()
+                .and_then(|p| p.parent().map(|p| p.to_path_buf()))
+        })
+        .ok_or_else(|| "could not resolve project root".to_string())?;
+    Ok(root.join("logs").display().to_string())
+}
+
 /// Probe a media file with `ffprobe` and return enough metadata to fill in
 /// a queue row's Duration / sample rate / channels / fps / codec cells.
 /// The Tauri shell calls this right after the user adds files; the Python
@@ -380,8 +399,13 @@ fn probe_file(path: String) -> Result<ProbeResult, String> {
 fn reveal_in_folder(path: String) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
-        std::process::Command::new("explorer")
-            .arg(format!("/select,{path}"))
+        // explorer.exe has its own command-line parser that doesn't follow
+        // the standard Windows escaping rules. Rust's auto-quoting wraps
+        // the whole `/select,<path with spaces>` in quotes, which breaks
+        // the `/select,` form. `raw_arg` lets us write the cmdline ourselves.
+        use std::os::windows::process::CommandExt;
+        std::process::Command::new("explorer.exe")
+            .raw_arg(format!("/select,\"{path}\""))
             .spawn()
             .map(|_| ())
             .map_err(|e| e.to_string())
@@ -423,6 +447,7 @@ pub fn run() {
             open_path,
             reveal_in_folder,
             probe_file,
+            get_logs_dir,
         ])
         .setup(|app| {
             let handle = app.handle().clone();

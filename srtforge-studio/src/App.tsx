@@ -22,6 +22,7 @@ import {
   pickFolder,
   probeFile,
 } from "./lib/tauri";
+import { buildWorkerConfig, computeOutputPath } from "./lib/workerConfig";
 import { useUi } from "./store";
 
 export const App = () => {
@@ -173,7 +174,9 @@ export const App = () => {
     const next = files.find((f) => f.status === "queued");
     if (!next) return;
     markSending(next.id);
-    enqueue(next.path, settings, { id: next.id }).catch((e) => {
+    const cfg = buildWorkerConfig(settings);
+    const output = computeOutputPath(next.path, settings.outputDir) ?? undefined;
+    enqueue(next.path, cfg, { id: next.id, output }).catch((e) => {
       showToast(`Failed to dispatch: ${e}`);
     });
   }, [files, running, paused, settings, markSending, showToast]);
