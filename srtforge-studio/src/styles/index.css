@@ -1663,8 +1663,8 @@ button { font-family: inherit; }
    ============================================================ */
 .output-split { position: relative; }
 .output-menu {
-  position: absolute;
-  right: 0; top: calc(100% + 4px);
+  /* Position is set inline via fixed coordinates so the menu escapes
+     overflow:hidden ancestors (e.g. .queue-wrap, .hist-list). */
   min-width: 200px;
   background: var(--bg-elev-1);
   border: 1px solid var(--line);

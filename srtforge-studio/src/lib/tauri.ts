@@ -28,6 +28,17 @@ export const openPath = (path: string): Promise<void> =>
 export const revealInFolder = (path: string): Promise<void> =>
   invoke("reveal_in_folder", { path });
 
+export interface ProbeResult {
+  duration_sec: number;
+  sample_rate: number;
+  channels: number;
+  codec: string;
+  fps: string;
+}
+
+export const probeFile = (path: string): Promise<ProbeResult> =>
+  invoke<ProbeResult>("probe_file", { path });
+
 export const onWorkerEvent = (
   handler: (ev: WorkerEvent) => void,
 ): Promise<UnlistenFn> =>

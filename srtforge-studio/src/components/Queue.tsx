@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { I } from "../icons";
 import { locateFile } from "../lib/locate";
@@ -106,10 +106,22 @@ const fileExt = (n: string) => (n.split(".").pop() ?? "").toUpperCase();
 
 interface OutputMenuProps {
   onPick: (kind: "srt" | "log" | "folder") => void;
+  /** Anchor coordinates in viewport space (right + top of the button). */
+  anchor: { right: number; top: number };
 }
 
-const OutputMenu = ({ onPick }: OutputMenuProps) => (
-  <div className="output-menu" onClick={(e) => e.stopPropagation()}>
+// Rendered with `position: fixed` against viewport coords so the menu
+// escapes any `overflow: hidden` ancestor (the queue/history list).
+const OutputMenu = ({ onPick, anchor }: OutputMenuProps) => (
+  <div
+    className="output-menu"
+    style={{
+      position: "fixed",
+      right: anchor.right,
+      top: anchor.top,
+    }}
+    onClick={(e) => e.stopPropagation()}
+  >
     <button onClick={() => onPick("srt")}>
       <I.Done size={14} /> SRT file
     </button>
@@ -127,32 +139,51 @@ interface OutputSplitProps {
 }
 
 export const OutputSplitButton = ({ onLocate }: OutputSplitProps) => {
-  const [open, setOpen] = useState(false);
+  const [anchor, setAnchor] = useState<{ right: number; top: number } | null>(
+    null,
+  );
+  const btnRef = useRef<HTMLButtonElement>(null);
   useEffect(() => {
-    if (!open) return;
-    const close = () => setOpen(false);
+    if (!anchor) return;
+    const close = () => setAnchor(null);
     const t = setTimeout(() => window.addEventListener("click", close, { once: true }), 0);
+    // Reposition on scroll/resize since `position: fixed` is viewport-anchored.
+    window.addEventListener("scroll", close, true);
+    window.addEventListener("resize", close);
     return () => {
       clearTimeout(t);
       window.removeEventListener("click", close);
+      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("resize", close);
     };
-  }, [open]);
+  }, [anchor]);
   return (
     <div className="output-split">
       <button
+        ref={btnRef}
         className="row-action"
         title="Open output"
         onClick={(e) => {
           e.stopPropagation();
-          setOpen((v) => !v);
+          if (anchor) {
+            setAnchor(null);
+            return;
+          }
+          const r = btnRef.current?.getBoundingClientRect();
+          if (!r) return;
+          setAnchor({
+            right: window.innerWidth - r.right,
+            top: r.bottom + 4,
+          });
         }}
       >
         <I.FolderOpen size={14} />
       </button>
-      {open && (
+      {anchor && (
         <OutputMenu
+          anchor={anchor}
           onPick={(k) => {
-            setOpen(false);
+            setAnchor(null);
             onLocate(k);
           }}
         />
@@ -207,9 +238,9 @@ export const QueueTable = ({ files }: QueueTableProps) => {
           <StatusPill s={f.status} progress={f.progress} />
           <span className="duration">{f.duration}</span>
           <div className="metapills">
-            <span className="pill">{f.sampleRate} kHz</span>
-            <span className="pill">{f.channels} ch</span>
-            <span className="pill">{f.fps} fps</span>
+            {f.sampleRate > 0 && <span className="pill">{f.sampleRate} kHz</span>}
+            {f.channels > 0 && <span className="pill">{f.channels} ch</span>}
+            {f.fps !== "—" && <span className="pill">{f.fps} fps</span>}
           </div>
           <span className={`eta ${f.eta === "—" ? "dim" : ""}`}>{f.eta}</span>
           <div className="progress" style={{ opacity: f.status === "queued" ? 0.35 : 1 }}>
@@ -298,11 +329,11 @@ export const QueueCards = ({ files }: QueueCardsProps) => {
             <div>
               <div className="filename">{f.name}</div>
               <div className="meta" style={{ marginTop: 6 }}>
-                <span className="pill">{f.duration}</span>
-                <span className="pill">{f.sampleRate} kHz</span>
-                <span className="pill">{f.channels} ch</span>
-                <span className="pill">{f.fps} fps</span>
-                <span className="pill">{f.codec}</span>
+                {f.duration !== "—" && <span className="pill">{f.duration}</span>}
+                {f.sampleRate > 0 && <span className="pill">{f.sampleRate} kHz</span>}
+                {f.channels > 0 && <span className="pill">{f.channels} ch</span>}
+                {f.fps !== "—" && <span className="pill">{f.fps} fps</span>}
+                {f.codec !== "—" && <span className="pill">{f.codec}</span>}
               </div>
             </div>
             <StatusPill s={f.status} progress={f.progress} />
