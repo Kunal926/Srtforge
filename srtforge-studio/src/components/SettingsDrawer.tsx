@@ -1,63 +1,88 @@
+// Settings drawer — Basic / Performance / Advanced tabs.
+// Mirrors the Claude-Design prototype 1:1 (see project/srtforge_studio/
+// settings.jsx in the design bundle).
+
 import { useState } from "react";
 
 import { I } from "../icons";
+import { pickFolder } from "../lib/tauri";
 import { useUi } from "../store";
-import type { Density, Layout, Theme } from "../types";
-import {
-  Group,
-  NumInput,
-  PathPicker,
-  Row,
-  Seg,
-  Select,
-  Text,
-  Toggle,
-} from "./settings/Field";
+import type { Settings } from "../types";
+import { Group, Row, Toggle } from "./settings/Field";
 
 type Tab = "basic" | "performance" | "advanced";
 
-// Some fields are visible in the UI but the current Python pipeline
-// doesn't honor them yet (they were used by the legacy PySide6 GUI for
-// post-pipeline embed/burn steps). Marked here so we can flag them with
-// a small badge so the user isn't surprised when toggling has no effect.
-const NOT_WIRED_NOTE = "Stored in settings — not yet honored by the pipeline.";
+// Picking a model implies the engine. We auto-set `engine` so
+// buildWorkerConfig() picks the right pipeline.
+const engineForModel = (model: string): Settings["engine"] =>
+  model.includes("whisper") ? "whisper" : "parakeet";
+
+interface PathRowProps {
+  value: string;
+  onChange: (v: string) => void;
+}
+
+const PathRow = ({ value, onChange }: PathRowProps) => (
+  <div style={{ display: "flex", gap: 8, minWidth: 0 }}>
+    <input
+      className="input mono wide"
+      style={{ flex: 1, minWidth: 0 }}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+    />
+    <button
+      className="btn btn-ghost"
+      style={{ flexShrink: 0 }}
+      onClick={async () => {
+        const picked = await pickFolder();
+        if (picked) onChange(picked);
+      }}
+    >
+      Browse…
+    </button>
+  </div>
+);
 
 export const SettingsDrawer = () => {
   const open = useUi((s) => s.settingsOpen);
-  const close = () => useUi.getState().setSettingsOpen(false);
+  const onClose = () => useUi.getState().setSettingsOpen(false);
   const settings = useUi((s) => s.settings);
   const setSetting = useUi((s) => s.setSetting);
   const theme = useUi((s) => s.theme);
   const setTheme = useUi((s) => s.setTheme);
-  const layout = useUi((s) => s.layout);
-  const setLayout = useUi((s) => s.setLayout);
-  const density = useUi((s) => s.density);
-  const setDensity = useUi((s) => s.setDensity);
+  const resetSettings = useUi((s) => s.resetSettings);
+  const showToast = useUi((s) => s.showToast);
   const [tab, setTab] = useState<Tab>("basic");
 
   return (
     <>
-      <div className={`scrim ${open ? "open" : ""}`} onClick={close} />
-      <div className={`drawer ${open ? "open" : ""}`}>
+      <div className={`scrim ${open ? "open" : ""}`} onClick={onClose} />
+      <aside className={`drawer ${open ? "open" : ""}`} aria-hidden={!open}>
         <header>
           <h3>Settings</h3>
-          <button className="btn btn-ghost" onClick={close}>
-            <I.X size={14} />
+          <button className="btn btn-ghost" onClick={onClose}>
+            <I.X size={14} /> Close
           </button>
         </header>
 
         <div className="body">
-          <div className="set-tabs">
-            <button className={tab === "basic" ? "active" : ""} onClick={() => setTab("basic")}>
+          <div className="set-tabs" role="tablist">
+            <button
+              role="tab"
+              className={tab === "basic" ? "active" : ""}
+              onClick={() => setTab("basic")}
+            >
               Basic
             </button>
             <button
+              role="tab"
               className={tab === "performance" ? "active" : ""}
               onClick={() => setTab("performance")}
             >
               Performance
             </button>
             <button
+              role="tab"
               className={tab === "advanced" ? "active" : ""}
               onClick={() => setTab("advanced")}
             >
@@ -68,120 +93,216 @@ export const SettingsDrawer = () => {
           {tab === "basic" && (
             <div className="set-pane">
               <Group title="Appearance">
-                <Row label="Theme" desc="Light · Dark · Forge">
-                  <Seg
-                    options={[
-                      { value: "light", label: "Light" },
-                      { value: "dark", label: "Dark" },
-                      { value: "forge", label: "Forge" },
-                    ]}
-                    value={theme}
-                    onChange={(v) => setTheme(v as Theme)}
-                  />
-                </Row>
-                <Row label="Queue layout" desc="Spacious table or compact cards">
-                  <Seg
-                    options={[
-                      { value: "hybrid", label: "Hybrid" },
-                      { value: "card", label: "Cards" },
-                    ]}
-                    value={layout}
-                    onChange={(v) => setLayout(v as Layout)}
-                  />
-                </Row>
-                <Row label="Row density">
-                  <Seg
-                    options={[
-                      { value: "comfortable", label: "Comfortable" },
-                      { value: "compact", label: "Compact" },
-                    ]}
-                    value={density}
-                    onChange={(v) => setDensity(v as Density)}
-                  />
+                <Row
+                  label="Theme"
+                  desc="Light is closest to Windows defaults. Forge is a warm charcoal with ember accent."
+                >
+                  <div className="seg">
+                    <button
+                      className={theme === "light" ? "active" : ""}
+                      onClick={() => setTheme("light")}
+                    >
+                      Light
+                    </button>
+                    <button
+                      className={theme === "dark" ? "active" : ""}
+                      onClick={() => setTheme("dark")}
+                    >
+                      Dark
+                    </button>
+                    <button
+                      className={theme === "forge" ? "active" : ""}
+                      onClick={() => setTheme("forge")}
+                    >
+                      Forge
+                    </button>
+                  </div>
                 </Row>
               </Group>
 
-              <Group title="Output">
-                <Row label="Output folder" desc="Where SRT files are written">
-                  <PathPicker
-                    value={settings.outputDir}
-                    onChange={(v) => setSetting("outputDir", v)}
-                  />
-                </Row>
-                <Row label="Replace original" desc={NOT_WIRED_NOTE} compact>
-                  <Toggle
-                    value={settings.replaceOriginal}
-                    onChange={(v) => setSetting("replaceOriginal", v)}
-                  />
-                </Row>
-                <Row label="Sidecar .srt next to media" desc={NOT_WIRED_NOTE} compact>
-                  <Toggle
-                    value={settings.sidecarSrt}
-                    onChange={(v) => setSetting("sidecarSrt", v)}
-                  />
-                </Row>
-                <Row label="Embed soft track" desc={NOT_WIRED_NOTE} compact>
-                  <Toggle
-                    value={settings.embed}
-                    onChange={(v) => setSetting("embed", v)}
-                  />
-                </Row>
-                <Row label="Burn into video" desc={NOT_WIRED_NOTE} compact>
-                  <Toggle
-                    value={settings.burn}
-                    onChange={(v) => setSetting("burn", v)}
-                  />
+              <Group title="Device">
+                <Row
+                  label="Inference device"
+                  desc="Auto-detected GPU. Falls back to CPU if unavailable."
+                >
+                  <div className="seg">
+                    <button
+                      className={settings.device === "auto" ? "active" : ""}
+                      onClick={() => setSetting("device", "auto")}
+                    >
+                      Auto
+                    </button>
+                    <button
+                      className={settings.device === "cuda" ? "active" : ""}
+                      onClick={() => setSetting("device", "cuda")}
+                    >
+                      GPU
+                    </button>
+                    <button
+                      className={settings.device === "cpu" ? "active" : ""}
+                      onClick={() => setSetting("device", "cpu")}
+                    >
+                      CPU
+                    </button>
+                  </div>
                 </Row>
               </Group>
 
-              <Group title="Subtitle track">
-                <Row label="Style preset">
-                  <Seg
-                    options={[
-                      { value: "netflix", label: "Netflix" },
-                      { value: "default", label: "Default" },
-                    ]}
-                    value={settings.style}
-                    onChange={(v) => setSetting("style", v as "netflix" | "default")}
+              <Group title="Embed subtitles (soft track)">
+                <Row
+                  label="Embed in container"
+                  desc="Mux .srt as a soft track via mkvmerge."
+                  compact
+                >
+                  <Toggle
+                    on={settings.embed}
+                    onClick={() => setSetting("embed", !settings.embed)}
                   />
                 </Row>
-                <Row label="Soft-embed method" desc="Auto, ffmpeg, or mkvmerge">
-                  <Seg
-                    options={[
-                      { value: "auto", label: "Auto" },
-                      { value: "always", label: "Always" },
-                      { value: "never", label: "Never" },
-                    ]}
-                    value={settings.softEmbed}
-                    onChange={(v) =>
-                      setSetting("softEmbed", v as "auto" | "always" | "never")
+                <Row
+                  label="Soft-embed method"
+                  desc="Auto prefers MKVToolNix; falls back to FFmpeg remux."
+                >
+                  <div className="seg">
+                    <button
+                      className={settings.softEmbed === "auto" ? "active" : ""}
+                      onClick={() => setSetting("softEmbed", "auto")}
+                    >
+                      Auto
+                    </button>
+                    <button
+                      className={settings.softEmbed === "mkvtoolnix" ? "active" : ""}
+                      onClick={() => setSetting("softEmbed", "mkvtoolnix")}
+                    >
+                      MKVToolNix
+                    </button>
+                    <button
+                      className={settings.softEmbed === "ffmpeg" ? "active" : ""}
+                      onClick={() => setSetting("softEmbed", "ffmpeg")}
+                    >
+                      FFmpeg
+                    </button>
+                  </div>
+                </Row>
+                <Row label="Track title">
+                  <input
+                    className="input wide"
+                    value={settings.trackTitle}
+                    onChange={(e) => setSetting("trackTitle", e.target.value)}
+                  />
+                </Row>
+                <Row label="Track language">
+                  <input
+                    className="input mono"
+                    style={{ width: 96, textAlign: "right" }}
+                    value={settings.trackLang}
+                    onChange={(e) => setSetting("trackLang", e.target.value)}
+                  />
+                </Row>
+                <Row label="Set as default track" compact>
+                  <Toggle
+                    on={settings.defaultTrack}
+                    onClick={() => setSetting("defaultTrack", !settings.defaultTrack)}
+                  />
+                </Row>
+                <Row label="Mark as forced" compact>
+                  <Toggle
+                    on={settings.forcedTrack}
+                    onClick={() => setSetting("forcedTrack", !settings.forcedTrack)}
+                  />
+                </Row>
+                <Row
+                  label="Replace original video file"
+                  desc="Overwrite the source after a successful mux."
+                  compact
+                >
+                  <Toggle
+                    on={settings.replaceOriginal}
+                    onClick={() =>
+                      setSetting("replaceOriginal", !settings.replaceOriginal)
                     }
                   />
                 </Row>
-                <Row label="Track title">
-                  <Text
-                    value={settings.trackTitle}
-                    onChange={(v) => setSetting("trackTitle", v)}
-                  />
-                </Row>
-                <Row label="Track language" desc="ISO 639-2/B (3-letter)">
-                  <Text
-                    value={settings.trackLang}
-                    onChange={(v) => setSetting("trackLang", v)}
-                    mono
-                  />
-                </Row>
-                <Row label="Default track" compact>
+              </Group>
+
+              <Group title="Output options">
+                <Row label="Save .srt next to video file" compact>
                   <Toggle
-                    value={settings.defaultTrack}
-                    onChange={(v) => setSetting("defaultTrack", v)}
+                    on={settings.sidecarSrt}
+                    onClick={() => setSetting("sidecarSrt", !settings.sidecarSrt)}
                   />
                 </Row>
-                <Row label="Forced track" compact>
+                <Row
+                  label="Dump raw word-level timestamps"
+                  desc="Writes a .json next to the .srt with per-word timing."
+                  compact
+                >
                   <Toggle
-                    value={settings.forcedTrack}
-                    onChange={(v) => setSetting("forcedTrack", v)}
+                    on={settings.dumpWords}
+                    onClick={() => setSetting("dumpWords", !settings.dumpWords)}
                   />
+                </Row>
+                <Row
+                  label="Burn subtitles (hard sub)"
+                  desc="Hard-encode subtitles into the video. Slow."
+                  compact
+                >
+                  <Toggle
+                    on={settings.burn}
+                    onClick={() => setSetting("burn", !settings.burn)}
+                  />
+                </Row>
+                <Row
+                  label="Free GPU memory when stopping"
+                  desc="Releases CUDA cache between jobs."
+                  compact
+                >
+                  <Toggle
+                    on={settings.freeGpuOnStop}
+                    onClick={() =>
+                      setSetting("freeGpuOnStop", !settings.freeGpuOnStop)
+                    }
+                  />
+                </Row>
+                <Row
+                  label="Enable Gemini text correction"
+                  desc="Pass transcript through Gemini for clean-up. Configure in Performance tab."
+                  compact
+                >
+                  <Toggle
+                    on={settings.geminiEnabled}
+                    onClick={() =>
+                      setSetting("geminiEnabled", !settings.geminiEnabled)
+                    }
+                  />
+                </Row>
+              </Group>
+
+              <Group title="Subtitle style">
+                <Row
+                  label="Style"
+                  desc="Netflix house style — 42 char/line, ≥0.83 s, 17 cps."
+                >
+                  <div className="seg">
+                    <button
+                      className={settings.style === "netflix" ? "active" : ""}
+                      onClick={() => setSetting("style", "netflix")}
+                    >
+                      Netflix
+                    </button>
+                    <button
+                      className={settings.style === "bbc" ? "active" : ""}
+                      onClick={() => setSetting("style", "bbc")}
+                    >
+                      BBC
+                    </button>
+                    <button
+                      className={settings.style === "custom" ? "active" : ""}
+                      onClick={() => setSetting("style", "custom")}
+                    >
+                      Custom
+                    </button>
+                  </div>
                 </Row>
               </Group>
             </div>
@@ -189,141 +310,118 @@ export const SettingsDrawer = () => {
 
           {tab === "performance" && (
             <div className="set-pane">
-              <Group title="Compute">
-                <Row label="Device">
-                  <Seg
-                    options={[
-                      { value: "auto", label: "Auto" },
-                      { value: "gpu", label: "GPU" },
-                      { value: "cpu", label: "CPU" },
-                    ]}
-                    value={settings.device}
-                    onChange={(v) =>
-                      setSetting("device", v as "auto" | "gpu" | "cpu")
-                    }
-                  />
-                </Row>
-                <Row label="Prefer GPU" desc="Try CUDA first, fall back to CPU on failure" compact>
-                  <Toggle
-                    value={settings.preferGpu}
-                    onChange={(v) => setSetting("preferGpu", v)}
-                  />
-                </Row>
-                <Row label="GPU budget" desc="Maximum percent of VRAM the worker may use">
-                  <NumInput
-                    value={settings.gpuPct}
-                    onChange={(v) => setSetting("gpuPct", v)}
-                    min={10}
-                    max={100}
-                    step={5}
-                  />
-                </Row>
-                <Row label="Force float32" desc="Disable mixed-precision; slower but bit-exact" compact>
-                  <Toggle
-                    value={settings.fp32}
-                    onChange={(v) => setSetting("fp32", v)}
-                  />
-                </Row>
-                <Row label="Free GPU when idle" compact>
-                  <Toggle
-                    value={settings.freeGpuOnStop}
-                    onChange={(v) => setSetting("freeGpuOnStop", v)}
-                  />
-                </Row>
-              </Group>
-
-              <Group title="Vocal separation">
-                <Row label="Backend">
-                  <Seg
-                    options={[
-                      { value: "fv4", label: "FV4" },
-                      { value: "demucs", label: "Demucs" },
-                      { value: "off", label: "Off" },
-                    ]}
-                    value={settings.sep}
-                    onChange={(v) =>
-                      setSetting("sep", v as "fv4" | "demucs" | "off")
-                    }
-                  />
-                </Row>
-                <Row label="Sample rate (Hz)">
-                  <NumInput
-                    value={settings.sepHz}
-                    onChange={(v) => setSetting("sepHz", v)}
-                    min={16000}
-                    max={48000}
-                    step={100}
-                    width={140}
-                  />
-                </Row>
-                <Row label="Prefer center channel" desc="Use FC stream when available" compact>
-                  <Toggle
-                    value={settings.preferCenter}
-                    onChange={(v) => setSetting("preferCenter", v)}
-                  />
-                </Row>
-                <Row label="Allow untagged English" desc="Treat untagged streams as English-eligible" compact>
-                  <Toggle
-                    value={settings.allowUntaggedEnglish}
-                    onChange={(v) => setSetting("allowUntaggedEnglish", v)}
-                  />
-                </Row>
-              </Group>
-
-              <Group title="ASR">
-                <Row label="Engine">
-                  <Seg
-                    options={[
-                      { value: "parakeet", label: "Parakeet" },
-                      { value: "whisper", label: "Whisper" },
-                    ]}
-                    value={settings.engine}
-                    onChange={(v) =>
-                      setSetting("engine", v as "parakeet" | "whisper")
-                    }
-                  />
-                </Row>
-                <Row label="Model" desc="HuggingFace name or local path">
-                  <Text
+              <Group title="ASR engine">
+                <Row label="ASR model">
+                  <select
+                    className="input wide"
                     value={settings.asrModel}
-                    onChange={(v) => setSetting("asrModel", v)}
-                    mono
-                  />
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setSetting("asrModel", v);
+                      setSetting("engine", engineForModel(v));
+                    }}
+                  >
+                    <option value="nvidia/parakeet-tdt-0.6b-v2">
+                      Parakeet TDT 0.6B v2
+                    </option>
+                    <option value="nvidia/parakeet-tdt-1.1b">Parakeet TDT 1.1B</option>
+                    <option value="openai/whisper-large-v3">
+                      Whisper Large v3
+                    </option>
+                    <option value="openai/whisper-medium">Whisper Medium</option>
+                  </select>
                 </Row>
-                <Row label="Language" desc="ISO 639-1 (2-letter)">
-                  <Text
+                <Row
+                  label="Whisper language"
+                  desc="ISO 639-1 code, or 'auto' to detect."
+                >
+                  <input
+                    className="input mono"
+                    style={{ width: 96, textAlign: "right" }}
                     value={settings.language}
-                    onChange={(v) => setSetting("language", v)}
-                    mono
+                    onChange={(e) => setSetting("language", e.target.value)}
                   />
                 </Row>
-                <Row label="Local-attn left" desc="Parakeet rel-pos window (frames)">
-                  <NumInput
-                    value={settings.attnLeft}
-                    onChange={(v) => setSetting("attnLeft", v)}
-                    min={0}
-                    max={4096}
-                    step={64}
+                <Row
+                  label="Force float32 (Parakeet)"
+                  desc="Higher accuracy, ~30% slower than fp16."
+                  compact
+                >
+                  <Toggle
+                    on={settings.fp32}
+                    onClick={() => setSetting("fp32", !settings.fp32)}
                   />
                 </Row>
-                <Row label="Local-attn right">
-                  <NumInput
-                    value={settings.attnRight}
-                    onChange={(v) => setSetting("attnRight", v)}
-                    min={0}
-                    max={4096}
-                    step={64}
-                  />
+                <Row
+                  label="Local attention window (Parakeet)"
+                  desc="rel_pos_local_attn — left / right context tokens."
+                >
+                  <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                    <span className="dim mono" style={{ fontSize: 11 }}>
+                      Left
+                    </span>
+                    <input
+                      className="input mono"
+                      style={{ width: 72, textAlign: "right" }}
+                      value={settings.attnLeft}
+                      onChange={(e) =>
+                        setSetting(
+                          "attnLeft",
+                          parseInt(e.target.value || "0", 10),
+                        )
+                      }
+                    />
+                    <span className="dim mono" style={{ fontSize: 11 }}>
+                      Right
+                    </span>
+                    <input
+                      className="input mono"
+                      style={{ width: 72, textAlign: "right" }}
+                      value={settings.attnRight}
+                      onChange={(e) =>
+                        setSetting(
+                          "attnRight",
+                          parseInt(e.target.value || "0", 10),
+                        )
+                      }
+                    />
+                  </div>
                 </Row>
-                <Row label="Subsampling chunk factor" desc="0 disables chunking">
-                  <NumInput
-                    value={settings.subsamplingChunkFactor}
-                    onChange={(v) =>
-                      setSetting("subsamplingChunkFactor", v)
+                <Row
+                  label="Subsampling conv chunking"
+                  desc="Enable to set factor = 1; off keeps the default 0."
+                  compact
+                >
+                  <Toggle
+                    on={settings.subsamplingChunkFactor > 0}
+                    onClick={() =>
+                      setSetting(
+                        "subsamplingChunkFactor",
+                        settings.subsamplingChunkFactor > 0 ? 0 : 1,
+                      )
                     }
-                    min={0}
-                    max={32}
-                    step={1}
+                  />
+                </Row>
+              </Group>
+
+              <Group title="Gemini correction">
+                <Row label="Gemini model id">
+                  <input
+                    className="input mono wide"
+                    value={settings.geminiModel}
+                    onChange={(e) => setSetting("geminiModel", e.target.value)}
+                  />
+                </Row>
+                <Row
+                  label="Gemini API key"
+                  desc="Leave blank to use SRTFORGE_GEMINI_API_KEY environment variable."
+                >
+                  <input
+                    className="input mono wide"
+                    type="password"
+                    placeholder="Leave blank to use SRTFORGE_GEMINI_API_KEY"
+                    value={settings.geminiKey}
+                    onChange={(e) => setSetting("geminiKey", e.target.value)}
                   />
                 </Row>
               </Group>
@@ -333,92 +431,152 @@ export const SettingsDrawer = () => {
           {tab === "advanced" && (
             <div className="set-pane">
               <Group title="Paths">
-                <Row label="Temp folder" desc="Working directory for separation + ASR runs">
-                  <PathPicker
+                <Row
+                  label="Output directory"
+                  desc="Where finished .srt files (and optional muxed media) are written."
+                >
+                  <PathRow
+                    value={settings.outputDir}
+                    onChange={(v) => setSetting("outputDir", v)}
+                  />
+                </Row>
+                <Row
+                  label="Temp directory"
+                  desc="Scratch space for intermediate WAVs and isolated vocals."
+                >
+                  <PathRow
                     value={settings.tempDir}
                     onChange={(v) => setSetting("tempDir", v)}
                   />
                 </Row>
-                <Row label="FV4 config" desc="MelBand Roformer YAML">
-                  <Text
-                    value={settings.fv4Cfg}
-                    onChange={(v) => setSetting("fv4Cfg", v)}
-                    mono
+              </Group>
+
+              <Group title="Vocal separation">
+                <Row label="Separation backend">
+                  <select
+                    className="input wide"
+                    value={settings.sep}
+                    onChange={(e) =>
+                      setSetting("sep", e.target.value as "fv4" | "none")
+                    }
+                  >
+                    <option value="fv4">FV4 (recommended)</option>
+                    <option value="none">None — use raw audio</option>
+                  </select>
+                </Row>
+                <Row label="Separation sample rate (Hz)">
+                  <input
+                    className="input mono"
+                    style={{ width: 120, textAlign: "right" }}
+                    value={settings.sepHz}
+                    onChange={(e) =>
+                      setSetting("sepHz", parseInt(e.target.value || "0", 10))
+                    }
                   />
                 </Row>
-                <Row label="FV4 checkpoint">
-                  <Text
+                <Row
+                  label="Prefer center channel (separation)"
+                  desc="When 5.1 is available, use FC for cleaner dialog."
+                  compact
+                >
+                  <Toggle
+                    on={settings.preferCenter}
+                    onClick={() =>
+                      setSetting("preferCenter", !settings.preferCenter)
+                    }
+                  />
+                </Row>
+                <Row
+                  label="Allow untagged English fallback"
+                  desc="Process audio with no language tag as English."
+                  compact
+                >
+                  <Toggle
+                    on={settings.allowUntaggedEnglish}
+                    onClick={() =>
+                      setSetting(
+                        "allowUntaggedEnglish",
+                        !settings.allowUntaggedEnglish,
+                      )
+                    }
+                  />
+                </Row>
+                <Row
+                  label="FV4 config"
+                  desc="separation.fv4.cfg — MelBand Roformer YAML."
+                >
+                  <input
+                    className="input mono wide"
+                    value={settings.fv4Cfg}
+                    onChange={(e) => setSetting("fv4Cfg", e.target.value)}
+                  />
+                </Row>
+                <Row
+                  label="FV4 checkpoint"
+                  desc="separation.fv4.ckpt — model weights."
+                >
+                  <input
+                    className="input mono wide"
                     value={settings.fv4Ckpt}
-                    onChange={(v) => setSetting("fv4Ckpt", v)}
-                    mono
+                    onChange={(e) => setSetting("fv4Ckpt", e.target.value)}
                   />
                 </Row>
               </Group>
 
-              <Group title="FFmpeg">
-                <Row label="Audio extraction">
-                  <Select
+              <Group title="FFmpeg pipeline">
+                <Row
+                  label="Audio extraction mode"
+                  desc="Stereo mix is safest; dual mono center isolates dialog when an FC channel is present."
+                >
+                  <select
+                    className="input wide"
                     value={settings.extract}
-                    onChange={(v) =>
-                      setSetting("extract", v as "center" | "stereo_mix" | "dual_mono_center")
+                    onChange={(e) =>
+                      setSetting(
+                        "extract",
+                        e.target.value as "stereo_mix" | "dual_mono_center",
+                      )
                     }
-                    options={[
-                      { value: "center", label: "Center channel only" },
-                      { value: "stereo_mix", label: "Stereo mix" },
-                      { value: "dual_mono_center", label: "Dual mono (center + fallback)" },
-                    ]}
-                  />
+                  >
+                    <option value="stereo_mix">Stereo Mix</option>
+                    <option value="dual_mono_center">
+                      Dual Mono (Center Isolation)
+                    </option>
+                  </select>
                 </Row>
-                <Row label="Filter chain" desc="Applied to extracted audio before separation">
+                <Row
+                  label="FFmpeg filter chain"
+                  desc="Applied before resample to 16 kHz."
+                >
                   <textarea
-                    className="input wide mono"
+                    className="input mono wide"
                     rows={3}
+                    style={{
+                      height: "auto",
+                      padding: 8,
+                      lineHeight: 1.45,
+                      resize: "vertical",
+                    }}
                     value={settings.filterChain}
                     onChange={(e) => setSetting("filterChain", e.target.value)}
                   />
                 </Row>
               </Group>
 
-              <Group title="Gemini correction">
-                <Row label="Enable Gemini pass" desc="Send transcript to Gemini for grammar/style fixes" compact>
+              <Group title="Sonarr integration">
+                <Row label="Custom script enabled" compact>
                   <Toggle
-                    value={settings.geminiEnabled}
-                    onChange={(v) => setSetting("geminiEnabled", v)}
+                    on={settings.sonarr}
+                    onClick={() => setSetting("sonarr", !settings.sonarr)}
                   />
                 </Row>
-                <Row label="Model">
-                  <Text
-                    value={settings.geminiModel}
-                    onChange={(v) => setSetting("geminiModel", v)}
-                    mono
-                  />
-                </Row>
-                <Row label="API key" desc="Stored locally; never transmitted except to Google">
-                  <input
-                    type="password"
-                    className="input wide mono"
-                    value={settings.geminiKey}
-                    placeholder="AIza…"
-                    onChange={(e) => setSetting("geminiKey", e.target.value)}
-                  />
-                </Row>
-              </Group>
-
-              <Group title="Integrations">
-                <Row label="Sonarr custom-script hook" desc={NOT_WIRED_NOTE} compact>
-                  <Toggle
-                    value={settings.sonarr}
-                    onChange={(v) => setSetting("sonarr", v)}
-                  />
-                </Row>
-              </Group>
-
-              <Group title="Debug">
-                <Row label="Dump word timestamps" desc="Write a per-word JSON next to the SRT" compact>
-                  <Toggle
-                    value={settings.dumpWords}
-                    onChange={(v) => setSetting("dumpWords", v)}
-                  />
+                <Row label="Trigger events">
+                  <span
+                    className="mono"
+                    style={{ fontSize: 11, color: "var(--text-2)" }}
+                  >
+                    On Import · On Upgrade
+                  </span>
                 </Row>
               </Group>
             </div>
@@ -428,16 +586,29 @@ export const SettingsDrawer = () => {
         <footer>
           <button
             className="btn btn-ghost"
-            onClick={() => useUi.getState().resetSettings()}
-            title="Reset all settings to factory defaults (theme + queue layout preserved)"
+            onClick={() => {
+              resetSettings();
+              showToast("Settings reset to defaults");
+            }}
           >
             Reset to defaults
           </button>
-          <button className="btn btn-primary" onClick={close}>
-            Done
+          <button
+            className="btn btn-ghost"
+            onClick={() => showToast("ETA history is not yet recorded")}
+            title="Will clear the per-file ETA prediction cache once that history is wired up."
+          >
+            Clear ETA history
+          </button>
+          <span style={{ flex: 1 }} />
+          <button className="btn btn-ghost" onClick={onClose}>
+            Cancel
+          </button>
+          <button className="btn btn-primary" onClick={onClose}>
+            OK
           </button>
         </footer>
-      </div>
+      </aside>
     </>
   );
 };
