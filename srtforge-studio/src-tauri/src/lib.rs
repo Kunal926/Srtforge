@@ -28,6 +28,18 @@ enum WorkerRequest {
         output: Option<String>,
         config: serde_json::Value,
     },
+    /// Standalone audio normalize/transcode (Normalize tool).
+    Normalize {
+        id: String,
+        file: String,
+        config: serde_json::Value,
+    },
+    /// Standalone vocal/instrumental separation (BGM tool).
+    Separate {
+        id: String,
+        file: String,
+        config: serde_json::Value,
+    },
     Shutdown,
     /// Tells the worker to call torch.cuda.empty_cache() without
     /// terminating. Wired to the "Free GPU memory when stopping" toggle.
@@ -249,6 +261,44 @@ fn clear_gpu_cache(state: State<'_, WorkerState>) -> Result<(), String> {
     send_to_worker(&state, &WorkerRequest::ClearGpuCache)
 }
 
+#[tauri::command]
+fn normalize(
+    state: State<'_, WorkerState>,
+    file: String,
+    id: Option<String>,
+    config: serde_json::Value,
+) -> Result<String, String> {
+    let id = id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    send_to_worker(
+        &state,
+        &WorkerRequest::Normalize {
+            id: id.clone(),
+            file,
+            config,
+        },
+    )?;
+    Ok(id)
+}
+
+#[tauri::command]
+fn separate(
+    state: State<'_, WorkerState>,
+    file: String,
+    id: Option<String>,
+    config: serde_json::Value,
+) -> Result<String, String> {
+    let id = id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    send_to_worker(
+        &state,
+        &WorkerRequest::Separate {
+            id: id.clone(),
+            file,
+            config,
+        },
+    )?;
+    Ok(id)
+}
+
 /// Open a file or folder with the OS's default associated application.
 /// On Windows we use `cmd /c start "" <path>` so spaces in the path
 /// don't break things and `start` resolves the registered handler for
@@ -450,6 +500,8 @@ pub fn run() {
         .manage(WorkerState::new())
         .invoke_handler(tauri::generate_handler![
             enqueue,
+            normalize,
+            separate,
             shutdown_worker,
             restart_worker,
             clear_gpu_cache,

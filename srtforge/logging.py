@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from time import monotonic
-from typing import TYPE_CHECKING, Iterator, Optional
+from typing import TYPE_CHECKING, Callable, Iterator, Optional
 from uuid import uuid4
 
 from .config import PROJECT_ROOT
@@ -21,6 +21,38 @@ if TYPE_CHECKING:
 
 _console: Optional["Console"] = None
 _cleanup_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="log-cleanup")
+
+# Module-level event emitter for stage transitions. Installed by callers
+# that want pipeline timing events surfaced (typically the worker JSON
+# loop in :mod:`srtforge.cli`); left as ``None`` in plain CLI usage so
+# `srtforge run ...` stays quiet on stdout.
+_event_emitter: Optional[Callable[[dict], None]] = None
+
+
+def set_event_emitter(cb: Optional[Callable[[dict], None]]) -> None:
+    """Install (or clear) a callback for ``RunLogger.step`` enter/exit events.
+
+    The callback receives a dict with at least ``event``, ``stage``, and
+    ``state`` keys; the worker typically installs a closure that injects
+    the current job id and forwards to the JSON line emitter. Pass
+    ``None`` to clear after the job finishes.
+    """
+
+    global _event_emitter
+    _event_emitter = cb
+
+
+def _emit_stage(payload: dict) -> None:
+    """Best-effort dispatch to the registered emitter (swallows exceptions)."""
+
+    cb = _event_emitter
+    if cb is None:
+        return
+    try:
+        cb(payload)
+    except Exception:
+        # A broken emitter must never take down the pipeline.
+        pass
 
 
 def _shutdown_executor() -> None:
@@ -116,21 +148,39 @@ def cleanup_old_logs(max_age_hours: int = 24, *, wait: bool = True, timeout: flo
 
 @dataclass(slots=True)
 class _TimedStep:
-    """Context manager recording the duration of a logging step."""
+    """Context manager recording the duration of a logging step.
+
+    When constructed with a ``stage`` identifier, also pushes ``stage``
+    events through the module-level emitter so the GUI can light up
+    per-stage progress dots without the pipeline knowing the GUI exists.
+    """
 
     logger: "RunLogger"
     label: str
+    stage: Optional[str] = None
     _start: float = 0.0
 
     def __enter__(self) -> None:
         self.logger._log(f"START {self.label}")
         self._start = monotonic()
+        if self.stage:
+            _emit_stage({"event": "stage", "stage": self.stage, "state": "start"})
 
     def __exit__(self, exc_type, exc, tb) -> None:  # type: ignore[override]
         duration = monotonic() - getattr(self, "_start", monotonic())
         if exc_type:
             self.logger._log(f"ERROR in {self.label}: {exc}")
         self.logger._log(f"END {self.label} – {duration:.2f}s")
+        if self.stage:
+            _emit_stage(
+                {
+                    "event": "stage",
+                    "stage": self.stage,
+                    "state": "end",
+                    "seconds": round(duration, 3),
+                    "ok": exc_type is None,
+                }
+            )
 
 
 class RunLogger:
@@ -191,10 +241,14 @@ class RunLogger:
         self._detail = reason
         self._log(f"SKIPPED: {reason}")
 
-    def step(self, label: str) -> _TimedStep:
-        """Return a context manager recording the duration of ``label``."""
+    def step(self, label: str, *, stage: Optional[str] = None) -> _TimedStep:
+        """Return a context manager recording the duration of ``label``.
 
-        return _TimedStep(self, label)
+        Pass ``stage`` (e.g. ``"probe"``, ``"asr"``) to also emit
+        ``stage`` events through the module-level emitter on enter/exit.
+        """
+
+        return _TimedStep(self, label, stage=stage)
 
     def close(self) -> None:
         """Finalize the log with the run summary."""
@@ -218,5 +272,6 @@ __all__ = [
     "RunLogger",
     "cleanup_old_logs",
     "get_console",
+    "set_event_emitter",
     "status",
 ]
