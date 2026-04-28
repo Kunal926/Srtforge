@@ -1,0 +1,15 @@
+# Tauri dev watcher ignore list. The watcher restarts the Rust shell
+# when anything under src-tauri/ changes; without these excludes a
+# transcription run writes a new .srt to src-tauri/output/ and the app
+# auto-restarts mid-flight.
+
+# Pipeline outputs (the worker writes here when paths.output_dir
+# resolves relative to the cargo run cwd, which is src-tauri/).
+output/
+
+# Sidecar payload extracted on first run (large, irrelevant to Rust).
+binaries/
+
+# Transient run dirs created by audio_separator and the pipeline.
+tmp/
+logs/
