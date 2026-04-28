@@ -11,10 +11,34 @@ from typing import Optional
 
 import typer
 
+from .config import PROJECT_ROOT
 from .logging import get_console
 from .pipeline import PipelineConfig, run_pipeline
 from .settings import load_settings
 from .sonarr_hook import main as sonarr_main
+
+
+def _resolve_under_project_root(value: str | Path | None) -> Optional[Path]:
+    """Resolve a path string against PROJECT_ROOT when relative.
+
+    The Tauri shell's cwd is `src-tauri/` in dev, so `Path(...).resolve()`
+    on a relative output/temp dir lands inside the watched directory and
+    triggers Tauri's dev-watcher restart. Anchor to PROJECT_ROOT instead
+    so user-typed `./output` lands where the rest of the install puts
+    things.
+    """
+
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    p = Path(text).expanduser()
+    if not p.is_absolute():
+        p = (PROJECT_ROOT / p).resolve()
+    else:
+        p = p.resolve()
+    return p
 
 app = typer.Typer(add_completion=False, help="Offline SRT generator pipeline")
 console = get_console()
@@ -108,9 +132,19 @@ def _build_pipeline_config(
 
     settings = load_settings()
     word_timestamps_out = cfg.get("word_timestamps_out")
+
+    # Honor per-job path overrides from the UI. Both relative and absolute
+    # forms are accepted; relative forms anchor to PROJECT_ROOT (NOT cwd)
+    # so the dev-mode worker doesn't write into srtforge-studio/src-tauri/.
+    paths_cfg = cfg.get("paths") or {}
+    output_directory = _resolve_under_project_root(paths_cfg.get("output_dir")) or settings.paths.output_dir
+    temp_directory = _resolve_under_project_root(paths_cfg.get("temp_dir")) or settings.paths.temp_dir
+
     return PipelineConfig(
         media_path=media_path,
         output_path=output_path,
+        output_directory=output_directory,
+        temp_dir=temp_directory,
         prefer_gpu=prefer_gpu,
         separation_prefer_gpu=bool(cfg.get("separation_prefer_gpu", prefer_gpu)),
         asr_engine=str(whisper_cfg.get("engine") or settings.whisper.engine),
@@ -201,6 +235,22 @@ def worker(
             _emit_worker_event({"event": "worker_stopping"})
             break
 
+        if action == "clear_gpu_cache":
+            # Wired to the "Free GPU memory when stopping" toggle. Best-
+            # effort: skip silently if torch isn't loaded yet (no-op cost).
+            try:
+                import torch  # type: ignore
+
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                    torch.cuda.ipc_collect()
+                    _emit_worker_event({"event": "gpu_cache_cleared"})
+                else:
+                    _emit_worker_event({"event": "gpu_cache_skipped", "reason": "cuda_unavailable"})
+            except Exception as exc:
+                _emit_worker_event({"event": "gpu_cache_failed", "error": str(exc)})
+            continue
+
         if action != "transcribe":
             _emit_worker_event({"event": "unknown_action", "action": str(action)})
             continue
@@ -212,7 +262,7 @@ def worker(
 
         try:
             media_path = Path(str(file_str)).expanduser().resolve()
-            output_path = Path(str(out_str)).expanduser().resolve() if out_str else None
+            output_path = _resolve_under_project_root(out_str) if out_str else None
 
             _emit_worker_event({"event": "job_started", "id": job_id, "file": str(media_path)})
 
