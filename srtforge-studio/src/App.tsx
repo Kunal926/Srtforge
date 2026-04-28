@@ -16,6 +16,7 @@ import { TitleBar } from "./components/TitleBar";
 import { I } from "./icons";
 import { formatDuration, formatTotalDuration } from "./lib/format";
 import {
+  clearGpuCache,
   enqueue,
   onWorkerEvent,
   pickFiles,
@@ -163,6 +164,12 @@ export const App = () => {
     // doesn't yet support cancel/pause mid-job).
     setPaused(true);
     showToast("Pausing — current job will finish, then queue holds");
+    // Best-effort GPU cache flush, gated on the user setting. Fires
+    // immediately even if a job is mid-flight; torch.cuda.empty_cache()
+    // only releases the unused-but-cached blocks, so it's safe.
+    if (useUi.getState().settings.freeGpuOnStop) {
+      clearGpuCache().catch((e) => showToast(`GPU cache clear failed: ${e}`));
+    }
   };
 
   // Pump: send one queued file to the worker at a time when running.
