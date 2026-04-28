@@ -1,4 +1,5 @@
 import { I } from "../icons";
+import { openPath } from "../lib/tauri";
 import { useUi } from "../store";
 import type { Tab } from "../types";
 import { BrandMark } from "./BrandMark";
@@ -9,15 +10,22 @@ interface Props {
   vram: string;
 }
 
+const REPO_URL = "https://github.com/StiensGate928/Srtforge";
+
 export const Sidebar = ({ device, gpuPct, vram }: Props) => {
   const active = useUi((s) => s.active);
   const setActive = useUi((s) => s.setActive);
   const setSettingsOpen = useUi((s) => s.setSettingsOpen);
+  const showToast = useUi((s) => s.showToast);
+  const asrModel = useUi((s) => s.settings.asrModel);
   const counts = useUi((s) => ({
     queue: s.files.filter((f) => f.status === "queued" || f.status === "processing").length,
     active: s.files.find((f) => f.status === "processing") ? 1 : 0,
     done: s.files.filter((f) => f.status === "done" || f.status === "error").length,
   }));
+  // The settings store keeps the full HF id (e.g. nvidia/parakeet-tdt-0.6b-v2);
+  // surface just the basename so it fits the sidebar.
+  const modelLabel = asrModel.split("/").pop() ?? asrModel;
 
   const navBtn = (id: Tab, label: string, icon: JSX.Element, count?: number | string) => (
     <button className={active === id ? "active" : ""} onClick={() => setActive(id)}>
@@ -47,6 +55,10 @@ export const Sidebar = ({ device, gpuPct, vram }: Props) => {
             counts.active || "",
           )}
           {navBtn("history", "History", <I.Archive size={14} />, counts.done)}
+
+          <div className="nav-section">Tools</div>
+          {navBtn("normalize", "Normalize", <I.Sliders size={14} />, "")}
+          {navBtn("bgm", "BGM separation", <I.Music size={14} />, "")}
 
           <div className="nav-section">Sources</div>
           {navBtn("watch", "Watch folders", <I.Folder size={14} />, "—")}
@@ -78,7 +90,7 @@ export const Sidebar = ({ device, gpuPct, vram }: Props) => {
           </div>
           <div className="row" style={{ marginTop: 2 }}>
             <span className="label">Model</span>
-            <span className="value">parakeet-tdt-0.6b</span>
+            <span className="value" title={asrModel}>{modelLabel}</span>
           </div>
         </div>
         <div style={{ padding: "0 8px 12px", display: "flex", gap: 6 }}>
@@ -92,7 +104,10 @@ export const Sidebar = ({ device, gpuPct, vram }: Props) => {
           <button
             className="btn btn-ghost"
             style={{ width: 32, padding: 0, justifyContent: "center" }}
-            title="Help"
+            title="Help — opens the Srtforge repo on GitHub"
+            onClick={() =>
+              openPath(REPO_URL).catch((e) => showToast(`Open failed: ${e}`))
+            }
           >
             <I.Help size={14} />
           </button>

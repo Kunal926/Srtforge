@@ -142,4 +142,22 @@ export const I = {
     </Icon>
   ),
   Antenna: (p: P) => <Icon {...p} d="M5 8a8 8 0 0 1 14 0M7.5 10a5 5 0 0 1 9 0M12 12v9M9 21h6" />,
+  Tv: (p: P) => (
+    <Icon {...p}>
+      <rect x="3" y="6" width="18" height="13" rx="2" />
+      <path d="M9 22h6M8 3l4 3 4-3" />
+    </Icon>
+  ),
+  Film: (p: P) => (
+    <Icon {...p}>
+      <rect x="3" y="4" width="18" height="16" rx="2" />
+      <path d="M3 8h18M3 16h18M7 4v16M17 4v16" />
+    </Icon>
+  ),
+  Open: (p: P) => (
+    <Icon {...p}>
+      <path d="M14 4h6v6M20 4l-9 9" />
+      <path d="M20 13v5a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h5" />
+    </Icon>
+  ),
 };
