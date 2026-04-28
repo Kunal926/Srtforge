@@ -21,6 +21,10 @@ export const enqueue = (
 
 export const shutdownWorker = (): Promise<void> => invoke("shutdown_worker");
 export const restartWorker = (): Promise<void> => invoke("restart_worker");
+/** Tells the running worker to call torch.cuda.empty_cache(). Wired to
+ *  the "Free GPU memory when stopping" toggle. Cheap no-op when CUDA
+ *  isn't loaded. */
+export const clearGpuCache = (): Promise<void> => invoke("clear_gpu_cache");
 
 export const openPath = (path: string): Promise<void> =>
   invoke("open_path", { path });

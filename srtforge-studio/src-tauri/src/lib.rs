@@ -29,6 +29,9 @@ enum WorkerRequest {
         config: serde_json::Value,
     },
     Shutdown,
+    /// Tells the worker to call torch.cuda.empty_cache() without
+    /// terminating. Wired to the "Free GPU memory when stopping" toggle.
+    ClearGpuCache,
 }
 
 /// Inbound event shapes the worker emits on stdout (one JSON per line).
@@ -241,6 +244,11 @@ fn restart_worker(app: AppHandle, state: State<'_, WorkerState>) -> Result<(), S
     spawn_worker(&app, &state).map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+fn clear_gpu_cache(state: State<'_, WorkerState>) -> Result<(), String> {
+    send_to_worker(&state, &WorkerRequest::ClearGpuCache)
+}
+
 /// Open a file or folder with the OS's default associated application.
 /// On Windows we use `cmd /c start "" <path>` so spaces in the path
 /// don't break things and `start` resolves the registered handler for
@@ -444,6 +452,7 @@ pub fn run() {
             enqueue,
             shutdown_worker,
             restart_worker,
+            clear_gpu_cache,
             open_path,
             reveal_in_folder,
             probe_file,

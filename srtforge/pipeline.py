@@ -15,12 +15,14 @@ from rich.table import Table
 from .config import DEFAULT_OUTPUT_SUFFIX, FV4_CONFIG, FV4_MODEL, MODELS_DIR
 from .ffmpeg import DEFAULT_TOOLS, AudioStream, FFmpegTooling
 from .logging import RunLogger, get_console, status
+from .post import postprocess_segments
+from .post.srt_utils import write_srt as _write_srt_with_diag
 from .settings import (
     EXTRACTION_MODE_DUAL_MONO_CENTER,
     EXTRACTION_MODE_STEREO_MIX,
     settings,
 )
-from .utils import build_media_context_label
+from .utils import build_media_context_label, probe_video_fps
 
 
 def _has_center_channel(layout: str | None, channels: int | None) -> bool:
@@ -264,7 +266,6 @@ class Pipeline:
                                 correct_text_only_with_gemini,
                                 generate_optimized_events,
                                 get_whisper_device_config,
-                                write_srt,
                             )
 
                             device, compute_type = get_whisper_device_config(
@@ -286,7 +287,7 @@ class Pipeline:
                             run_logger.log(f"Whisper segments: {len(events)}")
                         elif engine == "parakeet":
                             from .engine_parakeet import generate_optimized_events, get_parakeet_device_config
-                            from .engine_whisper import correct_text_only_with_gemini, write_srt
+                            from .engine_whisper import correct_text_only_with_gemini
 
                             device, compute_type = get_parakeet_device_config(
                                 prefer_gpu=self.config.prefer_gpu,
@@ -324,7 +325,18 @@ class Pipeline:
                             )
                             run_logger.log("Gemini correction enabled")
 
-                        write_srt(events, str(output_path))
+                    # Subtitle post-processing (Netflix house style): re-segment on
+                    # pauses, balance two-line shape, enforce CPS / min-readable /
+                    # frame snap. Lives outside the ASR step so a hang in the
+                    # post-processor doesn't get blamed on inference.
+                    with run_logger.step("Post-processing"):
+                        snap_fps = probe_video_fps(media_path)
+                        run_logger.log(
+                            f"ASR events in: {len(events)}; snap_fps={snap_fps:.3f}"
+                        )
+                        events = postprocess_segments(events, snap_fps=snap_fps)
+                        run_logger.log(f"Post-processed cues: {len(events)}")
+                        _write_srt_with_diag(events, str(output_path))
                 finally:
                     # Time deletion of the per-run temp directory
                     #
