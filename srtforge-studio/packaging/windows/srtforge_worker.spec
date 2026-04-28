@@ -59,6 +59,19 @@ for pkg in (
     "tqdm",
     "rich",
     "typer",
+    # cuda-python ships a `cuda` namespace package with native .pyd
+    # extensions (cuda.bindings.runtime, cuda.cudart, ...). Without
+    # collect_all, PyInstaller misses the bindings and the worker raises
+    # "cuda-python is installed but its CUDA runtime bindings are missing"
+    # at runtime when the Parakeet engine tries to load on GPU.
+    "cuda",
+    # NeMo pulls in PyTorch Lightning. lightning_fabric reads its
+    # `version.info` data file at import time; without collect_all the
+    # bundle is missing it and Parakeet fails with
+    # "[Errno 2] No such file or directory: '..._MEI*/lightning_fabric/version.info'".
+    "lightning_fabric",
+    "pytorch_lightning",
+    "lightning",
 ):
     try:
         d, b, h = collect_all(pkg)
@@ -102,7 +115,21 @@ a = Analysis(
     hooksconfig={},
     runtime_hooks=[],
     # IMPORTANT: exclude PySide6 — this build is the headless worker only.
-    excludes=["PySide6", "PyQt5", "PyQt6", "tkinter", "matplotlib", "pytest"],
+    # matplotlib is NOT excluded: NeMo's ASR imports it at runtime for
+    # spectrogram/debug helpers and the bundle fails with
+    # "No module named 'matplotlib'" partway through Parakeet inference.
+    excludes=["PySide6", "PyQt5", "PyQt6", "tkinter", "pytest"],
+    # NeMo's Parakeet model uses torch.jit.script on functions like
+    # `nemo.collections.asr.parts.utils.activations.snake`. TorchScript
+    # reads the function source via inspect.getsource() at runtime, so
+    # the bundle MUST ship the original .py files, not just .pyc.
+    # `pyz+py` keeps both forms; `nemo` covers both `nemo` and
+    # `nemo_toolkit` install layouts. `torch` is included because parts
+    # of torch's jit machinery also reflect on their own source.
+    module_collection_mode={
+        "nemo": "pyz+py",
+        "torch": "pyz+py",
+    },
     noarchive=False,
     cipher=block_cipher,
 )
