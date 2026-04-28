@@ -5,25 +5,36 @@
 
 import type { Settings } from "../types";
 
-export const buildWorkerConfig = (s: Settings): Record<string, unknown> => ({
-  prefer_gpu: s.preferGpu,
-  separation_prefer_gpu: s.preferGpu,
-  allow_untagged_english: s.allowUntaggedEnglish,
-  word_timestamps: s.dumpWords,
-  whisper: {
-    engine: s.engine,
-    model: s.asrModel,
-    language: s.language,
-    force_float32: s.fp32,
-    rel_pos_local_attn: [s.attnLeft, s.attnRight],
-    subsampling_conv_chunking_factor: s.subsamplingChunkFactor,
-  },
-  gemini: {
-    enabled: s.geminiEnabled,
-    model_id: s.geminiModel,
-    api_key: s.geminiKey || null,
-  },
-});
+export const buildWorkerConfig = (s: Settings): Record<string, unknown> => {
+  // Device selector → prefer_gpu. "auto" defers to the worker's own
+  // detection (default true); "cpu" forces CPU; "cuda" pins GPU.
+  const preferGpu = s.device === "cpu" ? false : s.device === "cuda" ? true : s.preferGpu;
+  return {
+    prefer_gpu: preferGpu,
+    separation_prefer_gpu: preferGpu,
+    allow_untagged_english: s.allowUntaggedEnglish,
+    word_timestamps: s.dumpWords,
+    paths: {
+      // Worker resolves these against PROJECT_ROOT when relative, so
+      // typing `./output` here is safe.
+      output_dir: s.outputDir || null,
+      temp_dir: s.tempDir || null,
+    },
+    whisper: {
+      engine: s.engine,
+      model: s.asrModel,
+      language: s.language,
+      force_float32: s.fp32,
+      rel_pos_local_attn: [s.attnLeft, s.attnRight],
+      subsampling_conv_chunking_factor: s.subsamplingChunkFactor,
+    },
+    gemini: {
+      enabled: s.geminiEnabled,
+      model_id: s.geminiModel,
+      api_key: s.geminiKey || null,
+    },
+  };
+};
 
 /** Compute `<settings.outputDir>/<input-basename>.srt` so each job lands
  *  where the user told us to put it, regardless of the worker's YAML
