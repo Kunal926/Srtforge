@@ -1,6 +1,6 @@
 from __future__ import annotations
 from typing import List, Dict, Any, Tuple
-import math, sys, os, time, re, csv, json
+import math, sys, os, re, csv, json
 from .segmenter import segment_by_pause_and_phrase, shape_words_into_two_lines_balanced
 
 # ---------- tiny helpers ----------
@@ -1166,7 +1166,6 @@ def postprocess_segments(
         cand = [23.976, 24.0, 25.0, 29.97, 30.0]
         def rmse(fps):
             spf = 1.0 / max(1e-9, fps)
-            import math
             # measure how close starts/ends are to frame grid
             err = []
             for ev in events:

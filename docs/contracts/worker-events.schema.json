@@ -1,0 +1,256 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://srtforge/worker-events.schema.json",
+  "title": "Srtforge worker events",
+  "description": "JSON Schema for the events emitted on stdout by `srtforge worker`. The canonical contract is docs/contracts/worker-protocol.md; this schema is advisory and used by tests/test_worker_protocol.py to catch drift.",
+  "type": "object",
+  "required": ["event"],
+  "properties": {
+    "event": { "type": "string" }
+  },
+  "oneOf": [
+    {
+      "title": "worker_starting",
+      "type": "object",
+      "required": ["event", "pid", "preload", "cpu"],
+      "properties": {
+        "event": { "const": "worker_starting" },
+        "pid": { "type": "integer" },
+        "preload": { "type": "boolean" },
+        "cpu": { "type": "boolean" }
+      },
+      "additionalProperties": true
+    },
+    {
+      "title": "worker_ready",
+      "type": "object",
+      "required": ["event", "pid"],
+      "properties": {
+        "event": { "const": "worker_ready" },
+        "pid": { "type": "integer" }
+      },
+      "additionalProperties": true
+    },
+    {
+      "title": "worker_stopping",
+      "type": "object",
+      "required": ["event"],
+      "properties": { "event": { "const": "worker_stopping" } },
+      "additionalProperties": true
+    },
+    {
+      "title": "worker_preload_skipped",
+      "type": "object",
+      "required": ["event", "reason"],
+      "properties": {
+        "event": { "const": "worker_preload_skipped" },
+        "reason": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    {
+      "title": "worker_preload_failed",
+      "type": "object",
+      "required": ["event", "error"],
+      "properties": {
+        "event": { "const": "worker_preload_failed" },
+        "error": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    {
+      "title": "terminated",
+      "type": "object",
+      "required": ["event"],
+      "properties": {
+        "event": { "const": "terminated" },
+        "code": { "type": ["integer", "null"] }
+      },
+      "additionalProperties": true
+    },
+    {
+      "title": "job_started",
+      "type": "object",
+      "required": ["event", "id"],
+      "properties": {
+        "event": { "const": "job_started" },
+        "id": { "type": "string" },
+        "file": { "type": "string" },
+        "kind": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    {
+      "title": "stage",
+      "type": "object",
+      "required": ["event", "id", "stage", "state"],
+      "properties": {
+        "event": { "const": "stage" },
+        "id": { "type": "string" },
+        "stage": {
+          "type": "string",
+          "enum": [
+            "probe",
+            "extract",
+            "separation",
+            "preprocess",
+            "asr",
+            "post",
+            "write",
+            "mux",
+            "burn"
+          ]
+        },
+        "state": { "type": "string", "enum": ["start", "end"] },
+        "msg": { "type": "string" },
+        "run_id": { "type": "string" },
+        "seconds": { "type": "number" },
+        "ok": { "type": "boolean" }
+      },
+      "additionalProperties": true
+    },
+    {
+      "title": "progress",
+      "type": "object",
+      "required": ["event", "id"],
+      "properties": {
+        "event": { "const": "progress" },
+        "id": { "type": "string" },
+        "stage": { "type": "string" },
+        "fraction": { "type": "number", "minimum": 0, "maximum": 1 },
+        "progress": { "type": "number", "minimum": 0, "maximum": 1 },
+        "eta": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    {
+      "title": "log",
+      "type": "object",
+      "required": ["event", "msg"],
+      "properties": {
+        "event": { "const": "log" },
+        "msg": { "type": "string" },
+        "t": { "type": "string" },
+        "lvl": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    {
+      "title": "srt_written",
+      "type": "object",
+      "required": ["event", "id", "path"],
+      "properties": {
+        "event": { "const": "srt_written" },
+        "id": { "type": "string" },
+        "path": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    {
+      "title": "media_written",
+      "type": "object",
+      "required": ["event", "id", "kind", "path"],
+      "properties": {
+        "event": { "const": "media_written" },
+        "id": { "type": "string" },
+        "kind": { "type": "string", "enum": ["embedded", "burned"] },
+        "path": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    {
+      "title": "asset_written",
+      "type": "object",
+      "required": ["event", "id", "kind", "path"],
+      "properties": {
+        "event": { "const": "asset_written" },
+        "id": { "type": "string" },
+        "kind": { "type": "string" },
+        "path": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    {
+      "title": "job_completed",
+      "type": "object",
+      "required": ["event", "id"],
+      "properties": {
+        "event": { "const": "job_completed" },
+        "id": { "type": "string" },
+        "seconds": { "type": ["number", "null"] }
+      },
+      "additionalProperties": true
+    },
+    {
+      "title": "job_failed",
+      "type": "object",
+      "required": ["event", "id", "error"],
+      "properties": {
+        "event": { "const": "job_failed" },
+        "id": { "type": "string" },
+        "error": { "type": "string" },
+        "file": { "type": "string" },
+        "run_id": { "type": "string" },
+        "traceback": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    {
+      "title": "bad_json",
+      "type": "object",
+      "required": ["event", "line"],
+      "properties": {
+        "event": { "const": "bad_json" },
+        "line": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    {
+      "title": "bad_payload",
+      "type": "object",
+      "required": ["event", "reason"],
+      "properties": {
+        "event": { "const": "bad_payload" },
+        "reason": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    {
+      "title": "unknown_action",
+      "type": "object",
+      "required": ["event", "action"],
+      "properties": {
+        "event": { "const": "unknown_action" },
+        "action": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    {
+      "title": "gpu_cache_cleared",
+      "type": "object",
+      "required": ["event"],
+      "properties": { "event": { "const": "gpu_cache_cleared" } },
+      "additionalProperties": true
+    },
+    {
+      "title": "gpu_cache_skipped",
+      "type": "object",
+      "required": ["event"],
+      "properties": {
+        "event": { "const": "gpu_cache_skipped" },
+        "reason": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    {
+      "title": "gpu_cache_failed",
+      "type": "object",
+      "required": ["event"],
+      "properties": {
+        "event": { "const": "gpu_cache_failed" },
+        "error": { "type": "string" }
+      },
+      "additionalProperties": true
+    }
+  ]
+}
