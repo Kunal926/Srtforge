@@ -111,6 +111,12 @@ def _run_with_capture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[
             separation_prefer_gpu=False,
             output_path=media.with_suffix(".srt"),
             ffmpeg_extraction_mode="stereo_mix",
+            # Pin the engine so the test isn't coupled to whatever
+            # ``settings.whisper.engine`` happens to be in the host
+            # environment. CI has no persistent srtforge.config and
+            # the package default is parakeet, which would import the
+            # heavy NeMo path.
+            asr_engine="whisper",
         )
         result = Pipeline(config).run()
     finally:
