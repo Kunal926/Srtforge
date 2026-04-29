@@ -9,6 +9,9 @@ export const buildWorkerConfig = (s: Settings): Record<string, unknown> => {
   // Device selector → prefer_gpu. "auto" defers to the worker's own
   // detection (default true); "cpu" forces CPU; "cuda" pins GPU.
   const preferGpu = s.device === "cpu" ? false : s.device === "cuda" ? true : s.preferGpu;
+  // The Python worker treats Studio's "mkvtoolnix" label as "mkvmerge".
+  const embedMethod =
+    s.softEmbed === "mkvtoolnix" ? "mkvmerge" : s.softEmbed === "ffmpeg" ? "ffmpeg" : "auto";
   return {
     prefer_gpu: preferGpu,
     separation_prefer_gpu: preferGpu,
@@ -19,6 +22,19 @@ export const buildWorkerConfig = (s: Settings): Record<string, unknown> => {
       // typing `./output` here is safe.
       output_dir: s.outputDir || null,
       temp_dir: s.tempDir || null,
+    },
+    separation: {
+      backend: s.sep,
+      sep_hz: s.sepHz,
+      prefer_center: s.preferCenter,
+      fv4: {
+        cfg: s.fv4Cfg || null,
+        ckpt: s.fv4Ckpt || null,
+      },
+    },
+    ffmpeg: {
+      extraction_mode: s.extract,
+      filter_chain: s.filterChain,
     },
     whisper: {
       engine: s.engine,
@@ -33,6 +49,20 @@ export const buildWorkerConfig = (s: Settings): Record<string, unknown> => {
       model_id: s.geminiModel,
       api_key: s.geminiKey || null,
     },
+    output: {
+      embed: {
+        enabled: s.embed,
+        method: embedMethod,
+        track_title: s.trackTitle,
+        track_lang: s.trackLang,
+        default: s.defaultTrack,
+        forced: s.forcedTrack,
+      },
+      replace_original: s.replaceOriginal,
+      burn: s.burn,
+      sidecar_srt: s.sidecarSrt,
+    },
+    style: s.style,
   };
 };
 

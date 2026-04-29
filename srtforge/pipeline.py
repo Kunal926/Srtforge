@@ -15,6 +15,12 @@ from rich.table import Table
 from .config import DEFAULT_OUTPUT_SUFFIX, FV4_CONFIG, FV4_MODEL, MODELS_DIR
 from .ffmpeg import DEFAULT_TOOLS, AudioStream, FFmpegTooling
 from .logging import RunLogger, get_console, status
+from .mux import (
+    burn_subtitles,
+    embed_subtitles_ffmpeg,
+    embed_subtitles_mkvmerge,
+    pick_embed_method,
+)
 from .post import postprocess_segments
 from .post.srt_utils import write_srt as _write_srt_with_diag
 from .settings import (
@@ -72,6 +78,28 @@ class PipelineConfig:
     dump_word_timestamps: bool = False
     word_timestamps_path: Optional[Path] = None
 
+    # --- Output / muxing options -----------------------------------------
+    # When ``embed_enabled`` is True the SRT is muxed into a copy of
+    # ``media_path`` after post-processing. ``embed_method`` is one of
+    # ``"auto"``, ``"mkvmerge"``, or ``"ffmpeg"``; ``"auto"`` prefers
+    # mkvmerge for Matroska/WebM and falls back to ffmpeg otherwise.
+    embed_enabled: bool = False
+    embed_method: str = "auto"
+    embed_track_title: str = "Srtforge (English)"
+    embed_track_lang: str = "eng"
+    embed_default: bool = True
+    embed_forced: bool = False
+    # ``replace_original`` swaps the muxed copy back onto ``media_path``;
+    # otherwise the muxed file is written next to it as ``<stem>_subbed<suffix>``.
+    replace_original: bool = False
+    # ``burn_enabled`` produces a hard-subbed re-encode at
+    # ``<stem>_burned<suffix>`` next to the source. Independent of embed.
+    burn_enabled: bool = False
+    # ``sidecar_srt`` keeps the SRT next to the original media even when
+    # an embed/burn target is also written. Always True today; reserved
+    # for a future "embed-only" toggle.
+    sidecar_srt: bool = True
+
 
 @dataclass(slots=True)
 class PipelineResult:
@@ -82,6 +110,10 @@ class PipelineResult:
     skipped: bool
     reason: Optional[str] = None
     run_id: Optional[str] = None
+    # Populated when ``embed_enabled``/``burn_enabled`` produced a media
+    # asset; the worker forwards these as ``media_written`` events.
+    embedded_path: Optional[Path] = None
+    burned_path: Optional[Path] = None
 
     @property
     def failed(self) -> bool:
@@ -118,6 +150,8 @@ class Pipeline:
         output_path = self._determine_output_path()
         tmp_kwargs: dict[str, str] = {"prefix": "srtforge_"}
         run_id: Optional[str] = None
+        embedded_path: Optional[Path] = None
+        burned_path: Optional[Path] = None
 
         base_tmp_dir = Path(tempfile.gettempdir())
         if self.config.temp_dir:
@@ -156,7 +190,7 @@ class Pipeline:
                     preprocessed = _work_wav("preprocessed")
                     word_timestamps_path: Optional[Path] = None
 
-                    with run_logger.step("Probe audio streams"):
+                    with run_logger.step("Probe audio streams", stage="probe"):
                         streams = self.config.tools.probe_audio_streams(media_path)
                         english_stream = self._select_english_stream(streams)
                     if not english_stream:
@@ -167,7 +201,7 @@ class Pipeline:
 
                     with status(
                         f"Extracting English audio to PCM f32 {self.config.sample_rate} Hz"
-                    ), run_logger.step("Extract English audio"):
+                    ), run_logger.step("Extract English audio", stage="extract"):
                         # Decide which extraction mode to use. We apply center isolation
                         # during extraction (not during preprocessing) so we never try to
                         # pan a 2-channel file for a missing FC channel.
@@ -218,7 +252,7 @@ class Pipeline:
                     backend = (self.config.separation_backend or "fv4").lower()
                     if backend == "fv4":
                         with status("Running FV4 MelBand Roformer vocal separation"), run_logger.step(
-                            "Vocal separation"
+                            "Vocal separation", stage="separation"
                         ):
                             self.config.tools.isolate_vocals(
                                 extracted,
@@ -241,7 +275,7 @@ class Pipeline:
                     # the resulting stereo to mono.
                     filter_chain = self.config.ffmpeg_filter_chain
                     with status("Applying FFmpeg preprocessing filters"), run_logger.step(
-                        "FFmpeg preprocessing"
+                        "FFmpeg preprocessing", stage="preprocess"
                     ):
                         self.config.tools.preprocess_audio(
                             separated_source,
@@ -249,7 +283,9 @@ class Pipeline:
                             filter_chain=filter_chain,
                         )
 
-                    with status("Running ASR and subtitle post-processing"), run_logger.step("ASR pipeline"):
+                    with status("Running ASR and subtitle post-processing"), run_logger.step(
+                        "ASR pipeline", stage="asr"
+                    ):
                         engine = (self.config.asr_engine or "whisper").strip().lower()
                         if engine in {"", "default"}:
                             engine = "whisper"
@@ -329,14 +365,57 @@ class Pipeline:
                     # pauses, balance two-line shape, enforce CPS / min-readable /
                     # frame snap. Lives outside the ASR step so a hang in the
                     # post-processor doesn't get blamed on inference.
-                    with run_logger.step("Post-processing"):
+                    with run_logger.step("Post-processing", stage="post"):
                         snap_fps = probe_video_fps(media_path)
                         run_logger.log(
                             f"ASR events in: {len(events)}; snap_fps={snap_fps:.3f}"
                         )
                         events = postprocess_segments(events, snap_fps=snap_fps)
                         run_logger.log(f"Post-processed cues: {len(events)}")
+
+                    with run_logger.step("Write SRT", stage="write"):
+                        output_path.parent.mkdir(parents=True, exist_ok=True)
                         _write_srt_with_diag(events, str(output_path))
+
+                    # Optional: soft-embed the SRT into a copy of the
+                    # source container (or back onto it via
+                    # ``replace_original``). Failures here do not delete
+                    # the SRT — it remains the canonical output.
+                    if self.config.embed_enabled:
+                        with run_logger.step("Embed subtitles", stage="mux"):
+                            method = pick_embed_method(media_path, self.config.embed_method)
+                            run_logger.log(
+                                f"Embed method: {method} (requested={self.config.embed_method!r}, "
+                                f"replace_original={self.config.replace_original})"
+                            )
+                            embed_kwargs = dict(
+                                track_title=self.config.embed_track_title,
+                                track_lang=self.config.embed_track_lang,
+                                default=self.config.embed_default,
+                                forced=self.config.embed_forced,
+                                replace_original=self.config.replace_original,
+                            )
+                            if method == "mkvmerge":
+                                embedded_path = embed_subtitles_mkvmerge(
+                                    media_path,
+                                    output_path,
+                                    **embed_kwargs,
+                                )
+                            else:
+                                embedded_path = embed_subtitles_ffmpeg(
+                                    media_path,
+                                    output_path,
+                                    **embed_kwargs,
+                                )
+                            run_logger.log(f"Embedded subtitles to: {embedded_path}")
+
+                    # Optional: hard-burn into a separate
+                    # ``<stem>_burned<suffix>`` re-encode. Always written
+                    # alongside the source — never overwrites it.
+                    if self.config.burn_enabled:
+                        with run_logger.step("Burn subtitles", stage="burn"):
+                            burned_path = burn_subtitles(media_path, output_path)
+                            run_logger.log(f"Burned subtitles to: {burned_path}")
                 finally:
                     # Time deletion of the per-run temp directory
                     #
@@ -359,7 +438,14 @@ class Pipeline:
             return PipelineResult(media_path, None, True, str(exc), run_id)
 
         self._show_summary(media_path, output_path)
-        return PipelineResult(media_path, output_path, False, run_id=run_id)
+        return PipelineResult(
+            media_path,
+            output_path,
+            False,
+            run_id=run_id,
+            embedded_path=embedded_path,
+            burned_path=burned_path,
+        )
 
     # ---- internal methods --------------------------------------------------------
     def _show_summary(self, media: Path, srt: Path) -> None:

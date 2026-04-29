@@ -20,7 +20,9 @@ whisper:
 
     assert settings.whisper.force_float32 is False
     assert settings.whisper.rel_pos_local_attn == [768, 768]
-    assert settings.whisper.subsampling_conv_chunking_factor == 1
+    # Default for ``subsampling_conv_chunking_factor`` is 0 (no chunking).
+    # Match the dataclass default in ``srtforge.settings.WhisperSettings``.
+    assert settings.whisper.subsampling_conv_chunking_factor == 0
 
 
 def test_load_settings_coerces_whisper_tuning_values(tmp_path: Path) -> None:

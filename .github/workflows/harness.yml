@@ -1,0 +1,102 @@
+# .github/workflows/harness.yml
+#
+# Lightweight Srtforge validation gate.
+#
+# This CI must run without:
+#   - CUDA / GPUs
+#   - real model files (FV4, Whisper, Parakeet)
+#   - model downloads
+#   - real media
+#   - private secrets
+#
+# Heavy ML dependencies (audio-separator, cuda-python, faster-whisper,
+# NeMo, PySide6) are NOT installed in CI. The CI runs:
+#   - doc freshness / required-section check (`scripts/check_docs.py`)
+#   - ruff lint over the parts of the tree the agent touches
+#   - the default pytest selection (which excludes slow/model/cuda/media
+#     tests; see `pyproject.toml` `[tool.pytest.ini_options]`)
+#
+# When you change which Python runtime deps the test path needs, update
+# the `runtime-deps` step below — keep it minimal so CI stays fast.
+
+name: harness
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["**"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: harness-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: lightweight harness
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Show environment
+        run: |
+          python --version
+          pip --version
+          uname -srm
+
+      # We deliberately install only the deps the lightweight test path
+      # actually imports. The package's heavy ML deps (audio-separator,
+      # cuda-python, NeMo, faster-whisper, PySide6) are not needed for
+      # the tests that run in the default selection — they're only
+      # imported lazily inside engine modules the tests monkeypatch.
+      - name: Install runtime deps (lightweight subset)
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install \
+            "typer>=0.12.3" \
+            "rich>=13.7.1" \
+            "tqdm>=4.66.4" \
+            "pyyaml>=6.0.1" \
+            "requests>=2.32.3" \
+            "numpy>=2.0.0"
+
+      - name: Install dev deps
+        run: |
+          python -m pip install \
+            "pytest>=8.0" \
+            "pytest-cov>=5.0" \
+            "ruff>=0.5"
+
+      - name: Install srtforge (no heavy deps)
+        run: |
+          python -m pip install -e . --no-deps
+
+      - name: Doc freshness check
+        run: python scripts/check_docs.py
+
+      - name: Ruff lint
+        run: python -m ruff check srtforge tests scripts
+
+      - name: Python import smoke
+        run: |
+          python -c "import srtforge, srtforge.cli, srtforge.pipeline, srtforge.settings, srtforge.worker_protocol"
+
+      - name: CLI smoke
+        run: python -m srtforge --help
+
+      - name: Pytest (default selection — no slow/model/cuda/media/ffmpeg)
+        run: python -m pytest --color=no -ra

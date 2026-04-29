@@ -34,7 +34,7 @@ from .settings import (
     load_settings,
     settings,
 )
-from .win11_backdrop import apply_win11_look, get_windows_accent_qcolor
+from .win11_backdrop import apply_win11_look
 
 _STARTUP_T0 = time.perf_counter()
 

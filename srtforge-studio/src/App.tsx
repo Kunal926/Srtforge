@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 
 import { ActiveDetail } from "./components/ActiveDetail";
+import { BGMView } from "./components/BGM";
 import { EmptyState } from "./components/EmptyState";
 import { HistoryView } from "./components/History";
+import { NormalizeView } from "./components/Normalize";
 import {
   DropZone,
   QueueCards,
@@ -13,6 +15,7 @@ import { SettingsDrawer } from "./components/SettingsDrawer";
 import { Sidebar } from "./components/Sidebar";
 import { StatusBar } from "./components/StatusBar";
 import { TitleBar } from "./components/TitleBar";
+import { WatchView } from "./components/Watch";
 import { I } from "./icons";
 import { formatDuration, formatTotalDuration } from "./lib/format";
 import {
@@ -212,8 +215,10 @@ export const App = () => {
       <div className="app-layout">
         <Sidebar
           device={settings.device === "cpu" ? "CPU" : "GPU"}
-          gpuPct={running && !paused ? 88 : 12}
-          vram="6.4 / 8 GB"
+          // TODO: real GPU/VRAM telemetry. Until a Tauri probe lands, show
+          // dashes instead of pretending with hardcoded numbers.
+          gpuPct={0}
+          vram="—"
         />
 
         <div className="main">
@@ -348,14 +353,9 @@ export const App = () => {
 
             {active === "history" && <HistoryView files={visible} />}
 
-            {(active === "watch" || active === "normalize" || active === "bgm") && (
-              <EmptyState
-                icon={<I.Sliders size={32} />}
-                title="Coming soon"
-                body="This view isn't part of the MVP. Switch back to the Queue to start transcribing."
-                cta={{ label: "Back to Queue", onClick: () => setActive("queue") }}
-              />
-            )}
+            {active === "watch" && <WatchView />}
+            {active === "normalize" && <NormalizeView />}
+            {active === "bgm" && <BGMView />}
           </div>
 
           <StatusBar

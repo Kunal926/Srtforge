@@ -76,7 +76,11 @@ def test_pipeline_executes_whisper_steps(tmp_path, monkeypatch):
         Path(srt_path).write_text("1\n00:00:00,000 --> 00:00:01,000\nHello\n\n")
 
     monkeypatch.setattr("srtforge.engine_whisper.generate_optimized_events", fake_generate)
-    monkeypatch.setattr("srtforge.engine_whisper.write_srt", fake_write_srt)
+    # The pipeline writes via ``srtforge.post.srt_utils.write_srt`` (imported
+    # as ``_write_srt_with_diag``). Patch the actual function the pipeline
+    # binds to, not the legacy ``engine_whisper`` re-export.
+    monkeypatch.setattr("srtforge.post.srt_utils.write_srt", fake_write_srt)
+    monkeypatch.setattr("srtforge.pipeline._write_srt_with_diag", fake_write_srt)
 
     output_path = media.with_suffix(".srt")
     config = PipelineConfig(
@@ -119,7 +123,8 @@ def test_pipeline_falls_back_when_dual_mono_requested_without_center_channel(tmp
         Path(srt_path).write_text("1\n00:00:00,000 --> 00:00:01,000\nHello\n\n")
 
     monkeypatch.setattr("srtforge.engine_whisper.generate_optimized_events", fake_generate)
-    monkeypatch.setattr("srtforge.engine_whisper.write_srt", fake_write_srt)
+    monkeypatch.setattr("srtforge.post.srt_utils.write_srt", fake_write_srt)
+    monkeypatch.setattr("srtforge.pipeline._write_srt_with_diag", fake_write_srt)
 
     output_path = media.with_suffix(".srt")
     config = PipelineConfig(
@@ -178,7 +183,8 @@ def test_pipeline_parakeet_forwards_optimized_generation_fields(tmp_path, monkey
 
     monkeypatch.setattr("srtforge.engine_parakeet.generate_optimized_events", fake_generate)
     monkeypatch.setattr("srtforge.engine_parakeet.get_parakeet_device_config", lambda *, prefer_gpu: ("cpu", "float32"))
-    monkeypatch.setattr("srtforge.engine_whisper.write_srt", fake_write_srt)
+    monkeypatch.setattr("srtforge.post.srt_utils.write_srt", fake_write_srt)
+    monkeypatch.setattr("srtforge.pipeline._write_srt_with_diag", fake_write_srt)
 
     config = PipelineConfig(
         media_path=media,
