@@ -153,6 +153,16 @@ class _TimedStep:
     When constructed with a ``stage`` identifier, also pushes ``stage``
     events through the module-level emitter so the GUI can light up
     per-stage progress dots without the pipeline knowing the GUI exists.
+
+    Stage events carry:
+
+    - ``stage`` — canonical stage name (see
+      ``docs/contracts/worker-protocol.md``).
+    - ``state`` — ``"start"`` or ``"end"``.
+    - ``msg`` — the human-readable step label, useful for log overlays.
+    - ``run_id`` — current ``RunLogger.run_id`` so the GUI can correlate
+      stage events with files produced by the same run.
+    - ``seconds``, ``ok`` — only on ``state:"end"``.
     """
 
     logger: "RunLogger"
@@ -164,7 +174,15 @@ class _TimedStep:
         self.logger._log(f"START {self.label}")
         self._start = monotonic()
         if self.stage:
-            _emit_stage({"event": "stage", "stage": self.stage, "state": "start"})
+            _emit_stage(
+                {
+                    "event": "stage",
+                    "stage": self.stage,
+                    "state": "start",
+                    "msg": self.label,
+                    "run_id": self.logger.run_id,
+                }
+            )
 
     def __exit__(self, exc_type, exc, tb) -> None:  # type: ignore[override]
         duration = monotonic() - getattr(self, "_start", monotonic())
@@ -177,6 +195,8 @@ class _TimedStep:
                     "event": "stage",
                     "stage": self.stage,
                     "state": "end",
+                    "msg": self.label,
+                    "run_id": self.logger.run_id,
                     "seconds": round(duration, 3),
                     "ok": exc_type is None,
                 }
