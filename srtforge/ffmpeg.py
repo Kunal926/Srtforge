@@ -299,6 +299,72 @@ class FFmpegTooling:
         self._run(command)
         return destination
 
+    def normalize_audio(
+        self,
+        source: Path,
+        destination: Path,
+        *,
+        out_format: str = "wav",
+        sample_rate: int = 48000,
+        bit_depth: int = 16,
+        channels: int = 2,
+        loudness: bool = False,
+        filter_chain: Optional[str] = None,
+    ) -> Path:
+        """Standalone audio transcode/normalize for the Normalize tool.
+
+        Produces a freestanding audio file (WAV / FLAC / MP3) — not
+        part of the SRT pipeline. Loudness optionally prepends an
+        ``EBU R128`` loudnorm pass before the user-supplied chain.
+        """
+
+        fmt = (out_format or "wav").strip().lower()
+
+        # Compose the af= chain. We always finish with an aresample so
+        # the output rate matches ``sample_rate`` even if the user's
+        # chain didn't resample. ``,,`` is illegal in ffmpeg, so we
+        # filter out empties.
+        parts: list[str] = []
+        if loudness:
+            parts.append("loudnorm=I=-16:TP=-1.5:LRA=11")
+        if filter_chain:
+            parts.append(filter_chain.strip().strip(","))
+        parts.append(f"aresample=resampler=soxr:osr={sample_rate}:precision=33")
+        chain = ",".join(p for p in parts if p)
+
+        command: list[str] = [
+            self.ffmpeg_bin,
+            "-y",
+            "-i",
+            _as_ffmpeg_path(source),
+            "-vn",
+            "-af",
+            chain,
+            "-ac",
+            str(channels),
+            "-ar",
+            str(sample_rate),
+        ]
+
+        if fmt == "wav":
+            if bit_depth >= 32:
+                command += ["-c:a", "pcm_f32le"]
+            elif bit_depth >= 24:
+                command += ["-c:a", "pcm_s24le"]
+            else:
+                command += ["-c:a", "pcm_s16le"]
+        elif fmt == "flac":
+            command += ["-c:a", "flac"]
+            command += ["-sample_fmt", "s32" if bit_depth >= 24 else "s16"]
+        elif fmt == "mp3":
+            command += ["-c:a", "libmp3lame", "-q:a", "2"]
+        else:
+            raise FFmpegError(f"Unsupported normalize format: {out_format}")
+
+        command.append(_as_ffmpeg_path(destination))
+        self._run(command)
+        return destination
+
     def isolate_vocals(
         self,
         source: Path,

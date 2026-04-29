@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://srtforge/worker-requests.schema.json",
+  "title": "Srtforge worker requests",
+  "description": "JSON Schema for requests sent on stdin to `srtforge worker`. Canonical contract: docs/contracts/worker-protocol.md.",
+  "type": "object",
+  "required": ["action"],
+  "properties": { "action": { "type": "string" } },
+  "oneOf": [
+    {
+      "title": "transcribe",
+      "type": "object",
+      "required": ["action", "id", "file"],
+      "properties": {
+        "action": { "const": "transcribe" },
+        "id": { "type": "string" },
+        "file": { "type": "string" },
+        "output": { "type": ["string", "null"] },
+        "config": { "type": "object" }
+      },
+      "additionalProperties": true
+    },
+    {
+      "title": "normalize",
+      "type": "object",
+      "required": ["action", "id", "file"],
+      "properties": {
+        "action": { "const": "normalize" },
+        "id": { "type": "string" },
+        "file": { "type": "string" },
+        "config": { "type": "object" }
+      },
+      "additionalProperties": true
+    },
+    {
+      "title": "separate",
+      "type": "object",
+      "required": ["action", "id", "file"],
+      "properties": {
+        "action": { "const": "separate" },
+        "id": { "type": "string" },
+        "file": { "type": "string" },
+        "config": { "type": "object" }
+      },
+      "additionalProperties": true
+    },
+    {
+      "title": "shutdown",
+      "type": "object",
+      "required": ["action"],
+      "properties": { "action": { "const": "shutdown" } },
+      "additionalProperties": true
+    },
+    {
+      "title": "clear_gpu_cache",
+      "type": "object",
+      "required": ["action"],
+      "properties": { "action": { "const": "clear_gpu_cache" } },
+      "additionalProperties": true
+    }
+  ]
+}

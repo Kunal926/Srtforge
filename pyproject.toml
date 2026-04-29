@@ -28,6 +28,15 @@ dependencies = [
   "google-genai",
 ]
 
+[project.optional-dependencies]
+# Lightweight dev tooling. Installable via `pip install -e .[dev]`.
+# Mirrors what `scripts/check.ps1` / `scripts/check.sh` expect.
+dev = [
+  "pytest>=8.0",
+  "pytest-cov>=5.0",
+  "ruff>=0.5",
+]
+
 [project.scripts]
 srtforge = "srtforge.cli:app"
 srtforge-sonarr = "srtforge.sonarr_hook:main"
@@ -46,3 +55,73 @@ packages = [
 [tool.setuptools.package-data]
 "srtforge.assets.styles" = ["win11.qss"]
 "srtforge.assets.images" = ["*.png", "*.gif"]
+
+# ----------------------------------------------------------------------------
+# Lightweight test/lint configuration.
+#
+# The DEFAULT pytest selection in `addopts` excludes anything that needs
+# CUDA, real model files, real media, or heavy FFmpeg processing. CI and
+# the local `scripts/check.*` harness rely on this default. Run heavy
+# tests explicitly with e.g. `python -m pytest -m requires_model`.
+#
+# See docs/agent/WORKFLOW.md and docs/architecture/ARCHITECTURE.md for the
+# invariants this config encodes.
+# ----------------------------------------------------------------------------
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-m 'not slow and not requires_model and not requires_cuda and not requires_media and not requires_ffmpeg' -ra"
+markers = [
+  "unit: fast tests that do not touch the filesystem heavily",
+  "contract: protocol / schema / shape contract tests",
+  "integration: tests that exercise multiple components together",
+  "slow: tests that take more than a few seconds",
+  "requires_ffmpeg: needs the real ffmpeg/ffprobe binary",
+  "requires_model: needs a real model file on disk (FV4 / Whisper / Parakeet)",
+  "requires_cuda: needs a CUDA-capable GPU at runtime",
+  "requires_media: needs a real media file (mkv/mp4/...)",
+]
+filterwarnings = [
+  # Be loud about deprecation warnings inside our own code.
+  "default::DeprecationWarning:srtforge.*",
+]
+
+[tool.ruff]
+# Match the package's minimum Python.
+target-version = "py310"
+line-length = 100
+extend-exclude = [
+  "models",
+  "logs",
+  "output",
+  "tmp",
+  "build",
+  "dist",
+  "srtforge.egg-info",
+  "srtforge-studio/src-tauri/target",
+  "srtforge-studio/src-tauri/gen",
+  "packaging/windows/ffmpeg",
+]
+
+[tool.ruff.lint]
+# First-pass policy: pyflakes only (real bugs — unused imports, unused
+# locals, undefined names). Style rules (E*), import sorting (I), and
+# pyupgrade (UP) are intentionally OFF until the existing tree is
+# cleaned up; ratchet later. See docs/agent/QUALITY.md for the
+# tracked cleanup tasks.
+select = ["F"]
+ignore = []
+
+[tool.ruff.lint.per-file-ignores]
+# Tests can shadow imports and use longer lines for fixture data.
+"tests/*" = ["E501", "B011"]
+"scripts/*" = ["E501"]
+# Legacy GUI / native shim code with stale locals from past refactors;
+# tracked in docs/agent/QUALITY.md for a future cleanup pass. Keeping
+# these as-is for now so the harness stays green without unrelated
+# rewrites.
+"srtforge/gui_app.py" = ["F841"]
+"srtforge/win11_backdrop.py" = ["F841"]
+"srtforge/post/srt_utils.py" = ["F841"]
+# Lazy forward reference to audio_separator.Separator inside a
+# `from __future__ import annotations` module — runtime cost is zero.
+"srtforge/ffmpeg.py" = ["F821"]

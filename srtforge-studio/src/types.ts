@@ -8,6 +8,8 @@ export interface QueueFile {
   name: string;
   path: string;            // input media file path
   outputPath?: string;     // SRT output path, set on srt_written
+  embeddedPath?: string;   // muxed media path, set on media_written
+  burnedPath?: string;     // hard-subbed media path, set on media_written
   duration: string;        // "23:54"
   durationSec: number;
   sampleRate: number;      // kHz
@@ -17,7 +19,9 @@ export interface QueueFile {
   status: FileStatus;
   progress: number;        // 0..1
   eta: string;             // "05:11" or "—" or "✓"
-  stage: number;           // 0..6 from STAGES
+  stage: number;           // 0..6 from STAGES (highest stage seen so far)
+  /** Per-stage timing once a stage end event lands. Keyed by stage name. */
+  stageDurations?: Record<string, number>;
   error?: string;
 }
 
@@ -86,16 +90,68 @@ export type Theme = "light" | "dark" | "forge";
 export type Layout = "card" | "hybrid";
 export type Density = "comfortable" | "compact";
 
+/** Canonical stage names emitted by the Python pipeline. */
+export type WorkerStage =
+  | "probe"
+  | "extract"
+  | "separation"
+  | "preprocess"
+  | "asr"
+  | "post"
+  | "write"
+  | "mux"
+  | "burn";
+
 /** Worker → frontend wire events (one JSON line per emit). */
 export type WorkerEvent =
   | { event: "queued"; id: string; file: string; meta: Partial<QueueFile> }
   | { event: "started"; id: string }
-  | { event: "stage"; id: string; stage: number }
-  | { event: "progress"; id: string; progress: number; eta: string }
+  | { event: "job_started"; id: string; file?: string; kind?: string }
+  | {
+      event: "stage";
+      id: string;
+      stage: WorkerStage;
+      state: "start" | "end";
+      seconds?: number;
+      ok?: boolean;
+    }
+  | {
+      event: "progress";
+      id: string;
+      stage?: WorkerStage;
+      fraction?: number;
+      progress?: number;
+      eta?: string;
+    }
   | { event: "log"; t?: string; lvl?: string; msg: string }
   | { event: "srt_written"; id: string; path: string }
-  | { event: "job_failed"; id: string; error: string }
+  | { event: "media_written"; id: string; kind: "embedded" | "burned"; path: string }
+  | { event: "asset_written"; id: string; kind: string; path: string }
+  | { event: "job_completed"; id: string; seconds?: number | null }
+  | { event: "job_failed"; id: string; error: string; traceback?: string }
   | { event: "paused" }
   | { event: "resumed" }
   | { event: "terminated"; code: number | null }
+  | { event: "gpu_cache_cleared" }
+  | { event: "gpu_cache_skipped"; reason?: string }
+  | { event: "gpu_cache_failed"; error?: string }
   | { event: string; [key: string]: unknown };
+
+/** A persisted entry in the Watch Folders view. UI-only this round. */
+export type WatchSource = "sonarr" | "radarr" | "folder";
+export type WatchSchedule = "live" | "5m" | "15m" | "1h" | "manual";
+
+export interface WatchLibrary {
+  id: string;
+  name: string;
+  path: string;
+  source: WatchSource;
+  schedule: WatchSchedule;
+  /** When false the row stays in the list but is treated as inactive. */
+  enabled: boolean;
+  /** Optional Sonarr/Radarr instance label, e.g. "main" / "anime". */
+  instance?: string;
+  /** Counters surfaced in the row. Defaults to 0 when unknown. */
+  itemsCount?: number;
+  pendingCount?: number;
+}

@@ -1991,3 +1991,16 @@ button { font-family: inherit; }
 }
 .stem-pill .dot.v { width: 6px; height: 6px; border-radius: 999px; background: var(--accent); }
 .stem-pill .dot.i { width: 6px; height: 6px; border-radius: 999px; background: #7b5cff; }
+
+/* Empty-state placeholders for the new tabs */
+.lib-empty,
+.tool-empty {
+  padding: 24px 16px;
+  text-align: center;
+  color: var(--text-3);
+  font-size: 12px;
+  border: 1px dashed var(--line);
+  border-radius: 10px;
+  background: var(--bg-app);
+}
+.lib-empty p { margin: 0; }

@@ -10,8 +10,25 @@ import type {
   Settings,
   Tab,
   Theme,
+  WatchLibrary,
   WorkerEvent,
+  WorkerStage,
 } from "./types";
+
+// Map worker stage names → numeric index used by `QueueFile.stage`.
+// `mux` and `burn` are optional post-write stages and don't bump the
+// dot count; they're surfaced through `media_written` events instead.
+const STAGE_INDEX: Record<WorkerStage, number> = {
+  probe: 0,
+  extract: 1,
+  separation: 2,
+  preprocess: 3,
+  asr: 4,
+  post: 5,
+  write: 6,
+  mux: 6,
+  burn: 6,
+};
 
 const DEFAULT_SETTINGS: Settings = {
   device: "auto",
@@ -71,6 +88,9 @@ interface UiState {
 
   settings: Settings;
 
+  /** Watch Folders state — UI-only this round. Persisted across reloads. */
+  libraries: WatchLibrary[];
+
   // Actions
   setActive: (t: Tab) => void;
   setSelectedId: (id: string | null) => void;
@@ -86,6 +106,12 @@ interface UiState {
   setRunning: (r: boolean) => void;
   setPaused: (p: boolean) => void;
   resetSettings: () => void;
+
+  // Watch folders (UI-only this round)
+  addLibrary: (lib: Omit<WatchLibrary, "id">) => string;
+  removeLibrary: (id: string) => void;
+  toggleLibraryEnabled: (id: string) => void;
+  updateLibrary: (id: string, patch: Partial<WatchLibrary>) => void;
 
   addFiles: (files: QueueFile[]) => void;
   /** Add raw file paths picked from disk; the pump turns them into worker jobs. */
@@ -123,6 +149,8 @@ export const useUi = create<UiState>()(
 
   settings: DEFAULT_SETTINGS,
 
+  libraries: [],
+
   setActive: (t) => set({ active: t }),
   setSelectedId: (id) => set({ selectedId: id }),
   toggleChecked: (id) =>
@@ -144,6 +172,34 @@ export const useUi = create<UiState>()(
   setRunning: (r) => set({ running: r }),
   setPaused: (p) => set({ paused: p }),
   resetSettings: () => set({ settings: DEFAULT_SETTINGS }),
+
+  addLibrary: (lib) => {
+    const id = crypto.randomUUID();
+    set((s) => ({
+      libraries: [
+        ...s.libraries,
+        {
+          itemsCount: 0,
+          pendingCount: 0,
+          ...lib,
+          id,
+        },
+      ],
+    }));
+    return id;
+  },
+  removeLibrary: (id) =>
+    set((s) => ({ libraries: s.libraries.filter((l) => l.id !== id) })),
+  toggleLibraryEnabled: (id) =>
+    set((s) => ({
+      libraries: s.libraries.map((l) =>
+        l.id === id ? { ...l, enabled: !l.enabled } : l,
+      ),
+    })),
+  updateLibrary: (id, patch) =>
+    set((s) => ({
+      libraries: s.libraries.map((l) => (l.id === id ? { ...l, ...patch } : l)),
+    })),
 
   addFiles: (incoming) =>
     set((s) => ({ files: [...s.files, ...incoming] })),
@@ -210,10 +266,9 @@ export const useUi = create<UiState>()(
   },
 
   handleWorkerEvent: (ev) => {
-    // Event names match srtforge/cli.py worker subcommand. The worker
-    // doesn't emit progress/stage/log streams today, so the UI stays
-    // pinned at "processing" between job_started and srt_written/
-    // job_completed. Adding granular events is a Python-side TODO.
+    // Event names match srtforge/cli.py worker subcommand. Stage and
+    // progress events arrive from the pipeline's `RunLogger.step`
+    // emitter wiring (see srtforge/logging.py:set_event_emitter).
     switch (ev.event) {
       case "worker_starting":
       case "worker_preload_skipped":
@@ -264,6 +319,77 @@ export const useUi = create<UiState>()(
           };
           return { files: [...s.files, fresh], selectedId: id };
         });
+        break;
+      }
+      case "stage": {
+        const id = (ev as unknown as { id: string }).id;
+        const name = (ev as unknown as { stage: WorkerStage }).stage;
+        const state = (ev as unknown as { state: "start" | "end" }).state;
+        const seconds = (ev as unknown as { seconds?: number }).seconds;
+        const idx = STAGE_INDEX[name];
+        if (idx === undefined) break;
+        set((s) => ({
+          files: s.files.map((f) => {
+            if (f.id !== id) return f;
+            const stage = state === "start" ? Math.max(f.stage, idx) : f.stage;
+            const stageDurations =
+              state === "end" && typeof seconds === "number"
+                ? { ...(f.stageDurations ?? {}), [name]: seconds }
+                : f.stageDurations;
+            return { ...f, stage, stageDurations };
+          }),
+        }));
+        break;
+      }
+      case "progress": {
+        const id = (ev as unknown as { id: string }).id;
+        const fraction = (ev as unknown as { fraction?: number }).fraction;
+        const progress = (ev as unknown as { progress?: number }).progress;
+        const eta = (ev as unknown as { eta?: string }).eta;
+        const value = typeof fraction === "number" ? fraction : progress;
+        if (typeof value !== "number") break;
+        set((s) => ({
+          files: s.files.map((f) =>
+            f.id === id
+              ? {
+                  ...f,
+                  progress: Math.max(0, Math.min(1, value)),
+                  eta: eta ?? f.eta,
+                }
+              : f,
+          ),
+        }));
+        break;
+      }
+      case "media_written": {
+        const id = (ev as unknown as { id: string }).id;
+        const kind = (ev as unknown as { kind: "embedded" | "burned" }).kind;
+        const path = (ev as unknown as { path: string }).path;
+        set((s) => ({
+          files: s.files.map((f) =>
+            f.id === id
+              ? {
+                  ...f,
+                  embeddedPath: kind === "embedded" ? path : f.embeddedPath,
+                  burnedPath: kind === "burned" ? path : f.burnedPath,
+                }
+              : f,
+          ),
+        }));
+        break;
+      }
+      case "asset_written": {
+        const id = (ev as unknown as { id: string }).id;
+        const kind = (ev as unknown as { kind?: string }).kind ?? "asset";
+        const path = (ev as unknown as { path: string }).path;
+        // Tools (Normalize / BGM) reuse the QueueFile rows — surface the
+        // produced path so the row can show a "Reveal output" link.
+        set((s) => ({
+          files: s.files.map((f) =>
+            f.id === id ? { ...f, outputPath: path } : f,
+          ),
+        }));
+        get().showToast(`${kind}: ${path.split(/[\\/]/).pop() ?? path}`);
         break;
       }
       case "srt_written":
@@ -324,11 +450,12 @@ export const useUi = create<UiState>()(
         layout: s.layout,
         density: s.density,
         settings: s.settings,
+        libraries: s.libraries,
       }),
       // Bump when Settings union shapes change so old stored values that
       // would now fail the type unions (e.g. device "gpu" → "cuda",
       // style "default" → "bbc"|"custom") get discarded cleanly.
-      version: 2,
+      version: 3,
     },
   ),
 );

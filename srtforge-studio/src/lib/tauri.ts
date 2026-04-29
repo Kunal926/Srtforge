@@ -19,6 +19,24 @@ export const enqueue = (
     config,
   });
 
+/** Standalone audio normalize/transcode (Normalize tool). The worker
+ *  emits the same `job_started` / `asset_written` / `job_completed`
+ *  vocabulary as transcribe so existing handlers light up the row. */
+export const normalize = (
+  file: string,
+  config: Record<string, unknown>,
+  options?: { id?: string },
+): Promise<string> =>
+  invoke<string>("normalize", { file, id: options?.id, config });
+
+/** Standalone vocal/instrumental separation (BGM tool). */
+export const separate = (
+  file: string,
+  config: Record<string, unknown>,
+  options?: { id?: string },
+): Promise<string> =>
+  invoke<string>("separate", { file, id: options?.id, config });
+
 export const shutdownWorker = (): Promise<void> => invoke("shutdown_worker");
 export const restartWorker = (): Promise<void> => invoke("restart_worker");
 /** Tells the running worker to call torch.cuda.empty_cache(). Wired to

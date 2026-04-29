@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 from typer.testing import CliRunner
 
@@ -87,28 +86,21 @@ def test_build_pipeline_config_preserves_zero_chunking_factor(monkeypatch, tmp_p
     media = tmp_path / "episode-zero.mkv"
     media.write_text("stub")
 
-    class _Whisper:
-        engine = "parakeet"
-        model = "nvidia/parakeet-tdt_ctc-110m"
-        language = "en"
-        force_float32 = False
-        rel_pos_local_attn = [768, 768]
-        subsampling_conv_chunking_factor = 1
+    # Build the test settings on top of the real AppSettings dataclass tree
+    # so we don't have to keep the mock in lockstep with every new field
+    # `_build_pipeline_config` reads. Only the whisper-related fields are
+    # the focus of this test.
+    from srtforge.settings import AppSettings
 
-    class _Gemini:
-        enabled = False
-        model_id = "gemini-3-flash-preview"
-        api_key = None
+    test_settings = AppSettings()
+    test_settings.whisper.engine = "parakeet"
+    test_settings.whisper.model = "nvidia/parakeet-tdt_ctc-110m"
+    test_settings.whisper.language = "en"
+    test_settings.whisper.force_float32 = False
+    test_settings.whisper.rel_pos_local_attn = [768, 768]
+    test_settings.whisper.subsampling_conv_chunking_factor = 1
 
-    class _Separation:
-        allow_untagged_english = False
-
-    class _Settings:
-        whisper = _Whisper()
-        gemini = _Gemini()
-        separation = _Separation()
-
-    monkeypatch.setattr(cli, "load_settings", lambda: _Settings())
+    monkeypatch.setattr(cli, "load_settings", lambda: test_settings)
 
     config = cli._build_pipeline_config(
         media,
