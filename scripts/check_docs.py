@@ -4,6 +4,7 @@
 Reads-only. Exits non-zero when:
 
 - ``AGENTS.md`` references a missing file,
+- the Codex operating layer is missing,
 - a required document is missing,
 - ``docs/agent/HANDOFF.md`` lacks a required section,
 - ``docs/agent/PROJECT_MAP.md`` is missing or stale (older than the
@@ -31,6 +32,9 @@ REQUIRED_FILES: tuple[Path, ...] = tuple(
     for p in (
         "AGENTS.md",
         "CLAUDE.md",
+        "CODEX.md",
+        ".codex/README.md",
+        ".codex/actions/harness-check.ps1",
         "docs/agent/README.md",
         "docs/agent/CONTEXT_BRIEF.md",
         "docs/agent/HANDOFF.md",
@@ -45,6 +49,59 @@ REQUIRED_FILES: tuple[Path, ...] = tuple(
         "docs/adr/ADR_TEMPLATE.md",
         "docs/adr/0001-agent-generated-development.md",
     )
+)
+
+REQUIRED_CODEX_SKILLS: tuple[str, ...] = (
+    "prime",
+    "plan",
+    "execplan",
+    "fix-loop",
+    "harness-check",
+    "handoff",
+    "pr-summary",
+    "protocol-change",
+    "repo-map",
+    "limit-safe-stop",
+    "cross-agent-review",
+    "push-safe",
+)
+
+AGENTS_REQUIRED_LINKS: tuple[str, ...] = (
+    "CODEX.md",
+    ".agents/skills/",
+    ".codex/",
+)
+
+CODEX_REQUIRED_LINKS: tuple[str, ...] = (
+    "AGENTS.md",
+    "docs/agent/HANDOFF.md",
+    "docs/agent/WORKFLOW.md",
+    "scripts/check.ps1",
+)
+
+STALE_CHECK_SKIP_PARTS: frozenset[str] = frozenset(
+    {
+        "__pycache__",
+        ".pytest_cache",
+        ".ruff_cache",
+        "node_modules",
+        "target",
+        "dist",
+        "build",
+    }
+)
+
+STALE_CHECK_SKIP_SUFFIXES: frozenset[str] = frozenset(
+    {
+        ".pyc",
+        ".pyo",
+        ".log",
+        ".exe",
+        ".dll",
+        ".pyd",
+        ".so",
+        ".dylib",
+    }
 )
 
 # Sections required to appear in HANDOFF.md (markdown ## headings).
@@ -100,6 +157,26 @@ def _agents_md_links(text: str) -> list[str]:
     return unique
 
 
+def _has_skill_metadata(text: str, field: str) -> bool:
+    if not text.startswith("---"):
+        return False
+    end = text.find("\n---", 3)
+    if end == -1:
+        return False
+    front_matter = text[3:end]
+    return bool(re.search(rf"^{re.escape(field)}:\s*\S", front_matter, flags=re.MULTILINE))
+
+
+def _is_source_for_staleness(path: Path) -> bool:
+    if path.name.startswith("."):
+        return False
+    if any(part in STALE_CHECK_SKIP_PARTS for part in path.parts):
+        return False
+    if path.suffix.lower() in STALE_CHECK_SKIP_SUFFIXES:
+        return False
+    return True
+
+
 def main() -> int:
     errors: list[str] = []
     warnings: list[str] = []
@@ -113,6 +190,11 @@ def main() -> int:
     agents_md = REPO_ROOT / "AGENTS.md"
     if agents_md.exists():
         text = _read(agents_md)
+        for required_link in AGENTS_REQUIRED_LINKS:
+            if required_link not in text:
+                errors.append(
+                    f"AGENTS.md missing required Codex link: {required_link}"
+                )
         for link in _agents_md_links(text):
             # Only check obvious in-repo paths, not external references.
             if link.startswith(("http", "https", "://")):
@@ -122,6 +204,34 @@ def main() -> int:
                 errors.append(
                     f"AGENTS.md references missing path: {link}"
                 )
+
+    # 2b. CODEX.md has the minimum operating links
+    codex_md = REPO_ROOT / "CODEX.md"
+    if codex_md.exists():
+        text = _read(codex_md)
+        for required_link in CODEX_REQUIRED_LINKS:
+            if required_link not in text:
+                errors.append(
+                    f"CODEX.md missing required link/reference: {required_link}"
+                )
+
+    # 2c. Codex repo-scoped skills exist and carry basic metadata
+    codex_skills_dir = REPO_ROOT / ".agents" / "skills"
+    if not codex_skills_dir.exists():
+        errors.append("missing Codex skills directory: .agents/skills/")
+    else:
+        for skill in REQUIRED_CODEX_SKILLS:
+            skill_md = codex_skills_dir / skill / "SKILL.md"
+            if not skill_md.exists():
+                errors.append(f"missing Codex skill: .agents/skills/{skill}/SKILL.md")
+                continue
+            text = _read(skill_md)
+            for field in ("name", "description"):
+                if not _has_skill_metadata(text, field):
+                    errors.append(
+                        f"Codex skill {skill_md.relative_to(REPO_ROOT)} missing "
+                        f"metadata field: {field}:"
+                    )
 
     # 3. HANDOFF.md required sections
     handoff = REPO_ROOT / "docs" / "agent" / "HANDOFF.md"
@@ -149,7 +259,7 @@ def main() -> int:
                 if not sub_root.exists():
                     continue
                 for path in sub_root.rglob("*"):
-                    if path.is_file() and not path.name.startswith("."):
+                    if path.is_file() and _is_source_for_staleness(path):
                         try:
                             newest = max(newest, path.stat().st_mtime)
                         except OSError:

@@ -94,9 +94,12 @@ SKIP_FILENAMES: frozenset[str] = frozenset(
 KEY_FILES: tuple[tuple[str, str], ...] = (
     ("AGENTS.md", "Agent entry point"),
     ("CLAUDE.md", "Claude Code operating manual"),
+    ("CODEX.md", "Codex Windows app operating manual"),
     ("README.md", "Human-facing project README"),
     ("MAD.md", "Master architecture / vision (if present)"),
     ("pyproject.toml", "Python package + tool config"),
+    (".agents/skills/prime/SKILL.md", "Codex prime skill"),
+    (".codex/README.md", "Codex app local actions"),
     ("docs/agent/CONTEXT_BRIEF.md", "One-page repo snapshot"),
     ("docs/agent/HANDOFF.md", "Last-session state"),
     ("docs/agent/WORKFLOW.md", "Default agent loop"),
@@ -118,6 +121,7 @@ KEY_FILES: tuple[tuple[str, str], ...] = (
     ("srtforge-studio/src-tauri/src/lib.rs", "Tauri shell + worker child"),
     ("scripts/check.ps1", "Lightweight harness (Windows)"),
     ("scripts/check.sh", "Lightweight harness (Unix)"),
+    ("scripts/codex_prime.py", "Read-only Codex startup bundle"),
     ("scripts/doctor.py", "Environment report"),
     ("scripts/update_context.py", "This file"),
     ("scripts/check_docs.py", "Doc freshness check"),
@@ -135,6 +139,8 @@ ALWAYS_DESCEND: frozenset[str] = frozenset(
         "tests",
         "docs",
         ".claude",
+        ".agents",
+        ".codex",
         ".github",
         "scripts",
         "packaging",
@@ -143,7 +149,13 @@ ALWAYS_DESCEND: frozenset[str] = frozenset(
 
 
 def _is_hidden(name: str) -> bool:
-    return name.startswith(".") and name not in {".github", ".claude", ".env.example"}
+    return name.startswith(".") and name not in {
+        ".github",
+        ".claude",
+        ".agents",
+        ".codex",
+        ".env.example",
+    }
 
 
 def _should_skip_dir(path: Path) -> bool:
@@ -247,7 +259,8 @@ def main() -> int:
         "- Native binaries / model checkpoints: `.exe`, `.dll`, `.pyd`, `.so`, "
         "`.onnx`, `.ckpt`, `.pt`, `.bin`.",
         "- Media: `.mkv`, `.mp4`, `.webm`, `.mp3`, `.wav`, `.flac`, `.srt`.",
-        "- Hidden files except `.github/`, `.claude/`, and `.env.example`.",
+        "- Hidden files except `.github/`, `.claude/`, `.agents/`, `.codex/`, "
+        "and `.env.example`.",
         "",
         "If the map is missing something you need, edit "
         "`scripts/update_context.py` (`KEY_FILES` / `SKIP_*`) and rerun.",

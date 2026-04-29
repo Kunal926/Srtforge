@@ -15,6 +15,19 @@ Each entry: short title, location, evidence, proposed fix, owner (if any).
 
 ## Weak / missing harness coverage
 
+### Agent operating layer drift
+
+- Location: `AGENTS.md`, `CLAUDE.md`, `CODEX.md`, `.claude/skills/`,
+  `.agents/skills/`, `.codex/`, `scripts/check_docs.py`.
+- Evidence: Srtforge now supports both Claude Code and Codex. If one agent
+  layer is updated without the shared docs or checks, future sessions will
+  drift back into chat-only conventions.
+- Proposed fix: Keep `scripts/check_docs.py` validating Codex files and
+  links; when adding a Claude skill that also applies to Codex, add or update
+  the `.agents/skills/` equivalent in the same task.
+- Acceptance: `python scripts/check_docs.py` fails when required Codex files
+  or skill metadata are missing.
+
 ### Pipeline `progress` events not emitted at sub-stage granularity
 
 - Location: `srtforge/pipeline.py`, `srtforge/logging.py`.

@@ -52,6 +52,19 @@ Both GUIs use the **same** stdin/stdout JSON-line worker protocol against
 - `tests/test_cli_worker.py` — CliRunner-based worker protocol tests.
 - `tests/test_pipeline.py` — pipeline tests using fakes and monkeypatching.
 
+## Agent operating layer
+
+- `AGENTS.md` is the shared entry point for any coding agent.
+- Claude Code uses `CLAUDE.md` and `.claude/skills/`.
+- OpenAI Codex Windows app / CLI / IDE uses `CODEX.md` and
+  `.agents/skills/`.
+- Codex app local actions live in `.codex/`.
+- Durable context lives in `docs/agent/*`, protocol truth in
+  `docs/contracts/*`, architecture truth in `docs/architecture/*`, and
+  durable decisions in `docs/adr/*`.
+- Chat-only decisions are not durable. Convert them into docs, tests,
+  schemas, ADRs, task notes, ExecPlans, or `QUALITY.md`.
+
 ## Current state of the harness
 
 - ExecPlan / handoff / context-brief conventions: this commit introduces them.
@@ -66,6 +79,8 @@ Both GUIs use the **same** stdin/stdout JSON-line worker protocol against
   are covered by the contract test suite added in this branch.
 - Lightweight check: `pwsh ./scripts/check.ps1` (Windows) or
   `bash ./scripts/check.sh` (Unix).
+- Codex layer check: `python scripts/check_docs.py` now validates `CODEX.md`,
+  `.agents/skills/`, and `.codex/`.
 
 ## Open gaps and follow-ups
 

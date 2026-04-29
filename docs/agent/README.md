@@ -2,8 +2,14 @@
 
 This directory is the home for everything an agent needs to operate inside
 Srtforge: workflow, context briefs, plans, handoffs, quality tracking, and
-tasks. The root entry point for agents is `AGENTS.md`; this directory holds
-the deeper material it links to.
+tasks. The root entry point for all agents is `AGENTS.md`; this directory
+holds the shared durable context it links to.
+
+Claude Code uses `CLAUDE.md` and `.claude/skills/`. OpenAI Codex in the
+Windows app, CLI, or IDE uses `CODEX.md` and `.agents/skills/`. Codex app
+local actions live in `.codex/`. All agents share `docs/agent/*`,
+`docs/contracts/*`, `docs/architecture/*`, and `docs/adr/*` as the source of
+truth.
 
 ## Human-owner workflow
 
@@ -25,6 +31,9 @@ loop between the human owner and the coding agent looks like this:
 7. **Feedback becomes repo-local context** — a doc update, a test, an ADR,
    a schema change, or an entry in `QUALITY.md`. No important decision
    stays only in chat.
+
+This applies to both Claude Code and Codex. Chat-only decisions are not
+durable; convert them into repo files before relying on them.
 
 ## Map of files in this directory
 
@@ -51,3 +60,4 @@ loop between the human owner and the coding agent looks like this:
 - Keep individual files short and link laterally — context is scarce.
 - Never put real secrets, tokens, paths to user media, or model artifacts
   in any of these files.
+- Handoff is mandatory for both Claude Code and Codex before stopping work.
