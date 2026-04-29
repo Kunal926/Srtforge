@@ -74,6 +74,15 @@ Each entry: short title, location, evidence, proposed fix, owner (if any).
   synthetic word-timestamp lists and assert the post-processor handles
   them sensibly.
 - Settings persistence round-trip is not tested across all dataclasses.
+- **Pipeline tests must pin `asr_engine` explicitly.** `PipelineConfig`
+  defaults `asr_engine` to `settings.whisper.engine`, which is whatever
+  the persistent `srtforge.config` has at module-import time. Tests that
+  rely on the default are silently coupled to the host environment —
+  passes locally with `engine: whisper`, fails in CI (no config file)
+  with a confusing `megatron.core.num_microbatches_calculator.__spec__
+  is None` error from the lazy NeMo import path. Always pass
+  `asr_engine="whisper"` (or `"parakeet"`) explicitly when constructing
+  `PipelineConfig` in a test.
 
 ## Doc gaps
 

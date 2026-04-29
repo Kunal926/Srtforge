@@ -90,6 +90,10 @@ def test_pipeline_executes_whisper_steps(tmp_path, monkeypatch):
         separation_prefer_gpu=False,
         output_path=output_path,
         ffmpeg_extraction_mode="stereo_mix",
+        # Pin the engine so the test isn't coupled to whatever
+        # ``settings.whisper.engine`` happens to be in the host
+        # environment. The fakes above patch the whisper engine.
+        asr_engine="whisper",
     )
     result = Pipeline(config).run()
 
@@ -134,6 +138,7 @@ def test_pipeline_falls_back_when_dual_mono_requested_without_center_channel(tmp
         separation_prefer_gpu=False,
         output_path=output_path,
         ffmpeg_extraction_mode="dual_mono_center",
+        asr_engine="whisper",
     )
 
     result = Pipeline(config).run()
