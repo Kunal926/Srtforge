@@ -2,148 +2,151 @@
 
 Living state of the repo. **Update this file before stopping any session.**
 
-A fresh agent should be able to read this and `CONTEXT_BRIEF.md` and pick
-up where you left off.
+A fresh agent should be able to read this and `CONTEXT_BRIEF.md` and pick up
+where you left off.
 
 ---
 
 ## Current goal
 
-Convert Srtforge into an agent-generated, harness-engineered repository
-per the spec consumed in this session. Done in 9 phases: compact
-entrypoint docs, ExecPlan convention, durable context, fast validation
-harness, worker/pipeline contract docs and tests, Claude Code skills,
-architecture invariants, lint/CI gate.
+Persist Studio live debug/Typer logs and fix the Codex harness PowerShell
+fallback.
+
+Status: complete. Finished History rows now carry:
+
+- `performance_log_path` for the existing Python `RunLogger` timing log.
+- `debug_log_path` for the Tauri-captured live Studio debug log under
+  `logs/studio-debug/*.debug.log`.
+
+The protocol ExecPlan was completed and archived at
+`docs/agent/exec-plans/archive/studio-live-logs.md`.
+
+The Codex harness action now prefers `pwsh` and falls back to Windows
+PowerShell when PowerShell 7 is not installed.
 
 ## Current branch / git state
 
-- Branch: `agent-harness-engineering`, branched from
-  `srtforge-studio-bundle-fixes`.
-- Pre-existing modification carried along: `srtforge-studio/src-tauri/Cargo.toml`
-  (worker bundle fix from a previous session, not touched here).
-- Working tree dirty with this session's work — see "Changed files".
-- Not yet committed; no push done.
+- Branch: `codex-windows-agent-layer`.
+- Latest pushed commit before this handoff correction:
+  `6fc7e44 docs: record push blocker`.
+- Branch is tracking `origin/codex-windows-agent-layer`.
+- The previously uncommitted `srtforge-studio/pnpm-lock.yaml` was included in
+  `6bfa5ca`. `srtforge-studio/src-tauri/Cargo.toml` was not present in the
+  staged diff by commit time.
+- Local commit created for the requested dirty-file work:
+  `6bfa5ca studio: persist debug logs`.
+- Initial push attempt failed with GitHub HTTP 403, then succeeded after the
+  user granted `Kunal926` write permission.
 
 ## Changed files
 
-This session adds these new files:
+Studio debug/performance log work:
 
-- `AGENTS.md` — compact entry point.
-- `.env.example` — placeholder env vars.
-- `.github/workflows/harness.yml` — lightweight CI gate.
-- `.claude/skills/{prime,plan,execplan,fix-loop,harness-check,handoff,pr-summary,protocol-change}/SKILL.md`
-  — repo-local skills.
-- `docs/agent/{README,CONTEXT_BRIEF,WORKFLOW,PLANS,HANDOFF,QUALITY,EXTERNAL_READING_SUMMARY,TASK_TEMPLATE,PROJECT_MAP}.md`
-- `docs/agent/{tasks,exec-plans/active,exec-plans/archive}/README.md`
-- `docs/architecture/ARCHITECTURE.md`
+- `srtforge/pipeline.py`
+- `srtforge/cli.py`
+- `srtforge/worker_protocol.py`
+- `srtforge-studio/src-tauri/src/lib.rs`
+- `srtforge-studio/src/components/Queue.tsx`
+- `srtforge-studio/src/lib/locate.ts`
+- `srtforge-studio/src/store.ts`
+- `srtforge-studio/src/types.ts`
+- `srtforge-studio/src/styles/index.css`
+- `tests/test_cli_worker.py`
+- `tests/test_worker_protocol.py`
 - `docs/contracts/worker-protocol.md`
-- `docs/contracts/{worker-events,worker-requests}.schema.json`
-- `docs/adr/{README,ADR_TEMPLATE,0001-agent-generated-development}.md`
-- `scripts/{check.ps1,check.sh,doctor.py,update_context.py,check_docs.py}`
-- `srtforge/worker_protocol.py` — typed parse helpers + event builders.
-- `tests/{test_worker_protocol,test_pipeline_events,test_srt_writer}.py`
-  — contract / golden tests.
+- `docs/contracts/worker-events.schema.json`
+- `docs/agent/CONTEXT_BRIEF.md`
+- `docs/architecture/ARCHITECTURE.md`
+- `docs/agent/PROJECT_MAP.md`
+- `docs/agent/exec-plans/archive/studio-live-logs.md`
+- `docs/agent/HANDOFF.md`
 
-Modifies these existing files:
+Harness fallback fix:
 
-- `CLAUDE.md` — rewritten as Claude-Code operating manual.
-- `pyproject.toml` — adds pytest config (with markers) + ruff config +
-  optional `[dev]` extras.
-- `.gitignore` — expanded to cover generated artifacts (target, dist,
-  egg-info, sidecar binaries, vendored ffmpeg, etc.).
-- `srtforge/logging.py` — stage events now carry `msg` and `run_id`.
-- `tests/test_settings.py` — fixed stale assert (default
-  `subsampling_conv_chunking_factor` is `0`, not `1`).
-- `tests/test_cli_worker.py` — switched the `_Settings` mock to a real
-  `AppSettings()` so the test doesn't drift when `_build_pipeline_config`
-  reads new fields.
-- `tests/test_pipeline.py` — patches `write_srt` at the actual import
-  site (`srtforge.post.srt_utils.write_srt` and
-  `srtforge.pipeline._write_srt_with_diag`) instead of the legacy
-  re-export.
-- `srtforge/gui_app.py`, `srtforge/post/segmenter.py`,
-  `srtforge/post/srt_utils.py` — ruff auto-fix removed unused imports.
+- `AGENTS.md`
+- `CODEX.md`
+- `.codex/actions/harness-check.ps1`
+- `.codex/README.md`
+- `.agents/skills/harness-check/SKILL.md`
+- `.agents/skills/protocol-change/SKILL.md`
+- `docs/agent/WORKFLOW.md`
+- `docs/agent/TASK_TEMPLATE.md`
+- `scripts/check.ps1`
+
+Earlier progress-event files included in the local commit:
+
+- `srtforge/logging.py`
+- `srtforge/engine_whisper.py`
+- `srtforge/engine_parakeet.py`
+- `srtforge/post/srt_utils.py`
+- `tests/test_pipeline.py`
+- `tests/test_pipeline_events.py`
+- `docs/agent/QUALITY.md`
+- `docs/agent/exec-plans/archive/progress-events.md`
 
 ## Commands run and results
 
-- `git checkout -b agent-harness-engineering` — pass.
-- `python scripts/update_context.py` — pass (writes
-  `docs/agent/PROJECT_MAP.md`).
-- `python scripts/check_docs.py` — pass (`docs check OK`).
-- `python -m pytest --color=no -q` — **74 passed in 3.52s**.
-- `python -m srtforge --help` — pass.
-- `python -m ruff check srtforge tests scripts` — pass (`All checks
-  passed!`).
-- `pwsh ./scripts/check.ps1` — pass (all 7 executed checks green;
-  Python import smoke, pytest, CLI smoke, ruff, doc freshness, frontend
-  type-check, cargo check).
+- `.\.venv\Scripts\python.exe -m pytest tests/test_worker_protocol.py tests/test_cli_worker.py tests/test_pipeline_events.py -q` - pass; 36 passed.
+- `cargo fmt --check` from `srtforge-studio/src-tauri/` - initially failed because `lib.rs` needed formatting.
+- `cargo fmt` from `srtforge-studio/src-tauri/` - pass; formatted Rust code.
+- `cargo test debug_log --lib` from `srtforge-studio/src-tauri/` - pass; 3 passed.
+- `cargo check` from `srtforge-studio/src-tauri/` - pass.
+- `pnpm exec tsc --noEmit` from `srtforge-studio/` - pass.
+- `.\.venv\Scripts\python.exe scripts\update_context.py` - pass; regenerated `docs/agent/PROJECT_MAP.md`.
+- `.\.venv\Scripts\python.exe scripts\check_docs.py` - pass; `docs check OK`.
+- `pwsh ./scripts/check.ps1` - fail; `pwsh` is not on PATH in this environment.
+- `. .\.venv\Scripts\Activate.ps1; & .\scripts\check.ps1` from Windows PowerShell 5.1 - pass. Executed checks passed: Python import smoke, default pytest (`78 passed`), CLI smoke, Ruff, doc freshness, frontend type-check, and Rust `cargo check`.
+- `cargo fmt --check` from `srtforge-studio/src-tauri/` after formatting - pass.
+- `.\.codex\actions\harness-check.ps1` - initially failed after the fallback
+  worked because `CODEX.md` no longer mentioned `scripts/check.ps1`, which
+  `scripts/check_docs.py` requires.
+- `.\.codex\actions\harness-check.ps1` after restoring the docs reference -
+  pass. It printed `pwsh not found; falling back to Windows PowerShell.` and
+  all executed checks passed, including default pytest (`78 passed`).
+- `.\.venv\Scripts\python.exe scripts\check_docs.py` after the harness-doc
+  updates - pass; `docs check OK`.
+- `git add -A` - pass; staged all uncommitted files requested by the user.
+- `git diff --cached --check` - pass.
+- `git config --local --get-regexp "remote|branch" | Select-String "github_pat|ghp_|token" -SimpleMatch` - pass; no token-like output printed.
+- `git commit -m "studio: persist debug logs"` - pass; created local commit
+  `6bfa5ca`.
+- `git push -u origin codex-windows-agent-layer` - fail; GitHub returned 403
+  permission denied for account `Kunal926`.
+- `git remote -v` after push failure - pass; `origin` remains
+  `https://github.com/StiensGate928/Srtforge.git`.
+- post-push-failure token scan with `git config --local --get-regexp "remote|branch" | Select-String "github_pat|ghp_|token" -SimpleMatch` - pass; no token-like output printed.
+- `git push -u origin codex-windows-agent-layer` after permission update -
+  pass; created remote branch and set upstream tracking.
 
 ## Skipped checks and why
 
-- All `slow`, `requires_ffmpeg`, `requires_model`, `requires_cuda`, and
-  `requires_media` tests are skipped by default per the addopts in
-  `pyproject.toml`. None of these markers are present in the existing
-  suite yet — the markers exist for future heavy tests to opt out of
-  the default selection.
+- No lightweight harness checks were skipped by the Windows PowerShell fallback
+  run.
+- `pwsh` is still not installed globally, but the repo-side Codex harness no
+  longer depends on it.
 
 ## Decisions made
 
-- **Default test selection** excludes slow / model / cuda / media /
-  ffmpeg markers. CI runs only this default. Heavy tests, when added,
-  must opt in via marker.
-- **Ruff first-pass policy** is `select = ["F"]` (pyflakes only — real
-  bugs). Style rules (`E`), import sorting (`I`), pyupgrade (`UP`), and
-  bugbear (`B`) are intentionally OFF until the existing tree has been
-  cleaned up. Future cleanup tracked in `docs/agent/QUALITY.md`.
-- **CI installs the package without heavy ML deps** (`pip install -e .
-  --no-deps` plus a small lightweight subset). Heavy deps
-  (`audio-separator`, `cuda-python`, `faster-whisper`, NeMo, PySide6)
-  are not needed in the default test path because tests monkeypatch
-  around the engines.
-- **Stage events carry `msg` and `run_id`** in addition to the existing
-  `stage`, `state`, `seconds`, `ok` fields. Schema and contract doc
-  updated; consumers can ignore unknown fields.
-- **Three pre-existing test failures fixed** by updating the tests to
-  match the current code (settings default, mock structure, write_srt
-  patch site). All three were inherited from the parent branch as
-  noted in the prior session's compaction summary.
+- Used the required `protocol-change` and `execplan` workflows because the work
+  changes worker event metadata across Python, Rust, TypeScript, docs, and tests.
+- Kept two log concepts distinct:
+  `performance_log_path` is the Python pipeline timing log, while
+  `debug_log_path` is the Studio live/Typer debug log.
+- Captured debug logs in the Tauri shell, because it sees the same stdout/stderr
+  stream that feeds Studio's Active live-log pane.
+- Persisted only completed/failed History rows in Zustand, not queued or active
+  rows, so app restart does not resurrect in-flight jobs.
+- Deferred flagging/report bundles per user direction; this pass is logs only.
+- Fixed the `pwsh` issue at the repo harness layer instead of installing global
+  PowerShell 7: `.codex/actions/harness-check.ps1` now uses `pwsh` if present
+  and `powershell.exe` otherwise.
 
 ## Known blockers
 
-None for the current goal. CI is defined but not yet observed green on
-GitHub Actions — the first push to this branch will tell us. The CI
-job is conservative (lightweight subset only); if it fails, the most
-likely cause is a transitive dep that the package's `import` path needs
-that I didn't list in `runtime-deps`.
+- `rg.exe` still returns access denied in this environment; use PowerShell
+  `Select-String` fallback.
 
 ## Next recommended action
 
-**Wire fine-grained `progress` events through the pipeline** so the
-Studio's stage dots can advance smoothly inside long stages (ASR,
-post-processing) instead of toggling at stage boundaries. The contract
-already has the event shape (`docs/contracts/worker-protocol.md` →
-`progress`), the `worker_protocol.progress_event` builder is in place,
-and `tests/test_pipeline_events.py` provides the harness pattern to
-extend with progress assertions. Use the `protocol-change` skill to
-walk the lockstep edits; expect:
-
-1. Add a `progress_callback` (or similar) to `PipelineConfig`.
-2. Emit progress from inside the ASR loop and the post-processing
-   batch loop.
-3. Worker installs the per-job progress emitter the same way it
-   already installs the stage emitter.
-4. Extend `test_pipeline_events.py::TestStageEventFlow` with a
-   `TestProgressMonotonic` class.
-5. Update `srtforge-studio/src/store.ts` to consume the events
-   (already typed, just needs handler logic).
-
-After that, in priority order:
-
-- **Graceful Tauri-shell shutdown** — send `{"action":"shutdown"}` to
-  the worker on `RunEvent::ExitRequested`, preventing the
-  zombie-`srtforge_worker.exe` PermissionDenied panic on the next
-  `pnpm tauri dev`.
-- **Real Sonarr webhook listener** for the Watch view (currently
-  UI-only).
-- **Real GPU/VRAM telemetry probe** in the Rust shell (placeholder
-  `gpuPct={0}` / `vram="—"` in the Studio sidebar).
+Open a pull request from `codex-windows-agent-layer` into the repository's main
+integration branch.

@@ -139,6 +139,13 @@ Best-effort: if `torch` is loaded and CUDA is available, calls
 Every event has an `event` discriminator field. Most carry an `id`
 field correlating them with the originating request.
 
+Studio exposes two job log artifacts when available:
+
+- `performance_log_path` points at the Python pipeline timing log written by
+  `RunLogger` (`logs/<run_id>.log`).
+- `debug_log_path` points at the Tauri-captured live worker/Typer stream
+  shown in the Active pane (`logs/studio-debug/*.debug.log`).
+
 ### Lifecycle events
 
 #### `worker_starting`
@@ -176,6 +183,7 @@ child process exits. Carries the exit code if known.
 | --- | --- | --- |
 | `event` | `"terminated"` | yes |
 | `code` | int \| null | no |
+| `debug_log_path` | string | no |
 
 ### Preload events
 
@@ -212,6 +220,7 @@ separate).
 | `id` | string | yes |
 | `file` | string | no |
 | `kind` | string | no — present for `normalize` / `separate` (`"normalize"`, `"separate"`) |
+| `debug_log_path` | string | no — Studio live debug log path, added by the Tauri shell |
 
 #### `stage`
 
@@ -227,15 +236,15 @@ Emitted on enter and exit of each major pipeline phase. Powered by
 | `state` | `"start" \| "end"` | yes |
 | `msg` | string | optional — human-readable step label (e.g. `"Probe audio streams"`) |
 | `run_id` | string | optional — `RunLogger.run_id` for the current pipeline run |
+| `debug_log_path` | string | optional — Studio live debug log path, added by the Tauri shell |
 | `seconds` | number | only on `state:"end"` |
 | `ok` | bool | only on `state:"end"` |
 
 #### `progress`
 
-Reserved for sub-stage progress signals (e.g. ASR streaming partial
-results). Not emitted by the current pipeline yet — see
-`docs/agent/QUALITY.md`. Consumers must accept either `fraction` or
-`progress` as the 0..1 numeric payload.
+Sub-stage progress signals emitted during ASR and subtitle post-processing.
+Consumers must accept either `fraction` or `progress` as the 0..1 numeric
+payload.
 
 | Field | Type |
 | --- | --- |
@@ -245,6 +254,7 @@ results). Not emitted by the current pipeline yet — see
 | `fraction` | number (0..1) — optional |
 | `progress` | number (0..1) — optional alias |
 | `eta` | string — optional |
+| `debug_log_path` | string — optional, added by the Tauri shell |
 
 #### `log`
 
@@ -255,9 +265,12 @@ as JSON.
 | Field | Type |
 | --- | --- |
 | `event` | `"log"` |
+| `id` | string — optional, added by Studio when a job is active |
 | `t` | string — optional |
 | `lvl` | string — optional |
+| `source` | string — optional, usually `"stdout"` or `"stderr"` |
 | `msg` | string — required |
+| `debug_log_path` | string — optional, added by the Tauri shell |
 
 #### `srt_written`
 
@@ -268,6 +281,9 @@ Emitted by `transcribe` after the SRT file has been written to disk.
 | `event` | `"srt_written"` | yes |
 | `id` | string | yes |
 | `path` | string | yes |
+| `run_id` | string | no |
+| `performance_log_path` | string | no — pipeline timing log |
+| `debug_log_path` | string | no — Studio live debug log |
 
 #### `media_written`
 
@@ -281,6 +297,7 @@ a single transcribe job depending on which output flags are enabled.
 | `id` | string | yes |
 | `kind` | `"embedded" \| "burned"` | yes |
 | `path` | string | yes |
+| `debug_log_path` | string | no |
 
 #### `asset_written`
 
@@ -294,6 +311,7 @@ which asset was produced (e.g. `"normalize"`, `"vocals"`,
 | `id` | string | yes |
 | `kind` | string | yes |
 | `path` | string | yes |
+| `debug_log_path` | string | no |
 
 #### `job_completed`
 
@@ -304,6 +322,9 @@ Emitted at the end of a successful job.
 | `event` | `"job_completed"` | yes |
 | `id` | string | yes |
 | `seconds` | number \| null | no |
+| `run_id` | string | no |
+| `performance_log_path` | string | no — pipeline timing log |
+| `debug_log_path` | string | no — Studio live debug log |
 
 #### `job_failed`
 
@@ -315,6 +336,8 @@ Emitted when a job fails. Always terminates the job's event stream.
 | `id` | string | yes |
 | `file` | string | no |
 | `run_id` | string | no |
+| `performance_log_path` | string | no — pipeline timing log when available |
+| `debug_log_path` | string | no — Studio live debug log |
 | `error` | string | yes |
 | `traceback` | string | no |
 

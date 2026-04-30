@@ -22,27 +22,27 @@ if TYPE_CHECKING:
 _console: Optional["Console"] = None
 _cleanup_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="log-cleanup")
 
-# Module-level event emitter for stage transitions. Installed by callers
-# that want pipeline timing events surfaced (typically the worker JSON
-# loop in :mod:`srtforge.cli`); left as ``None`` in plain CLI usage so
-# `srtforge run ...` stays quiet on stdout.
+# Module-level event emitter for pipeline worker events. Installed by
+# callers that want pipeline timing/progress events surfaced (typically
+# the worker JSON loop in :mod:`srtforge.cli`); left as ``None`` in plain
+# CLI usage so `srtforge run ...` stays quiet on stdout.
 _event_emitter: Optional[Callable[[dict], None]] = None
 
 
 def set_event_emitter(cb: Optional[Callable[[dict], None]]) -> None:
-    """Install (or clear) a callback for ``RunLogger.step`` enter/exit events.
+    """Install (or clear) a callback for pipeline worker events.
 
-    The callback receives a dict with at least ``event``, ``stage``, and
-    ``state`` keys; the worker typically installs a closure that injects
-    the current job id and forwards to the JSON line emitter. Pass
-    ``None`` to clear after the job finishes.
+    The callback receives event dicts emitted by ``RunLogger.step`` and
+    progress helpers; the worker typically installs a closure that injects
+    the current job id and forwards to the JSON line emitter. Pass ``None``
+    to clear after the job finishes.
     """
 
     global _event_emitter
     _event_emitter = cb
 
 
-def _emit_stage(payload: dict) -> None:
+def _emit_event(payload: dict) -> None:
     """Best-effort dispatch to the registered emitter (swallows exceptions)."""
 
     cb = _event_emitter
@@ -53,6 +53,25 @@ def _emit_stage(payload: dict) -> None:
     except Exception:
         # A broken emitter must never take down the pipeline.
         pass
+
+
+def _emit_stage(payload: dict) -> None:
+    _emit_event(payload)
+
+
+def emit_progress(stage: str, fraction: float, *, eta: Optional[str] = None) -> None:
+    """Emit a worker ``progress`` event through the installed pipeline emitter.
+
+    The emitted payload intentionally omits ``id`` here. The worker's per-job
+    emitter injects the active job id before writing the JSON line, matching
+    the existing stage-event flow.
+    """
+
+    from .worker_protocol import progress_event
+
+    payload = progress_event(id="", stage=stage, fraction=fraction, eta=eta)  # type: ignore[arg-type]
+    payload.pop("id", None)
+    _emit_event(payload)
 
 
 def _shutdown_executor() -> None:
@@ -291,6 +310,7 @@ class RunLogger:
 __all__ = [
     "RunLogger",
     "cleanup_old_logs",
+    "emit_progress",
     "get_console",
     "set_event_emitter",
     "status",

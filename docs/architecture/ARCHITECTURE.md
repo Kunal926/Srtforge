@@ -151,8 +151,8 @@ spilling into implementation detail. Implementation detail goes in
 | Concern | Where |
 | --- | --- |
 | Settings | `srtforge/settings.py` (dataclasses) + `srtforge/config.yaml` (defaults) + `srtforge.config` (persistent overrides) |
-| Logging | `srtforge/logging.py` — `RunLogger`, file logs in `logs/`, latest run at `logs/srtforge.log` |
-| Worker events | `srtforge/cli.py` `_emit_worker_event` + `srtforge/logging.py` `_emit_stage` |
+| Logging | `srtforge/logging.py` — `RunLogger`, performance logs in `logs/`, latest run at `logs/srtforge.log`; Studio debug logs in `logs/studio-debug/` |
+| Worker events | `srtforge/cli.py` `_emit_worker_event` + `srtforge/logging.py` stage/progress emitters + Tauri debug-log metadata |
 | Model paths | `srtforge/config.py` (`MODELS_DIR`, `FV4_*`); frozen-aware |
 | Temp / output paths | `PipelineConfig.temp_dir`, `PipelineConfig.output_directory`; CLI resolves under `PROJECT_ROOT` |
 | Windows packaging | `packaging/windows/*.spec` (legacy GUI), `srtforge-studio/packaging/windows/*.spec` (Studio sidecar) |

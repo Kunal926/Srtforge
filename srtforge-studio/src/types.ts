@@ -10,6 +10,9 @@ export interface QueueFile {
   outputPath?: string;     // SRT output path, set on srt_written
   embeddedPath?: string;   // muxed media path, set on media_written
   burnedPath?: string;     // hard-subbed media path, set on media_written
+  runId?: string;          // Python RunLogger id for pipeline-backed jobs
+  performanceLogPath?: string; // pipeline timing log
+  debugLogPath?: string;   // Studio live/Typer debug log
   duration: string;        // "23:54"
   durationSec: number;
   sampleRate: number;      // kHz
@@ -29,6 +32,7 @@ export interface LogLine {
   t: string;       // "01:48.302"
   lvl: "info" | "ok" | "warn" | "err" | string;
   msg: string;
+  source?: string;
   run?: boolean;
 }
 
@@ -106,12 +110,14 @@ export type WorkerStage =
 export type WorkerEvent =
   | { event: "queued"; id: string; file: string; meta: Partial<QueueFile> }
   | { event: "started"; id: string }
-  | { event: "job_started"; id: string; file?: string; kind?: string }
+  | { event: "job_started"; id: string; file?: string; kind?: string; debug_log_path?: string }
   | {
       event: "stage";
       id: string;
       stage: WorkerStage;
       state: "start" | "end";
+      run_id?: string;
+      debug_log_path?: string;
       seconds?: number;
       ok?: boolean;
     }
@@ -122,16 +128,39 @@ export type WorkerEvent =
       fraction?: number;
       progress?: number;
       eta?: string;
+      debug_log_path?: string;
     }
-  | { event: "log"; t?: string; lvl?: string; msg: string }
-  | { event: "srt_written"; id: string; path: string }
-  | { event: "media_written"; id: string; kind: "embedded" | "burned"; path: string }
-  | { event: "asset_written"; id: string; kind: string; path: string }
-  | { event: "job_completed"; id: string; seconds?: number | null }
-  | { event: "job_failed"; id: string; error: string; traceback?: string }
+  | { event: "log"; id?: string; t?: string; lvl?: string; msg: string; source?: string; debug_log_path?: string }
+  | {
+      event: "srt_written";
+      id: string;
+      path: string;
+      run_id?: string;
+      performance_log_path?: string;
+      debug_log_path?: string;
+    }
+  | { event: "media_written"; id: string; kind: "embedded" | "burned"; path: string; debug_log_path?: string }
+  | { event: "asset_written"; id: string; kind: string; path: string; debug_log_path?: string }
+  | {
+      event: "job_completed";
+      id: string;
+      seconds?: number | null;
+      run_id?: string;
+      performance_log_path?: string;
+      debug_log_path?: string;
+    }
+  | {
+      event: "job_failed";
+      id: string;
+      error: string;
+      run_id?: string;
+      performance_log_path?: string;
+      debug_log_path?: string;
+      traceback?: string;
+    }
   | { event: "paused" }
   | { event: "resumed" }
-  | { event: "terminated"; code: number | null }
+  | { event: "terminated"; code: number | null; debug_log_path?: string }
   | { event: "gpu_cache_cleared" }
   | { event: "gpu_cache_skipped"; reason?: string }
   | { event: "gpu_cache_failed"; error?: string }

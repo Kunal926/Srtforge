@@ -37,8 +37,8 @@ Both GUIs use the **same** stdin/stdout JSON-line worker protocol against
 - `srtforge/cli.py` — Typer CLI, including the `worker` JSON loop.
 - `srtforge/pipeline.py` — `Pipeline.run()` is the ordered chain.
 - `srtforge/logging.py` — `RunLogger`, `_TimedStep`, and the
-  `set_event_emitter` hook used to publish `stage` events out of the
-  pipeline.
+  `set_event_emitter` hook used to publish `stage` and `progress` events
+  out of the pipeline.
 - `srtforge/settings.py` — config dataclass tree, YAML loading,
   persistent-config path resolution.
 - `srtforge/config.py` — `PROJECT_ROOT` / `MODELS_DIR` / `FV4_*` resolution
@@ -52,26 +52,43 @@ Both GUIs use the **same** stdin/stdout JSON-line worker protocol against
 - `tests/test_cli_worker.py` — CliRunner-based worker protocol tests.
 - `tests/test_pipeline.py` — pipeline tests using fakes and monkeypatching.
 
+## Agent operating layer
+
+- `AGENTS.md` is the shared entry point for any coding agent.
+- Claude Code uses `CLAUDE.md` and `.claude/skills/`.
+- OpenAI Codex Windows app / CLI / IDE uses `CODEX.md` and
+  `.agents/skills/`.
+- Codex app local actions live in `.codex/`.
+- Durable context lives in `docs/agent/*`, protocol truth in
+  `docs/contracts/*`, architecture truth in `docs/architecture/*`, and
+  durable decisions in `docs/adr/*`.
+- Chat-only decisions are not durable. Convert them into docs, tests,
+  schemas, ADRs, task notes, ExecPlans, or `QUALITY.md`.
+
 ## Current state of the harness
 
 - ExecPlan / handoff / context-brief conventions: this commit introduces them.
-- Pipeline stage events: wired (`stage="..."` keywords on
-  `RunLogger.step`) and emitted via `srtforge.logging.set_event_emitter`,
-  installed by the worker per-job.
+- Pipeline stage/progress events: wired through
+  `srtforge.logging.set_event_emitter`, installed by the worker per-job.
+  Stage events come from `RunLogger.step(stage="...")`; progress events come
+  from ASR generation, post-processing, and final SRT write.
+- Studio History now distinguishes the Python pipeline performance log
+  (`performance_log_path`, backed by `logs/<run_id>.log`) from the Tauri
+  captured live debug/Typer log (`debug_log_path`, backed by
+  `logs/studio-debug/*.debug.log`).
 - `WorkerStage` and `WorkerEvent` types: exist in
   `srtforge-studio/src/types.ts`.
 - Worker protocol contract doc: see `docs/contracts/worker-protocol.md`.
 - Worker test coverage: lifecycle (success and failure ordering) plus zero
   chunking factor preservation. Bad-JSON / unknown-action / GPU-cache paths
   are covered by the contract test suite added in this branch.
-- Lightweight check: `pwsh ./scripts/check.ps1` (Windows) or
-  `bash ./scripts/check.sh` (Unix).
+- Lightweight check: `.\.codex\actions\harness-check.ps1` (Windows, with
+  `pwsh` -> Windows PowerShell fallback) or `bash ./scripts/check.sh` (Unix).
+- Codex layer check: `python scripts/check_docs.py` now validates `CODEX.md`,
+  `.agents/skills/`, and `.codex/`.
 
 ## Open gaps and follow-ups
 
-- The pipeline does not yet emit fine-grained `progress` events
-  (only `stage start/end`). Surface this if/when the UI needs sub-stage
-  progress bars; tracked in `QUALITY.md`.
 - The Rust shell does not yet forward worker shutdown gracefully when
   `pnpm tauri dev` is killed; this leaves zombie `srtforge_worker.exe`
   processes on Windows. Workaround documented in `CLAUDE.md`. Tracked in
@@ -93,7 +110,7 @@ Both GUIs use the **same** stdin/stdout JSON-line worker protocol against
 ## Canonical lightweight check
 
 ```powershell
-pwsh ./scripts/check.ps1
+.\.codex\actions\harness-check.ps1
 ```
 
 It runs Python import smoke, fast pytest selection (no slow / model / CUDA

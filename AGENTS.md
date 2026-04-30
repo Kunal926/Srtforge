@@ -29,7 +29,7 @@ JSON-per-line stdin/stdout protocol. The Python pipeline is the source of truth.
 1. `docs/agent/CONTEXT_BRIEF.md` — one-page repo snapshot
 2. `docs/agent/HANDOFF.md` — what the previous session left behind
 3. `docs/agent/WORKFLOW.md` — the loop you should be running
-4. `CLAUDE.md` — Claude-Code-specific operating manual for this repo
+4. `CLAUDE.md` or `CODEX.md` — agent-specific operating manual
 5. `docs/architecture/ARCHITECTURE.md` — where things live and why
 
 Then, when relevant:
@@ -38,6 +38,12 @@ Then, when relevant:
 - `docs/adr/` — decisions of record
 - `docs/agent/QUALITY.md` — known weak areas / cleanup queue
 - `docs/agent/EXTERNAL_READING_SUMMARY.md` — external principles applied here
+
+## Agent-specific manuals
+
+- Claude Code: `CLAUDE.md` and `.claude/skills/`
+- OpenAI Codex Windows app / CLI / IDE: `CODEX.md` and `.agents/skills/`
+- Codex app local actions: `.codex/`
 
 ## Canonical commands (Windows-first)
 
@@ -50,8 +56,11 @@ Activate the project venv before any Python work:
 Default lightweight check (run this before stopping):
 
 ```powershell
-pwsh ./scripts/check.ps1
+.\.codex\actions\harness-check.ps1
 ```
+
+The Codex action runs `scripts/check.ps1` with `pwsh` when available and
+falls back to Windows PowerShell on machines without PowerShell 7.
 
 On Unix/WSL:
 
@@ -117,7 +126,8 @@ project map. Add the missing piece (or file a tracked follow-up in
 
 ## Links
 
-- Operating manual: `CLAUDE.md`
+- Claude Code manual: `CLAUDE.md`
+- Codex manual: `CODEX.md`
 - Brief: `docs/agent/CONTEXT_BRIEF.md`
 - Workflow: `docs/agent/WORKFLOW.md`
 - Plans: `docs/agent/PLANS.md`

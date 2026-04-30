@@ -1,8 +1,12 @@
 # WORKFLOW.md
 
-The default loop an agent should run inside Srtforge. Optimized for
-single-agent, single-repo, one-task work — multi-agent orchestration is out
-of scope until this loop is excellent.
+The default loop an agent should run inside Srtforge. It is shared by Claude
+Code and OpenAI Codex; agent-specific manuals and skills adapt the same loop
+to each tool.
+
+Durable repo files are the source of truth. Chat-only decisions must be turned
+into task notes, ExecPlans, docs, contracts, tests, ADRs, or `QUALITY.md`
+before another agent is expected to rely on them.
 
 ## The Ralph loop
 
@@ -25,6 +29,7 @@ Concretely, on a fresh session:
 - `AGENTS.md`
 - `docs/agent/CONTEXT_BRIEF.md`
 - `docs/agent/HANDOFF.md`
+- `CLAUDE.md` for Claude Code or `CODEX.md` for Codex
 - The active ExecPlan, if any, in `docs/agent/exec-plans/active/`.
 
 That should be under a few hundred lines total. If you need more, follow
@@ -41,6 +46,10 @@ git branch --show-current
 If there are uncommitted changes from a prior session, do not destroy them.
 Document them in your plan and decide whether to fold them in or leave them
 alone.
+
+If switching agents, preserve both layers: Claude Code skills stay under
+`.claude/skills/`; Codex skills stay under `.agents/skills/`; Codex local
+actions stay under `.codex/`.
 
 ### 3. Plan
 
@@ -76,11 +85,11 @@ before retrying.
 Once the narrow check passes:
 
 ```powershell
-pwsh ./scripts/check.ps1
+.\.codex\actions\harness-check.ps1
 ```
 
 This runs the full lightweight harness. Skipped checks should print clear
-reasons.
+reasons. The Codex action prefers `pwsh` and falls back to Windows PowerShell.
 
 ### 8. Update handoff
 
@@ -103,8 +112,11 @@ If your change touched the worker protocol, update
 
 ### 9. Summarize
 
-Final response to the human follows the format in
-`.claude/skills/pr-summary/SKILL.md`:
+Final response to the human follows the format in the active agent's
+`pr-summary` skill:
+
+- Claude Code: `.claude/skills/pr-summary/SKILL.md`
+- Codex: `.agents/skills/pr-summary/SKILL.md`
 
 ```
 ## Summary

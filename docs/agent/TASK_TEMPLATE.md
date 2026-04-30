@@ -30,7 +30,7 @@ command, a new test passing, a doc update.
 Bulleted, observable, testable. Examples:
 
 - `python -m pytest tests/test_x.py::test_y` passes.
-- `pwsh ./scripts/check.ps1` is green.
+- `.\.codex\actions\harness-check.ps1` is green.
 - `srtforge worker` emits `<event>` with shape `…` when given input `…`.
 
 ## Commands to run
@@ -39,7 +39,7 @@ Exact commands the agent will use to validate. Both narrow and broad:
 
 ```powershell
 python -m pytest tests/test_<x>.py -k <pattern>
-pwsh ./scripts/check.ps1
+.\.codex\actions\harness-check.ps1
 ```
 
 ## Risks
