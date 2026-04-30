@@ -27,17 +27,16 @@ PowerShell when PowerShell 7 is not installed.
 ## Current branch / git state
 
 - Branch: `codex-windows-agent-layer`.
-- Latest local implementation commit: `6bfa5ca studio: persist debug logs`.
-- Worktree was clean immediately after `6bfa5ca`; this handoff update is being
-  committed separately so the push failure is recorded in repo state.
+- Latest pushed commit before this handoff correction:
+  `6fc7e44 docs: record push blocker`.
+- Branch is tracking `origin/codex-windows-agent-layer`.
 - The previously uncommitted `srtforge-studio/pnpm-lock.yaml` was included in
   `6bfa5ca`. `srtforge-studio/src-tauri/Cargo.toml` was not present in the
   staged diff by commit time.
 - Local commit created for the requested dirty-file work:
   `6bfa5ca studio: persist debug logs`.
-- Push attempted with `git push -u origin codex-windows-agent-layer` but failed
-  with GitHub HTTP 403 because the active credential is for `Kunal926`, which
-  lacks write permission to `StiensGate928/Srtforge.git`.
+- Initial push attempt failed with GitHub HTTP 403, then succeeded after the
+  user granted `Kunal926` write permission.
 
 ## Changed files
 
@@ -116,6 +115,8 @@ Earlier progress-event files included in the local commit:
 - `git remote -v` after push failure - pass; `origin` remains
   `https://github.com/StiensGate928/Srtforge.git`.
 - post-push-failure token scan with `git config --local --get-regexp "remote|branch" | Select-String "github_pat|ghp_|token" -SimpleMatch` - pass; no token-like output printed.
+- `git push -u origin codex-windows-agent-layer` after permission update -
+  pass; created remote branch and set upstream tracking.
 
 ## Skipped checks and why
 
@@ -144,14 +145,8 @@ Earlier progress-event files included in the local commit:
 
 - `rg.exe` still returns access denied in this environment; use PowerShell
   `Select-String` fallback.
-- Push is blocked until Git Credential Manager or GitHub CLI is authenticated
-  as an account with write access to `StiensGate928/Srtforge.git`.
 
 ## Next recommended action
 
-Authenticate Git Credential Manager or GitHub CLI with a GitHub account that
-can write to `StiensGate928/Srtforge.git`, then rerun:
-
-```powershell
-git push -u origin codex-windows-agent-layer
-```
+Open a pull request from `codex-windows-agent-layer` into the repository's main
+integration branch.
