@@ -12,7 +12,8 @@ code or harness behavior.
 ## Actions
 
 - `actions/harness-check.ps1` — activate `.venv` and run
-  `pwsh ./scripts/check.ps1`.
+  `scripts/check.ps1` with PowerShell 7 (`pwsh`) when available, falling back
+  to Windows PowerShell.
 - `actions/doctor.ps1` — activate `.venv` and run `python scripts/doctor.py`.
 - `actions/update-context.ps1` — regenerate `docs/agent/PROJECT_MAP.md` and
   run `python scripts/check_docs.py`.

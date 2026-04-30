@@ -290,13 +290,20 @@ export const useUi = create<UiState>()(
       case "job_started": {
         const id = (ev as unknown as { id: string }).id;
         const file = (ev as unknown as { file?: string }).file ?? "";
+        const debugLogPath = (ev as unknown as { debug_log_path?: string }).debug_log_path;
         const name = file.split(/[\\/]/).pop() ?? file;
         set((s) => {
           const exists = s.files.some((f) => f.id === id);
           if (exists) {
             return {
               files: s.files.map((f) =>
-                f.id === id ? { ...f, status: "processing" as FileStatus } : f,
+                f.id === id
+                  ? {
+                      ...f,
+                      status: "processing" as FileStatus,
+                      debugLogPath: debugLogPath ?? f.debugLogPath,
+                    }
+                  : f,
               ),
               selectedId: id,
             };
@@ -316,6 +323,7 @@ export const useUi = create<UiState>()(
             progress: 0,
             eta: "—",
             stage: 0,
+            debugLogPath,
           };
           return { files: [...s.files, fresh], selectedId: id };
         });
@@ -326,6 +334,8 @@ export const useUi = create<UiState>()(
         const name = (ev as unknown as { stage: WorkerStage }).stage;
         const state = (ev as unknown as { state: "start" | "end" }).state;
         const seconds = (ev as unknown as { seconds?: number }).seconds;
+        const runId = (ev as unknown as { run_id?: string }).run_id;
+        const debugLogPath = (ev as unknown as { debug_log_path?: string }).debug_log_path;
         const idx = STAGE_INDEX[name];
         if (idx === undefined) break;
         set((s) => ({
@@ -336,7 +346,13 @@ export const useUi = create<UiState>()(
               state === "end" && typeof seconds === "number"
                 ? { ...(f.stageDurations ?? {}), [name]: seconds }
                 : f.stageDurations;
-            return { ...f, stage, stageDurations };
+            return {
+              ...f,
+              stage,
+              stageDurations,
+              runId: runId ?? f.runId,
+              debugLogPath: debugLogPath ?? f.debugLogPath,
+            };
           }),
         }));
         break;
@@ -346,6 +362,7 @@ export const useUi = create<UiState>()(
         const fraction = (ev as unknown as { fraction?: number }).fraction;
         const progress = (ev as unknown as { progress?: number }).progress;
         const eta = (ev as unknown as { eta?: string }).eta;
+        const debugLogPath = (ev as unknown as { debug_log_path?: string }).debug_log_path;
         const value = typeof fraction === "number" ? fraction : progress;
         if (typeof value !== "number") break;
         set((s) => ({
@@ -355,6 +372,7 @@ export const useUi = create<UiState>()(
                   ...f,
                   progress: Math.max(0, Math.min(1, value)),
                   eta: eta ?? f.eta,
+                  debugLogPath: debugLogPath ?? f.debugLogPath,
                 }
               : f,
           ),
@@ -365,6 +383,7 @@ export const useUi = create<UiState>()(
         const id = (ev as unknown as { id: string }).id;
         const kind = (ev as unknown as { kind: "embedded" | "burned" }).kind;
         const path = (ev as unknown as { path: string }).path;
+        const debugLogPath = (ev as unknown as { debug_log_path?: string }).debug_log_path;
         set((s) => ({
           files: s.files.map((f) =>
             f.id === id
@@ -372,6 +391,7 @@ export const useUi = create<UiState>()(
                   ...f,
                   embeddedPath: kind === "embedded" ? path : f.embeddedPath,
                   burnedPath: kind === "burned" ? path : f.burnedPath,
+                  debugLogPath: debugLogPath ?? f.debugLogPath,
                 }
               : f,
           ),
@@ -382,11 +402,14 @@ export const useUi = create<UiState>()(
         const id = (ev as unknown as { id: string }).id;
         const kind = (ev as unknown as { kind?: string }).kind ?? "asset";
         const path = (ev as unknown as { path: string }).path;
+        const debugLogPath = (ev as unknown as { debug_log_path?: string }).debug_log_path;
         // Tools (Normalize / BGM) reuse the QueueFile rows — surface the
         // produced path so the row can show a "Reveal output" link.
         set((s) => ({
           files: s.files.map((f) =>
-            f.id === id ? { ...f, outputPath: path } : f,
+            f.id === id
+              ? { ...f, outputPath: path, debugLogPath: debugLogPath ?? f.debugLogPath }
+              : f,
           ),
         }));
         get().showToast(`${kind}: ${path.split(/[\\/]/).pop() ?? path}`);
@@ -396,6 +419,9 @@ export const useUi = create<UiState>()(
       case "job_completed": {
         const id = (ev as unknown as { id: string }).id;
         const outputPath = (ev as unknown as { path?: string }).path;
+        const runId = (ev as unknown as { run_id?: string }).run_id;
+        const performanceLogPath = (ev as unknown as { performance_log_path?: string }).performance_log_path;
+        const debugLogPath = (ev as unknown as { debug_log_path?: string }).debug_log_path;
         set((s) => ({
           files: s.files.map((f) =>
             f.id === id
@@ -405,6 +431,9 @@ export const useUi = create<UiState>()(
                   progress: 1,
                   eta: "✓",
                   outputPath: outputPath ?? f.outputPath,
+                  runId: runId ?? f.runId,
+                  performanceLogPath: performanceLogPath ?? f.performanceLogPath,
+                  debugLogPath: debugLogPath ?? f.debugLogPath,
                 }
               : f,
           ),
@@ -414,9 +443,21 @@ export const useUi = create<UiState>()(
       case "job_failed": {
         const id = (ev as unknown as { id: string }).id;
         const error = (ev as unknown as { error: string }).error;
+        const runId = (ev as unknown as { run_id?: string }).run_id;
+        const performanceLogPath = (ev as unknown as { performance_log_path?: string }).performance_log_path;
+        const debugLogPath = (ev as unknown as { debug_log_path?: string }).debug_log_path;
         set((s) => ({
           files: s.files.map((f) =>
-            f.id === id ? { ...f, status: "error", error } : f,
+            f.id === id
+              ? {
+                  ...f,
+                  status: "error",
+                  error,
+                  runId: runId ?? f.runId,
+                  performanceLogPath: performanceLogPath ?? f.performanceLogPath,
+                  debugLogPath: debugLogPath ?? f.debugLogPath,
+                }
+              : f,
           ),
         }));
         get().showToast(`Job failed: ${error}`);
@@ -429,12 +470,21 @@ export const useUi = create<UiState>()(
         break;
       }
       case "log": {
+        const id = (ev as unknown as { id?: string }).id;
+        const debugLogPath = (ev as unknown as { debug_log_path?: string }).debug_log_path;
         const line: LogLine = {
           t: (ev as unknown as { t?: string }).t ?? "",
           lvl: (ev as unknown as { lvl?: string }).lvl ?? "info",
           msg: (ev as unknown as { msg?: string }).msg ?? "",
+          source: (ev as unknown as { source?: string }).source,
         };
-        set((s) => ({ logs: [...s.logs.slice(-499), line] }));
+        set((s) => ({
+          logs: [...s.logs.slice(-499), line],
+          files:
+            id && debugLogPath
+              ? s.files.map((f) => (f.id === id ? { ...f, debugLogPath } : f))
+              : s.files,
+        }));
         break;
       }
     }
@@ -443,9 +493,12 @@ export const useUi = create<UiState>()(
     {
       name: "srtforge-studio:ui",
       storage: createJSONStorage(() => localStorage),
-      // Only persist user-tunable preferences, not transient runtime
-      // state (files in queue, current selection, toast text, etc.).
+      // Persist user-tunable preferences and completed History rows, not
+      // transient runtime state (active queue, selection, toast text, etc.).
       partialize: (s) => ({
+        files: s.files.filter(
+          (f) => f.status === "done" || f.status === "error",
+        ),
         theme: s.theme,
         layout: s.layout,
         density: s.density,

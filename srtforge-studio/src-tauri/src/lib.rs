@@ -5,7 +5,10 @@
 // protocol — the same protocol the existing PySide6 GUI already uses
 // to talk to `python -m srtforge worker`.
 
+use std::io::Write;
+use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
@@ -61,6 +64,8 @@ struct WorkerState {
     child: Mutex<Option<CommandChild>>,
     /// Channel used to push stdin lines into the worker's writer task.
     tx: Mutex<Option<mpsc::UnboundedSender<String>>>,
+    /// Active Studio debug log for the currently-running worker job.
+    debug_log: Arc<Mutex<Option<ActiveDebugLog>>>,
 }
 
 impl WorkerState {
@@ -68,8 +73,15 @@ impl WorkerState {
         Self {
             child: Mutex::new(None),
             tx: Mutex::new(None),
+            debug_log: Arc::new(Mutex::new(None)),
         }
     }
+}
+
+struct ActiveDebugLog {
+    job_id: String,
+    path: PathBuf,
+    file: std::fs::File,
 }
 
 /// Spawn the bundled `srtforge_worker` sidecar and start the I/O pumps.
@@ -141,6 +153,7 @@ fn spawn_worker(app: &AppHandle, state: &WorkerState) -> anyhow::Result<()> {
 
     // Inbound reader pump: each stdout line is forwarded to the frontend.
     let app_handle = app.clone();
+    let debug_log = state.debug_log.clone();
     tauri::async_runtime::spawn(async move {
         while let Some(ev) = rx.recv().await {
             match ev {
@@ -148,38 +161,45 @@ fn spawn_worker(app: &AppHandle, state: &WorkerState) -> anyhow::Result<()> {
                     let line = String::from_utf8_lossy(&line_bytes).to_string();
                     // Worker emits one JSON object per line. We tolerate
                     // malformed lines by forwarding them raw under "log".
-                    let payload: serde_json::Value =
-                        serde_json::from_str::<WorkerEvent>(&line)
-                            .map(|ev| {
-                                let mut map = ev.rest;
-                                if let Some(name) = ev.event {
-                                    map.insert(
-                                        "event".into(),
-                                        serde_json::Value::String(name),
-                                    );
-                                }
-                                serde_json::Value::Object(map)
+                    let mut payload: serde_json::Value = serde_json::from_str::<WorkerEvent>(&line)
+                        .map(|ev| {
+                            let mut map = ev.rest;
+                            if let Some(name) = ev.event {
+                                map.insert("event".into(), serde_json::Value::String(name));
+                            }
+                            serde_json::Value::Object(map)
+                        })
+                        .unwrap_or_else(|_| {
+                            serde_json::json!({
+                                "event": "log",
+                                "source": "stdout",
+                                "msg": line.trim_end()
                             })
-                            .unwrap_or_else(|_| {
-                                serde_json::json!({ "event": "log", "msg": line.trim_end() })
-                            });
+                        });
+                    enrich_worker_payload(&mut payload, &debug_log);
                     let _ = app_handle.emit("worker:event", payload);
                 }
                 CommandEvent::Stderr(line_bytes) => {
                     let line = String::from_utf8_lossy(&line_bytes).to_string();
                     let _ = app_handle.emit(
                         "worker:event",
-                        serde_json::json!({ "event": "log", "lvl": "warn", "msg": line.trim_end() }),
+                        log_payload_for_line(&debug_log, "stderr", Some("warn"), line.trim_end()),
                     );
                 }
                 CommandEvent::Terminated(payload) => {
-                    let _ = app_handle.emit(
-                        "worker:event",
-                        serde_json::json!({
-                            "event": "terminated",
-                            "code": payload.code,
-                        }),
-                    );
+                    let detail = payload.code.map(|code| format!("exit code {code}"));
+                    let mut event_payload = serde_json::json!({
+                        "event": "terminated",
+                        "code": payload.code,
+                    });
+                    if let Some((_id, path)) =
+                        close_active_debug_log(&debug_log, None, "terminated", detail.as_deref())
+                    {
+                        if let Some(map) = event_payload.as_object_mut() {
+                            insert_string_field(map, "debug_log_path", path);
+                        }
+                    }
+                    let _ = app_handle.emit("worker:event", event_payload);
                     break;
                 }
                 _ => {}
@@ -201,7 +221,8 @@ fn send_to_worker(state: &WorkerState, req: &WorkerRequest) -> Result<(), String
     let payload = serde_json::to_string(req).map_err(|e| format!("encode failed: {e}"))?;
     let guard = state.tx.lock();
     let tx = guard.as_ref().ok_or("worker not running")?;
-    tx.send(payload).map_err(|e| format!("worker channel closed: {e}"))?;
+    tx.send(payload)
+        .map_err(|e| format!("worker channel closed: {e}"))?;
     Ok(())
 }
 
@@ -220,6 +241,302 @@ fn find_dev_project_root() -> Option<std::path::PathBuf> {
         cur = dir.parent();
     }
     None
+}
+
+fn project_root_path() -> Result<PathBuf, String> {
+    std::env::var("SRTFORGE_PROJECT_ROOT")
+        .ok()
+        .map(PathBuf::from)
+        .or_else(find_dev_project_root)
+        .or_else(|| {
+            // Production fallback: <exe dir>/logs.
+            std::env::current_exe()
+                .ok()
+                .and_then(|p| p.parent().map(|p| p.to_path_buf()))
+        })
+        .ok_or_else(|| "could not resolve project root".to_string())
+}
+
+fn logs_dir_path() -> Result<PathBuf, String> {
+    Ok(project_root_path()?.join("logs"))
+}
+
+fn now_unix_seconds() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+fn sanitize_debug_log_token(value: &str) -> String {
+    let mut out = String::new();
+    let mut last_was_sep = false;
+    for ch in value.chars() {
+        let mapped = if ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.') {
+            ch
+        } else {
+            '_'
+        };
+        if mapped == '_' {
+            if last_was_sep {
+                continue;
+            }
+            last_was_sep = true;
+        } else {
+            last_was_sep = false;
+        }
+        out.push(mapped);
+        if out.len() >= 80 {
+            break;
+        }
+    }
+    let trimmed = out.trim_matches('_').to_string();
+    if trimmed.is_empty() {
+        "job".to_string()
+    } else {
+        trimmed
+    }
+}
+
+fn debug_log_filename(job_id: &str, unix_seconds: u64) -> String {
+    format!(
+        "{}_{}.debug.log",
+        unix_seconds,
+        sanitize_debug_log_token(job_id)
+    )
+}
+
+fn format_debug_log_line(source: &str, lvl: Option<&str>, msg: &str) -> String {
+    match lvl {
+        Some(lvl) if !lvl.trim().is_empty() => format!("[{source}] {lvl}: {msg}\n"),
+        _ => format!("[{source}] {msg}\n"),
+    }
+}
+
+fn start_debug_log(
+    debug_log: &Arc<Mutex<Option<ActiveDebugLog>>>,
+    job_id: &str,
+    file_path: Option<&str>,
+) -> Option<String> {
+    let dir = logs_dir_path().ok()?.join("studio-debug");
+    if std::fs::create_dir_all(&dir).is_err() {
+        return None;
+    }
+    let started = now_unix_seconds();
+    let path = dir.join(debug_log_filename(job_id, started));
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(true)
+        .write(true)
+        .open(&path)
+        .ok()?;
+
+    let _ = writeln!(file, "Srtforge Studio debug log");
+    let _ = writeln!(file, "job_id={job_id}");
+    if let Some(file_path) = file_path {
+        let _ = writeln!(file, "file={file_path}");
+    }
+    let _ = writeln!(file, "started_unix={started}");
+    let _ = writeln!(file);
+    let _ = file.flush();
+
+    let path_text = path.display().to_string();
+    let mut guard = debug_log.lock();
+    if let Some(mut previous) = guard.take() {
+        let _ = writeln!(
+            previous.file,
+            "{}",
+            format_debug_log_line("studio", Some("warn"), "debug log superseded by a new job")
+                .trim_end()
+        );
+        let _ = previous.file.flush();
+    }
+    *guard = Some(ActiveDebugLog {
+        job_id: job_id.to_string(),
+        path,
+        file,
+    });
+    Some(path_text)
+}
+
+fn active_debug_log_path(
+    debug_log: &Arc<Mutex<Option<ActiveDebugLog>>>,
+    expected_job_id: Option<&str>,
+) -> Option<(String, String)> {
+    let guard = debug_log.lock();
+    let active = guard.as_ref()?;
+    if let Some(expected) = expected_job_id {
+        if expected != active.job_id {
+            return None;
+        }
+    }
+    Some((active.job_id.clone(), active.path.display().to_string()))
+}
+
+fn append_active_debug_line(
+    debug_log: &Arc<Mutex<Option<ActiveDebugLog>>>,
+    expected_job_id: Option<&str>,
+    source: &str,
+    lvl: Option<&str>,
+    msg: &str,
+) -> Option<(String, String)> {
+    let mut guard = debug_log.lock();
+    let active = guard.as_mut()?;
+    if let Some(expected) = expected_job_id {
+        if expected != active.job_id {
+            return None;
+        }
+    }
+    let line = format_debug_log_line(source, lvl, msg);
+    let _ = active.file.write_all(line.as_bytes());
+    let _ = active.file.flush();
+    Some((active.job_id.clone(), active.path.display().to_string()))
+}
+
+fn close_active_debug_log(
+    debug_log: &Arc<Mutex<Option<ActiveDebugLog>>>,
+    expected_job_id: Option<&str>,
+    event: &str,
+    detail: Option<&str>,
+) -> Option<(String, String)> {
+    let mut guard = debug_log.lock();
+    let should_close = guard
+        .as_ref()
+        .map(|active| {
+            expected_job_id
+                .map(|id| id == active.job_id)
+                .unwrap_or(true)
+        })
+        .unwrap_or(false);
+    if !should_close {
+        return None;
+    }
+    let mut active = guard.take()?;
+    let path = active.path.display().to_string();
+    let footer = match detail {
+        Some(detail) if !detail.trim().is_empty() => format!("{event}: {detail}"),
+        _ => event.to_string(),
+    };
+    let _ = writeln!(active.file);
+    let _ = active
+        .file
+        .write_all(format_debug_log_line("studio", Some("terminal"), &footer).as_bytes());
+    let _ = active.file.flush();
+    Some((active.job_id, path))
+}
+
+fn insert_string_field(
+    map: &mut serde_json::Map<String, serde_json::Value>,
+    key: &str,
+    value: String,
+) {
+    map.insert(key.into(), serde_json::Value::String(value));
+}
+
+fn enrich_worker_payload(
+    payload: &mut serde_json::Value,
+    debug_log: &Arc<Mutex<Option<ActiveDebugLog>>>,
+) {
+    let Some(map) = payload.as_object_mut() else {
+        return;
+    };
+    let event = map
+        .get("event")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default()
+        .to_string();
+    let job_id = map
+        .get("id")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+
+    match event.as_str() {
+        "job_started" => {
+            if let Some(id) = job_id.as_deref() {
+                let file = map
+                    .get("file")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+                if let Some(path) = start_debug_log(debug_log, id, file.as_deref()) {
+                    insert_string_field(map, "debug_log_path", path);
+                }
+            }
+        }
+        "log" => {
+            let msg = map
+                .get("msg")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string();
+            let lvl = map
+                .get("lvl")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            let source = map
+                .get("source")
+                .and_then(|v| v.as_str())
+                .unwrap_or("stdout")
+                .to_string();
+            if let Some((id, path)) = append_active_debug_line(
+                debug_log,
+                job_id.as_deref(),
+                &source,
+                lvl.as_deref(),
+                &msg,
+            ) {
+                map.entry("id")
+                    .or_insert_with(|| serde_json::Value::String(id));
+                map.entry("source")
+                    .or_insert_with(|| serde_json::Value::String(source));
+                insert_string_field(map, "debug_log_path", path);
+            }
+        }
+        "job_completed" | "job_failed" => {
+            let detail = map
+                .get("error")
+                .or_else(|| map.get("path"))
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            if let Some((_id, path)) = close_active_debug_log(
+                debug_log,
+                job_id.as_deref(),
+                event.as_str(),
+                detail.as_deref(),
+            ) {
+                insert_string_field(map, "debug_log_path", path);
+            }
+        }
+        _ => {
+            if let Some(id) = job_id.as_deref() {
+                if let Some((_id, path)) = active_debug_log_path(debug_log, Some(id)) {
+                    insert_string_field(map, "debug_log_path", path);
+                }
+            }
+        }
+    }
+}
+
+fn log_payload_for_line(
+    debug_log: &Arc<Mutex<Option<ActiveDebugLog>>>,
+    source: &str,
+    lvl: Option<&str>,
+    msg: &str,
+) -> serde_json::Value {
+    let mut map = serde_json::Map::new();
+    map.insert("event".into(), serde_json::Value::String("log".into()));
+    map.insert("msg".into(), serde_json::Value::String(msg.to_string()));
+    if let Some(lvl) = lvl {
+        map.insert("lvl".into(), serde_json::Value::String(lvl.to_string()));
+    }
+    map.insert(
+        "source".into(),
+        serde_json::Value::String(source.to_string()),
+    );
+    if let Some((id, path)) = append_active_debug_line(debug_log, None, source, lvl, msg) {
+        map.insert("id".into(), serde_json::Value::String(id));
+        map.insert("debug_log_path".into(), serde_json::Value::String(path));
+    }
+    serde_json::Value::Object(map)
 }
 
 #[tauri::command]
@@ -336,18 +653,7 @@ fn open_path(path: String) -> Result<(), String> {
 /// `models/`); we use the same root for runtime logs.
 #[tauri::command]
 fn get_logs_dir() -> Result<String, String> {
-    let root = std::env::var("SRTFORGE_PROJECT_ROOT")
-        .ok()
-        .map(std::path::PathBuf::from)
-        .or_else(find_dev_project_root)
-        .or_else(|| {
-            // Production fallback: <exe dir>/logs.
-            std::env::current_exe()
-                .ok()
-                .and_then(|p| p.parent().map(|p| p.to_path_buf()))
-        })
-        .ok_or_else(|| "could not resolve project root".to_string())?;
-    Ok(root.join("logs").display().to_string())
+    Ok(logs_dir_path()?.display().to_string())
 }
 
 /// Probe a media file with `ffprobe` and return enough metadata to fill in
@@ -399,8 +705,12 @@ fn probe_file(path: String) -> Result<ProbeResult, String> {
         .get("streams")
         .and_then(|v| v.as_array())
         .unwrap_or(&empty);
-    let audio = streams.iter().find(|s| s.get("codec_type").and_then(|c| c.as_str()) == Some("audio"));
-    let video = streams.iter().find(|s| s.get("codec_type").and_then(|c| c.as_str()) == Some("video"));
+    let audio = streams
+        .iter()
+        .find(|s| s.get("codec_type").and_then(|c| c.as_str()) == Some("audio"));
+    let video = streams
+        .iter()
+        .find(|s| s.get("codec_type").and_then(|c| c.as_str()) == Some("video"));
 
     let sample_rate: u32 = audio
         .and_then(|s| s.get("sample_rate"))
@@ -523,4 +833,34 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{debug_log_filename, format_debug_log_line, sanitize_debug_log_token};
+
+    #[test]
+    fn debug_log_filename_sanitizes_job_id() {
+        assert_eq!(
+            debug_log_filename("job:one/two\\three", 123),
+            "123_job_one_two_three.debug.log"
+        );
+    }
+
+    #[test]
+    fn debug_log_sanitize_falls_back_for_empty_tokens() {
+        assert_eq!(sanitize_debug_log_token(":///"), "job");
+    }
+
+    #[test]
+    fn debug_log_line_formats_source_level_and_message() {
+        assert_eq!(
+            format_debug_log_line("stderr", Some("warn"), "something happened"),
+            "[stderr] warn: something happened\n"
+        );
+        assert_eq!(
+            format_debug_log_line("stdout", None, "plain"),
+            "[stdout] plain\n"
+        );
+    }
 }

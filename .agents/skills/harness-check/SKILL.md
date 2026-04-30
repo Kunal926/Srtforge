@@ -20,8 +20,7 @@ harness docs.
 ## Exact Windows PowerShell commands
 
 ```powershell
-.\.venv\Scripts\Activate.ps1
-pwsh ./scripts/check.ps1
+.\.codex\actions\harness-check.ps1
 ```
 
 If `.venv` is missing, report that clearly and do not fake a pass.

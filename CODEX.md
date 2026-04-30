@@ -41,8 +41,11 @@ Activate the project virtualenv:
 Run the lightweight harness:
 
 ```powershell
-pwsh ./scripts/check.ps1
+.\.codex\actions\harness-check.ps1
 ```
+
+The action prefers PowerShell 7 (`pwsh`) and falls back to Windows PowerShell
+when `pwsh` is not installed. It runs the same `scripts/check.ps1` harness.
 
 Refresh durable context:
 

@@ -28,18 +28,6 @@ Each entry: short title, location, evidence, proposed fix, owner (if any).
 - Acceptance: `python scripts/check_docs.py` fails when required Codex files
   or skill metadata are missing.
 
-### Pipeline `progress` events not emitted at sub-stage granularity
-
-- Location: `srtforge/pipeline.py`, `srtforge/logging.py`.
-- Evidence: Stage start/end events fire, but no progress between them. The
-  UI shows binary stage transitions rather than smooth bars.
-- Proposed fix: Add an optional `event_sink` to `PipelineConfig` (or reuse
-  `set_event_emitter`) and emit `{event:"progress", id, stage, fraction}`
-  from the ASR loop and the post-processing batch loop. Worker installs
-  the per-job emitter the same way it already does for `stage`.
-- Acceptance: Tests in `tests/test_pipeline.py` assert monotonic progress
-  values over a fake ASR run.
-
 ### No real Sonarr webhook listener wired to the Watch view
 
 - Location: `srtforge-studio/src/components/Watch.tsx`.

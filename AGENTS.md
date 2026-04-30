@@ -56,8 +56,11 @@ Activate the project venv before any Python work:
 Default lightweight check (run this before stopping):
 
 ```powershell
-pwsh ./scripts/check.ps1
+.\.codex\actions\harness-check.ps1
 ```
+
+The Codex action runs `scripts/check.ps1` with `pwsh` when available and
+falls back to Windows PowerShell on machines without PowerShell 7.
 
 On Unix/WSL:
 

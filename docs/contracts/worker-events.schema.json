@@ -64,7 +64,8 @@
       "required": ["event"],
       "properties": {
         "event": { "const": "terminated" },
-        "code": { "type": ["integer", "null"] }
+        "code": { "type": ["integer", "null"] },
+        "debug_log_path": { "type": "string" }
       },
       "additionalProperties": true
     },
@@ -76,7 +77,8 @@
         "event": { "const": "job_started" },
         "id": { "type": "string" },
         "file": { "type": "string" },
-        "kind": { "type": "string" }
+        "kind": { "type": "string" },
+        "debug_log_path": { "type": "string" }
       },
       "additionalProperties": true
     },
@@ -104,6 +106,7 @@
         "state": { "type": "string", "enum": ["start", "end"] },
         "msg": { "type": "string" },
         "run_id": { "type": "string" },
+        "debug_log_path": { "type": "string" },
         "seconds": { "type": "number" },
         "ok": { "type": "boolean" }
       },
@@ -119,7 +122,8 @@
         "stage": { "type": "string" },
         "fraction": { "type": "number", "minimum": 0, "maximum": 1 },
         "progress": { "type": "number", "minimum": 0, "maximum": 1 },
-        "eta": { "type": "string" }
+        "eta": { "type": "string" },
+        "debug_log_path": { "type": "string" }
       },
       "additionalProperties": true
     },
@@ -130,8 +134,11 @@
       "properties": {
         "event": { "const": "log" },
         "msg": { "type": "string" },
+        "id": { "type": "string" },
         "t": { "type": "string" },
-        "lvl": { "type": "string" }
+        "lvl": { "type": "string" },
+        "source": { "type": "string" },
+        "debug_log_path": { "type": "string" }
       },
       "additionalProperties": true
     },
@@ -142,7 +149,10 @@
       "properties": {
         "event": { "const": "srt_written" },
         "id": { "type": "string" },
-        "path": { "type": "string" }
+        "path": { "type": "string" },
+        "run_id": { "type": "string" },
+        "performance_log_path": { "type": "string" },
+        "debug_log_path": { "type": "string" }
       },
       "additionalProperties": true
     },
@@ -154,7 +164,8 @@
         "event": { "const": "media_written" },
         "id": { "type": "string" },
         "kind": { "type": "string", "enum": ["embedded", "burned"] },
-        "path": { "type": "string" }
+        "path": { "type": "string" },
+        "debug_log_path": { "type": "string" }
       },
       "additionalProperties": true
     },
@@ -166,7 +177,8 @@
         "event": { "const": "asset_written" },
         "id": { "type": "string" },
         "kind": { "type": "string" },
-        "path": { "type": "string" }
+        "path": { "type": "string" },
+        "debug_log_path": { "type": "string" }
       },
       "additionalProperties": true
     },
@@ -177,7 +189,10 @@
       "properties": {
         "event": { "const": "job_completed" },
         "id": { "type": "string" },
-        "seconds": { "type": ["number", "null"] }
+        "seconds": { "type": ["number", "null"] },
+        "run_id": { "type": "string" },
+        "performance_log_path": { "type": "string" },
+        "debug_log_path": { "type": "string" }
       },
       "additionalProperties": true
     },
@@ -191,6 +206,8 @@
         "error": { "type": "string" },
         "file": { "type": "string" },
         "run_id": { "type": "string" },
+        "performance_log_path": { "type": "string" },
+        "debug_log_path": { "type": "string" },
         "traceback": { "type": "string" }
       },
       "additionalProperties": true

@@ -61,7 +61,15 @@ def test_pipeline_executes_whisper_steps(tmp_path, monkeypatch):
 
     outputs = []
 
-    def fake_generate(preprocessed: str, *, model_name: str, language: str, prefer_gpu: bool, word_timestamps_out: str | None = None):
+    def fake_generate(
+        preprocessed: str,
+        *,
+        model_name: str,
+        language: str,
+        prefer_gpu: bool,
+        word_timestamps_out: str | None = None,
+        progress_callback=None,
+    ):
         outputs.append(
             {
                 "preprocessed": preprocessed,
@@ -120,7 +128,15 @@ def test_pipeline_falls_back_when_dual_mono_requested_without_center_channel(tmp
 
     tools = DummyTools()
 
-    def fake_generate(preprocessed: str, *, model_name: str, language: str, prefer_gpu: bool, word_timestamps_out: str | None = None):
+    def fake_generate(
+        preprocessed: str,
+        *,
+        model_name: str,
+        language: str,
+        prefer_gpu: bool,
+        word_timestamps_out: str | None = None,
+        progress_callback=None,
+    ):
         return [{"start": 0.0, "end": 1.0, "text": "Hello", "words": []}]
 
     def fake_write_srt(events, srt_path: str) -> None:
@@ -168,6 +184,7 @@ def test_pipeline_parakeet_forwards_optimized_generation_fields(tmp_path, monkey
         rel_pos_local_attn: list[int],
         subsampling_conv_chunking_factor: int,
         word_timestamps_out: str | None = None,
+        progress_callback=None,
     ):
         captured.update(
             {
