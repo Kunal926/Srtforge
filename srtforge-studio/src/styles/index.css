@@ -1659,7 +1659,7 @@ button { font-family: inherit; }
 
 
 /* ============================================================
-   Output split menu (SRT / Run log / Containing folder)
+   Output split menu (SRT / logs / containing folder)
    ============================================================ */
 .output-split { position: relative; }
 .output-menu {

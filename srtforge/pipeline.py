@@ -7,14 +7,14 @@ import tempfile
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Iterable, Optional
+from typing import Callable, Iterable, Optional
 
 
 from rich.table import Table
 
 from .config import DEFAULT_OUTPUT_SUFFIX, FV4_CONFIG, FV4_MODEL, MODELS_DIR
 from .ffmpeg import DEFAULT_TOOLS, AudioStream, FFmpegTooling
-from .logging import RunLogger, get_console, status
+from .logging import RunLogger, emit_progress, get_console, status
 from .mux import (
     burn_subtitles,
     embed_subtitles_ffmpeg,
@@ -110,6 +110,7 @@ class PipelineResult:
     skipped: bool
     reason: Optional[str] = None
     run_id: Optional[str] = None
+    performance_log_path: Optional[Path] = None
     # Populated when ``embed_enabled``/``burn_enabled`` produced a media
     # asset; the worker forwards these as ``media_written`` events.
     embedded_path: Optional[Path] = None
@@ -124,6 +125,31 @@ class PipelineResult:
     def error(self) -> Optional[str]:
         """Compatibility alias used by worker/automation error surfaces."""
         return self.reason
+
+
+class _PipelineProgress:
+    """Map local stage progress to one monotonic run-level fraction."""
+
+    _RANGES = {
+        "asr": (0.55, 0.75),
+        "post": (0.75, 0.92),
+        "write": (0.92, 1.0),
+    }
+
+    def __init__(self) -> None:
+        self._last = 0.0
+
+    def emit(self, stage: str, local_fraction: float) -> None:
+        start, end = self._RANGES[stage]
+        local = max(0.0, min(1.0, float(local_fraction)))
+        fraction = start + (end - start) * local
+        if fraction < self._last:
+            fraction = self._last
+        self._last = fraction
+        emit_progress(stage, fraction)
+
+    def callback(self, stage: str) -> Callable[[float], None]:
+        return lambda local_fraction: self.emit(stage, local_fraction)
 
 
 class Pipeline:
@@ -150,8 +176,10 @@ class Pipeline:
         output_path = self._determine_output_path()
         tmp_kwargs: dict[str, str] = {"prefix": "srtforge_"}
         run_id: Optional[str] = None
+        performance_log_path: Optional[Path] = None
         embedded_path: Optional[Path] = None
         burned_path: Optional[Path] = None
+        progress = _PipelineProgress()
 
         base_tmp_dir = Path(tempfile.gettempdir())
         if self.config.temp_dir:
@@ -162,6 +190,7 @@ class Pipeline:
         try:
             with RunLogger.start() as run_logger:
                 run_id = run_logger.run_id
+                performance_log_path = run_logger.path
                 tmp_kwargs["prefix"] = f"srtforge_{run_id}_"
                 run_logger.log(f"Media: {media_path}")
                 run_logger.log(f"Output: {output_path}")
@@ -197,7 +226,14 @@ class Pipeline:
                         reason = "no English audio stream"
                         run_logger.mark_skipped(reason)
                         self.console.log(f"[yellow]Skipping[/yellow] {media_path} – {reason}")
-                        return PipelineResult(media_path, None, True, reason, run_id)
+                        return PipelineResult(
+                            media_path,
+                            None,
+                            True,
+                            reason,
+                            run_id,
+                            performance_log_path,
+                        )
 
                     with status(
                         f"Extracting English audio to PCM f32 {self.config.sample_rate} Hz"
@@ -286,6 +322,8 @@ class Pipeline:
                     with status("Running ASR and subtitle post-processing"), run_logger.step(
                         "ASR pipeline", stage="asr"
                     ):
+                        asr_progress = progress.callback("asr")
+                        asr_progress(0.0)
                         engine = (self.config.asr_engine or "whisper").strip().lower()
                         if engine in {"", "default"}:
                             engine = "whisper"
@@ -319,6 +357,7 @@ class Pipeline:
                                 word_timestamps_out=(
                                     str(word_timestamps_path.resolve()) if word_timestamps_path else None
                                 ),
+                                progress_callback=asr_progress,
                             )
                             run_logger.log(f"Whisper segments: {len(events)}")
                         elif engine == "parakeet":
@@ -345,6 +384,7 @@ class Pipeline:
                                 word_timestamps_out=(
                                     str(word_timestamps_path.resolve()) if word_timestamps_path else None
                                 ),
+                                progress_callback=asr_progress,
                             )
                             run_logger.log(f"Parakeet segments: {len(events)}")
                         else:
@@ -360,22 +400,31 @@ class Pipeline:
                                 model_id=self.config.gemini_model_id,
                             )
                             run_logger.log("Gemini correction enabled")
+                        asr_progress(1.0)
 
                     # Subtitle post-processing (Netflix house style): re-segment on
                     # pauses, balance two-line shape, enforce CPS / min-readable /
                     # frame snap. Lives outside the ASR step so a hang in the
                     # post-processor doesn't get blamed on inference.
                     with run_logger.step("Post-processing", stage="post"):
+                        post_progress = progress.callback("post")
+                        post_progress(0.0)
                         snap_fps = probe_video_fps(media_path)
                         run_logger.log(
                             f"ASR events in: {len(events)}; snap_fps={snap_fps:.3f}"
                         )
-                        events = postprocess_segments(events, snap_fps=snap_fps)
+                        events = postprocess_segments(
+                            events,
+                            snap_fps=snap_fps,
+                            progress_callback=post_progress,
+                        )
                         run_logger.log(f"Post-processed cues: {len(events)}")
+                        post_progress(1.0)
 
                     with run_logger.step("Write SRT", stage="write"):
                         output_path.parent.mkdir(parents=True, exist_ok=True)
                         _write_srt_with_diag(events, str(output_path))
+                        progress.emit("write", 1.0)
 
                     # Optional: soft-embed the SRT into a copy of the
                     # source container (or back onto it via
@@ -435,7 +484,14 @@ class Pipeline:
 
         except Exception as exc:
             self.console.log(f"[bold red]Pipeline failed[/bold red] {media_path}: {exc}")
-            return PipelineResult(media_path, None, True, str(exc), run_id)
+            return PipelineResult(
+                media_path,
+                None,
+                True,
+                str(exc),
+                run_id,
+                performance_log_path,
+            )
 
         self._show_summary(media_path, output_path)
         return PipelineResult(
@@ -443,6 +499,7 @@ class Pipeline:
             output_path,
             False,
             run_id=run_id,
+            performance_log_path=performance_log_path,
             embedded_path=embedded_path,
             burned_path=burned_path,
         )

@@ -182,11 +182,34 @@ class TestEventBuilders:
         ev2 = wp.job_completed_event(id="j", seconds=12.5)
         assert ev2["seconds"] == 12.5
 
+    def test_job_completed_event_accepts_log_metadata(self):
+        ev = wp.job_completed_event(
+            id="j",
+            run_id="run-1",
+            performance_log_path="logs/run-1.log",
+            debug_log_path="logs/studio-debug/j.debug.log",
+        )
+        assert ev["run_id"] == "run-1"
+        assert ev["performance_log_path"] == "logs/run-1.log"
+        assert ev["debug_log_path"] == "logs/studio-debug/j.debug.log"
+
     def test_job_failed_event_minimum_fields(self):
         ev = wp.job_failed_event(id="j", error="nope")
         assert ev["event"] == "job_failed"
         assert ev["error"] == "nope"
         assert "file" not in ev
+
+    def test_srt_written_event_accepts_log_metadata(self):
+        ev = wp.srt_written_event(
+            id="j",
+            path="out.srt",
+            run_id="run-1",
+            performance_log_path="logs/run-1.log",
+            debug_log_path="logs/studio-debug/j.debug.log",
+        )
+        assert ev["run_id"] == "run-1"
+        assert ev["performance_log_path"] == "logs/run-1.log"
+        assert ev["debug_log_path"] == "logs/studio-debug/j.debug.log"
 
 
 # ---------------------------------------------------------------------------

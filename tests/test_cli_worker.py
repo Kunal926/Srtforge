@@ -26,7 +26,14 @@ def test_worker_emits_job_failed_only_when_pipeline_result_failed(monkeypatch, t
     media.write_text("stub")
 
     def fake_run_pipeline(_config):
-        return PipelineResult(media_path=media, output_path=None, skipped=True, reason="media missing", run_id="run-1")
+        return PipelineResult(
+            media_path=media,
+            output_path=None,
+            skipped=True,
+            reason="media missing",
+            run_id="run-1",
+            performance_log_path=tmp_path / "run-1.log",
+        )
 
     monkeypatch.setattr(cli, "run_pipeline", fake_run_pipeline)
 
@@ -49,6 +56,7 @@ def test_worker_emits_job_failed_only_when_pipeline_result_failed(monkeypatch, t
     failure = next(event for event in events if event.get("event") == "job_failed" and event.get("id") == "job-1")
     assert failure["error"] == "media missing"
     assert failure["run_id"] == "run-1"
+    assert failure["performance_log_path"] == str(tmp_path / "run-1.log")
     assert "path" not in failure
 
 
@@ -58,7 +66,14 @@ def test_worker_emits_srt_written_and_job_completed_on_success(monkeypatch, tmp_
     srt = tmp_path / "episode-ok.srt"
 
     def fake_run_pipeline(_config):
-        return PipelineResult(media_path=media, output_path=srt, skipped=False, reason=None, run_id="run-2")
+        return PipelineResult(
+            media_path=media,
+            output_path=srt,
+            skipped=False,
+            reason=None,
+            run_id="run-2",
+            performance_log_path=tmp_path / "run-2.log",
+        )
 
     monkeypatch.setattr(cli, "run_pipeline", fake_run_pipeline)
 
@@ -80,6 +95,12 @@ def test_worker_emits_srt_written_and_job_completed_on_success(monkeypatch, tmp_
 
     srt_written = next(event for event in events if event.get("event") == "srt_written" and event.get("id") == "job-2")
     assert srt_written["path"] == str(srt)
+    assert srt_written["run_id"] == "run-2"
+    assert srt_written["performance_log_path"] == str(tmp_path / "run-2.log")
+
+    completed = next(event for event in events if event.get("event") == "job_completed" and event.get("id") == "job-2")
+    assert completed["run_id"] == "run-2"
+    assert completed["performance_log_path"] == str(tmp_path / "run-2.log")
 
 
 def test_build_pipeline_config_preserves_zero_chunking_factor(monkeypatch, tmp_path):

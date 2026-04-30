@@ -15,17 +15,18 @@ Each entry: short title, location, evidence, proposed fix, owner (if any).
 
 ## Weak / missing harness coverage
 
-### Pipeline `progress` events not emitted at sub-stage granularity
+### Agent operating layer drift
 
-- Location: `srtforge/pipeline.py`, `srtforge/logging.py`.
-- Evidence: Stage start/end events fire, but no progress between them. The
-  UI shows binary stage transitions rather than smooth bars.
-- Proposed fix: Add an optional `event_sink` to `PipelineConfig` (or reuse
-  `set_event_emitter`) and emit `{event:"progress", id, stage, fraction}`
-  from the ASR loop and the post-processing batch loop. Worker installs
-  the per-job emitter the same way it already does for `stage`.
-- Acceptance: Tests in `tests/test_pipeline.py` assert monotonic progress
-  values over a fake ASR run.
+- Location: `AGENTS.md`, `CLAUDE.md`, `CODEX.md`, `.claude/skills/`,
+  `.agents/skills/`, `.codex/`, `scripts/check_docs.py`.
+- Evidence: Srtforge now supports both Claude Code and Codex. If one agent
+  layer is updated without the shared docs or checks, future sessions will
+  drift back into chat-only conventions.
+- Proposed fix: Keep `scripts/check_docs.py` validating Codex files and
+  links; when adding a Claude skill that also applies to Codex, add or update
+  the `.agents/skills/` equivalent in the same task.
+- Acceptance: `python scripts/check_docs.py` fails when required Codex files
+  or skill metadata are missing.
 
 ### No real Sonarr webhook listener wired to the Watch view
 
