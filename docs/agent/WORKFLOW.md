@@ -85,11 +85,11 @@ before retrying.
 Once the narrow check passes:
 
 ```powershell
-pwsh ./scripts/check.ps1
+.\.codex\actions\harness-check.ps1
 ```
 
 This runs the full lightweight harness. Skipped checks should print clear
-reasons.
+reasons. The Codex action prefers `pwsh` and falls back to Windows PowerShell.
 
 ### 8. Update handoff
 

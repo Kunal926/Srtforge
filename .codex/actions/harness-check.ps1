@@ -9,4 +9,20 @@ if (-not (Test-Path $activate)) {
 }
 
 . $activate
-pwsh ./scripts/check.ps1
+
+$checkScript = Join-Path $repoRoot 'scripts\check.ps1'
+$pwsh = Get-Command pwsh -ErrorAction SilentlyContinue
+if ($pwsh) {
+    & $pwsh.Source $checkScript
+    exit $LASTEXITCODE
+}
+
+$windowsPowerShell = Get-Command powershell.exe -ErrorAction SilentlyContinue
+if ($windowsPowerShell) {
+    Write-Host "pwsh not found; falling back to Windows PowerShell." -ForegroundColor Yellow
+    & $windowsPowerShell.Source -NoProfile -ExecutionPolicy Bypass -File $checkScript
+    exit $LASTEXITCODE
+}
+
+Write-Error "Neither pwsh nor powershell.exe is available to run scripts/check.ps1."
+exit 1

@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import List, Dict, Any, Tuple
+from typing import Callable, List, Dict, Any, Tuple
 import math, sys, os, re, csv, json
 from .segmenter import segment_by_pause_and_phrase, shape_words_into_two_lines_balanced
 
@@ -1028,13 +1028,24 @@ def postprocess_segments(
     min_two_line_chars: int = 24,
     max_block_duration_s: float = 7.0,
     max_merge_gap_ms: int = 360,
+    progress_callback: Callable[[float], None] | None = None,
 ) -> List[Dict[str,Any]]:
+    def report_progress(fraction: float) -> None:
+        if progress_callback is None:
+            return
+        try:
+            progress_callback(fraction)
+        except Exception:
+            _trace("postprocess progress callback failed")
+
     # Flatten word list from raw ASR segments
     words: List[Dict[str,Any]] = []
-    for seg in segments:
+    total_segments = max(1, len(segments))
+    for idx, seg in enumerate(segments, 1):
         for w in (seg.get("words") or []):
             if "start" in w and "end" in w and w.get("word"):
                 words.append({"word": w["word"], "start": float(w["start"]), "end": float(w["end"])})
+        report_progress(0.10 * (idx / total_segments))
     # Segment on pauses/phrases, shape to 2 lines (word-preserving)
     events = segment_by_pause_and_phrase(
         words,
@@ -1048,9 +1059,11 @@ def postprocess_segments(
         two_line_threshold=two_line_threshold,
         min_two_line_chars=min_two_line_chars,
     )
+    report_progress(0.25)
     # Fast-safe mode to prove where the stall is
     if os.environ.get("PARAKEET_TIMING_SAFE") == "1":
         _trace("SAFE mode: skipping packer, min_readable, and netflix normalizer")
+        report_progress(1.0)
         return events
 
     timed_out = False
@@ -1072,6 +1085,7 @@ def postprocess_segments(
         else:
             timed_out = True
         _trace(f"packer out: {len(events)}")
+    report_progress(0.40)
 
     # Eliminate quick singles (orphans) and short flashes
     if os.environ.get("PARAKEET_DISABLE_MINREADABLE") != "1":
@@ -1091,6 +1105,7 @@ def postprocess_segments(
         else:
             timed_out = True
         _trace(f"min_readable out: {len(events)}")
+    report_progress(0.55)
 
     # Netflix timing: linger-only-when-safe + chaining + 20f for 1–2 words
     if snap_fps and os.environ.get("PARAKEET_DISABLE_NETFLIX") != "1":
@@ -1114,6 +1129,7 @@ def postprocess_segments(
         else:
             timed_out = True
         _trace(f"netflix out: {len(events)}")
+    report_progress(0.70)
 
     if snap_fps and os.environ.get("PARAKEET_DISABLE_NETFLIX") != "1":
         events = rebalance_cps_borrow_time(
@@ -1143,6 +1159,7 @@ def postprocess_segments(
         else:
             timed_out = True
         _trace(f"netflix re-snap out: {len(events)}")
+    report_progress(0.85)
     if snap_fps and os.environ.get("PARAKEET_DISABLE_NETFLIX") != "1":
         _trace("final snap/validate in")
         _e = _with_timeout(3.0, normalize_timing_netflix,
@@ -1161,6 +1178,7 @@ def postprocess_segments(
                            validate=not timed_out)
         if _e is not None:
             events = _e
+    report_progress(0.95)
     def _infer_fps(events):
         # fallback if snap_fps is falsy; picks closest known grid
         cand = [23.976, 24.0, 25.0, 29.97, 30.0]
@@ -1186,4 +1204,5 @@ def postprocess_segments(
             if pe - new_end > 1e-9:
                 _dbg_add_ms(events[i], "final_gap_fence_ms", (pe - new_end) * 1000.0)
             events[i]["end"] = max(new_end, events[i]["start"] + spf)
+    report_progress(1.0)
     return events

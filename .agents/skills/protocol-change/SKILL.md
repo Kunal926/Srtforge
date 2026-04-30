@@ -36,7 +36,7 @@ cd src-tauri
 cargo check
 cd ..\..
 python scripts/check_docs.py
-pwsh ./scripts/check.ps1
+.\.codex\actions\harness-check.ps1
 ```
 
 ## Acceptance output

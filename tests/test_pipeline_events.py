@@ -1,8 +1,9 @@
 """Pipeline observability tests.
 
-The pipeline emits ``stage`` events via ``srtforge.logging.set_event_emitter``.
-The worker installs a per-job emitter that injects the job ``id``; here we
-install a capturing emitter directly and assert:
+The pipeline emits ``stage`` and ``progress`` events via
+``srtforge.logging.set_event_emitter``. The worker installs a per-job emitter
+that injects the job ``id``; here we install a capturing emitter directly and
+assert:
 
 1. Stage events fire for every major phase of a successful Whisper run.
 2. Each stage emits exactly one ``state:"start"`` and one ``state:"end"``.
@@ -85,8 +86,29 @@ def _run_with_capture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[
 
     tools = DummyTools()
 
-    def fake_generate(preprocessed, *, model_name, language, prefer_gpu, word_timestamps_out=None):
-        return [{"start": 0.0, "end": 1.0, "text": "Hello", "words": []}]
+    def fake_generate(
+        preprocessed,
+        *,
+        model_name,
+        language,
+        prefer_gpu,
+        word_timestamps_out=None,
+        progress_callback=None,
+    ):
+        if progress_callback is not None:
+            for fraction in (0.0, 0.25, 0.75, 1.0):
+                progress_callback(fraction)
+        return [
+            {
+                "start": 0.0,
+                "end": 1.0,
+                "text": "Hello world",
+                "words": [
+                    {"word": "Hello", "start": 0.0, "end": 0.4},
+                    {"word": "world", "start": 0.5, "end": 1.0},
+                ],
+            }
+        ]
 
     def fake_write_srt(events, srt_path: str) -> None:
         Path(srt_path).write_text("1\n00:00:00,000 --> 00:00:01,000\nHello\n\n")
@@ -97,9 +119,9 @@ def _run_with_capture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[
     captured: list[dict] = []
 
     def emitter(payload: dict) -> None:
-        # The worker injects ``id`` via setdefault — simulate that here so
-        # the captured events look like what the GUI would see.
-        payload.setdefault("id", "job-test")
+        # The worker injects the active job id before JSON emission; simulate
+        # that here so captured events look like what the GUI would see.
+        payload["id"] = "job-test"
         captured.append(payload)
 
     srt_logging.set_event_emitter(emitter)
@@ -132,21 +154,21 @@ def _run_with_capture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[
 
 class TestStageEventFlow:
     def test_stage_events_fire_in_canonical_set(self, tmp_path, monkeypatch):
-        events, run_id = _run_with_capture(tmp_path, monkeypatch)
+        events, _ = _run_with_capture(tmp_path, monkeypatch)
+        stage_events = [ev for ev in events if ev["event"] == "stage"]
 
-        # Every event from this emitter is a stage event today.
-        for ev in events:
-            assert ev["event"] == "stage", ev
+        assert stage_events, "expected stage events"
 
         # Every stage value must be one of the canonical names. Drift here
         # would silently break the GUI's stage dots.
-        for ev in events:
+        for ev in stage_events:
             assert ev["stage"] in wp.STAGE_NAMES, ev
 
     def test_each_stage_has_matched_start_and_end(self, tmp_path, monkeypatch):
         events, _ = _run_with_capture(tmp_path, monkeypatch)
+        stage_events = [ev for ev in events if ev["event"] == "stage"]
         seen: dict[str, dict[str, int]] = {}
-        for ev in events:
+        for ev in stage_events:
             stage = ev["stage"]
             slot = seen.setdefault(stage, {"start": 0, "end": 0})
             slot[ev["state"]] += 1
@@ -156,7 +178,7 @@ class TestStageEventFlow:
 
     def test_minimum_stages_are_present_for_whisper(self, tmp_path, monkeypatch):
         events, _ = _run_with_capture(tmp_path, monkeypatch)
-        stages = {ev["stage"] for ev in events}
+        stages = {ev["stage"] for ev in events if ev["event"] == "stage"}
         # The default-config Whisper run should always exercise at least
         # these phases. Embed/burn/asset stages are off by default.
         for required in (
@@ -172,7 +194,9 @@ class TestStageEventFlow:
 
     def test_state_end_carries_seconds_and_ok(self, tmp_path, monkeypatch):
         events, _ = _run_with_capture(tmp_path, monkeypatch)
-        end_events = [ev for ev in events if ev["state"] == "end"]
+        end_events = [
+            ev for ev in events if ev["event"] == "stage" and ev["state"] == "end"
+        ]
         assert end_events, "expected at least one stage end event"
         for ev in end_events:
             assert "seconds" in ev, ev
@@ -182,8 +206,9 @@ class TestStageEventFlow:
 
     def test_msg_and_run_id_are_populated(self, tmp_path, monkeypatch):
         events, run_id = _run_with_capture(tmp_path, monkeypatch)
+        stage_events = [ev for ev in events if ev["event"] == "stage"]
         assert run_id is not None
-        for ev in events:
+        for ev in stage_events:
             assert ev.get("msg"), f"missing msg on {ev!r}"
             assert ev.get("run_id") == run_id, ev
 
@@ -191,3 +216,25 @@ class TestStageEventFlow:
         events, _ = _run_with_capture(tmp_path, monkeypatch)
         for ev in events:
             assert ev["id"] == "job-test", ev
+
+
+class TestProgressMonotonic:
+    def test_progress_fractions_never_decrease(self, tmp_path, monkeypatch):
+        events, _ = _run_with_capture(tmp_path, monkeypatch)
+        progress_events = [ev for ev in events if ev["event"] == "progress"]
+
+        assert progress_events, "expected progress events"
+        fractions = [ev["fraction"] for ev in progress_events]
+        assert fractions == sorted(fractions), fractions
+        for fraction in fractions:
+            assert 0.0 <= fraction <= 1.0
+
+    def test_progress_covers_asr_and_post_stages(self, tmp_path, monkeypatch):
+        events, _ = _run_with_capture(tmp_path, monkeypatch)
+        progress_stages = {
+            ev.get("stage")
+            for ev in events
+            if ev["event"] == "progress" and "fraction" in ev
+        }
+
+        assert {"asr", "post"}.issubset(progress_stages)

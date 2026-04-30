@@ -17,10 +17,15 @@
 #
 #     pwsh ./scripts/check.ps1
 #
+# If PowerShell 7 is not installed on Windows, run the same harness with
+# Windows PowerShell:
+#
+#     powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\check.ps1
+#
 # Or activate the project venv first and run:
 #
 #     .\.venv\Scripts\Activate.ps1
-#     pwsh ./scripts/check.ps1
+#     .\scripts\check.ps1
 
 $ErrorActionPreference = 'Continue'
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path

@@ -1,12 +1,13 @@
 // Shared logic for the "open output" split menu used in Queue + History.
-// Knows what to open for each menu item (SRT file / run log / containing
-// folder) based on the file's status and which paths are populated.
+// Knows what to open for each menu item (SRT file / performance log /
+// debug log / containing folder) based on the file's status and which
+// paths are populated.
 
 import { getLogsDir, openPath, revealInFolder } from "./tauri";
 import { useUi } from "../store";
 import type { QueueFile } from "../types";
 
-export type LocateKind = "srt" | "log" | "folder";
+export type LocateKind = "srt" | "performance-log" | "debug-log" | "folder";
 
 export const locateFile = (file: QueueFile, kind: LocateKind) => {
   const showToast = useUi.getState().showToast;
@@ -14,7 +15,7 @@ export const locateFile = (file: QueueFile, kind: LocateKind) => {
 
   if (kind === "srt") {
     if (!file.outputPath) {
-      showToast("No SRT yet — job hasn't completed");
+      showToast("No SRT yet - job hasn't completed");
       return;
     }
     openPath(file.outputPath).catch(fail);
@@ -34,11 +35,22 @@ export const locateFile = (file: QueueFile, kind: LocateKind) => {
     return;
   }
 
-  // "log" — the worker doesn't yet emit a run-id JSON event we can latch
-  // onto, so we open the project's logs/ directory and let the user pick
-  // the right run file. Resolved server-side because the React layer
-  // doesn't know the absolute project root.
-  getLogsDir()
-    .then((dir) => openPath(dir))
-    .catch(fail);
+  if (kind === "performance-log") {
+    if (file.performanceLogPath) {
+      openPath(file.performanceLogPath).catch(fail);
+      return;
+    }
+    getLogsDir()
+      .then((dir) => openPath(dir))
+      .catch(fail);
+    return;
+  }
+
+  if (kind === "debug-log") {
+    if (!file.debugLogPath) {
+      showToast("No debug log saved for this run");
+      return;
+    }
+    openPath(file.debugLogPath).catch(fail);
+  }
 };

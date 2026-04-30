@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { I } from "../icons";
-import { locateFile } from "../lib/locate";
+import { locateFile, type LocateKind } from "../lib/locate";
 import { useUi } from "../store";
 import type { FileStatus, QueueFile } from "../types";
 
@@ -105,7 +105,7 @@ export const StatusPill = ({ s, progress }: StatusPillProps) => {
 const fileExt = (n: string) => (n.split(".").pop() ?? "").toUpperCase();
 
 interface OutputMenuProps {
-  onPick: (kind: "srt" | "log" | "folder") => void;
+  onPick: (kind: LocateKind) => void;
   /** Anchor coordinates in viewport space (right + top of the button). */
   anchor: { right: number; top: number };
 }
@@ -125,8 +125,11 @@ const OutputMenu = ({ onPick, anchor }: OutputMenuProps) => (
     <button onClick={() => onPick("srt")}>
       <I.Done size={14} /> SRT file
     </button>
-    <button onClick={() => onPick("log")}>
-      <I.List size={14} /> Run log (details)
+    <button onClick={() => onPick("performance-log")}>
+      <I.List size={14} /> Performance log
+    </button>
+    <button onClick={() => onPick("debug-log")}>
+      <I.List size={14} /> Debug log
     </button>
     <button onClick={() => onPick("folder")}>
       <I.FolderOpen size={14} /> Containing folder
@@ -135,7 +138,7 @@ const OutputMenu = ({ onPick, anchor }: OutputMenuProps) => (
 );
 
 interface OutputSplitProps {
-  onLocate: (kind: "srt" | "log" | "folder") => void;
+  onLocate: (kind: LocateKind) => void;
 }
 
 export const OutputSplitButton = ({ onLocate }: OutputSplitProps) => {

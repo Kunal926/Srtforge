@@ -216,12 +216,20 @@ def worker_preload_failed_event(error: str) -> dict[str, Any]:
     return {"event": "worker_preload_failed", "error": str(error)}
 
 
-def job_started_event(*, id: str, file: Optional[str] = None, kind: Optional[str] = None) -> dict[str, Any]:
+def job_started_event(
+    *,
+    id: str,
+    file: Optional[str] = None,
+    kind: Optional[str] = None,
+    debug_log_path: Optional[str] = None,
+) -> dict[str, Any]:
     payload: dict[str, Any] = {"event": "job_started", "id": str(id)}
     if file is not None:
         payload["file"] = str(file)
     if kind is not None:
         payload["kind"] = str(kind)
+    if debug_log_path is not None:
+        payload["debug_log_path"] = str(debug_log_path)
     return payload
 
 
@@ -275,17 +283,45 @@ def progress_event(
     return payload
 
 
-def log_event(msg: str, *, lvl: Optional[str] = None, t: Optional[str] = None) -> dict[str, Any]:
+def log_event(
+    msg: str,
+    *,
+    lvl: Optional[str] = None,
+    t: Optional[str] = None,
+    id: Optional[str] = None,
+    source: Optional[str] = None,
+    debug_log_path: Optional[str] = None,
+) -> dict[str, Any]:
     payload: dict[str, Any] = {"event": "log", "msg": str(msg)}
     if lvl is not None:
         payload["lvl"] = str(lvl)
     if t is not None:
         payload["t"] = str(t)
+    if id is not None:
+        payload["id"] = str(id)
+    if source is not None:
+        payload["source"] = str(source)
+    if debug_log_path is not None:
+        payload["debug_log_path"] = str(debug_log_path)
     return payload
 
 
-def srt_written_event(*, id: str, path: str) -> dict[str, Any]:
-    return {"event": "srt_written", "id": str(id), "path": str(path)}
+def srt_written_event(
+    *,
+    id: str,
+    path: str,
+    run_id: Optional[str] = None,
+    performance_log_path: Optional[str] = None,
+    debug_log_path: Optional[str] = None,
+) -> dict[str, Any]:
+    payload = {"event": "srt_written", "id": str(id), "path": str(path)}
+    if run_id is not None:
+        payload["run_id"] = str(run_id)
+    if performance_log_path is not None:
+        payload["performance_log_path"] = str(performance_log_path)
+    if debug_log_path is not None:
+        payload["debug_log_path"] = str(debug_log_path)
+    return payload
 
 
 def media_written_event(
@@ -300,9 +336,22 @@ def asset_written_event(*, id: str, kind: str, path: str) -> dict[str, Any]:
     return {"event": "asset_written", "id": str(id), "kind": str(kind), "path": str(path)}
 
 
-def job_completed_event(*, id: str, seconds: Optional[float] = None) -> dict[str, Any]:
+def job_completed_event(
+    *,
+    id: str,
+    seconds: Optional[float] = None,
+    run_id: Optional[str] = None,
+    performance_log_path: Optional[str] = None,
+    debug_log_path: Optional[str] = None,
+) -> dict[str, Any]:
     payload: dict[str, Any] = {"event": "job_completed", "id": str(id)}
     payload["seconds"] = None if seconds is None else float(seconds)
+    if run_id is not None:
+        payload["run_id"] = str(run_id)
+    if performance_log_path is not None:
+        payload["performance_log_path"] = str(performance_log_path)
+    if debug_log_path is not None:
+        payload["debug_log_path"] = str(debug_log_path)
     return payload
 
 
@@ -312,6 +361,8 @@ def job_failed_event(
     error: str,
     file: Optional[str] = None,
     run_id: Optional[str] = None,
+    performance_log_path: Optional[str] = None,
+    debug_log_path: Optional[str] = None,
     traceback: Optional[str] = None,
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {"event": "job_failed", "id": str(id), "error": str(error)}
@@ -319,6 +370,10 @@ def job_failed_event(
         payload["file"] = str(file)
     if run_id is not None:
         payload["run_id"] = str(run_id)
+    if performance_log_path is not None:
+        payload["performance_log_path"] = str(performance_log_path)
+    if debug_log_path is not None:
+        payload["debug_log_path"] = str(debug_log_path)
     if traceback is not None:
         payload["traceback"] = str(traceback)
     return payload

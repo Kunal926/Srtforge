@@ -16,7 +16,7 @@ import logging
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 from .engine_events import (
     apply_extension_then_merge,
@@ -30,6 +30,16 @@ from .engine_events import (
 from .utils import parse_media_context_from_filename
 
 logger = logging.getLogger(__name__)
+
+
+def _report_progress(callback: Optional[Callable[[float], None]], fraction: float) -> None:
+    if callback is None:
+        return
+    try:
+        callback(fraction)
+    except Exception:
+        logger.debug("ASR progress callback failed", exc_info=True)
+
 
 def _fmt_ms(t: float) -> str:
     return f"{int(t//3600):02}:{int((t%3600)//60):02}:{int(t%60):02},{int((t*1000)%1000):03}"
@@ -119,6 +129,7 @@ def generate_optimized_events(
     max_chars: int = 84,
     max_dur_s: float = 7.0,
     word_timestamps_out: Optional[str] = None,
+    progress_callback: Optional[Callable[[float], None]] = None,
 ) -> List[Dict[str, Any]]:
     """
     1) Transcribe with Faster-Whisper (word timestamps)
@@ -127,7 +138,9 @@ def generate_optimized_events(
     4) Apply timing fixes + shaping (exact logic from reference whisper.py)
     """
     logger.info("Generating optimized events with Faster-Whisper...")
+    _report_progress(progress_callback, 0.0)
     model = load_whisper_model(model_name, prefer_gpu=prefer_gpu)
+    _report_progress(progress_callback, 0.05)
 
     # The WhisperModel.transcribe API yields segments; keep the same flags as the reference.
     segments, _info = model.transcribe(
@@ -137,6 +150,8 @@ def generate_optimized_events(
         condition_on_previous_text=False,
         vad_filter=False,
     )
+    _report_progress(progress_callback, 0.10)
+    duration = float(getattr(_info, "duration", 0.0) or 0.0)
 
     raw_words: List[Dict[str, Any]] = []
     all_words: List[Dict[str, Any]] = []
@@ -148,21 +163,29 @@ def generate_optimized_events(
             t = (raw_word or "").strip()
             if t:
                 all_words.append({"word": t, "start": float(w.start), "end": float(w.end)})
+        if duration > 0:
+            segment_end = float(getattr(s, "end", 0.0) or 0.0)
+            _report_progress(progress_callback, min(0.70, 0.10 + 0.60 * (segment_end / duration)))
 
     if word_timestamps_out:
         path = Path(word_timestamps_out)
         with path.open("w", encoding="utf-8") as fp:
             json.dump(raw_words, fp, ensure_ascii=False, indent=2)
+    _report_progress(progress_callback, 0.72)
 
     events = segment_smart_stream(all_words, pause_ms=pause_ms, max_chars=max_chars, max_dur_s=max_dur_s)
+    _report_progress(progress_callback, 0.80)
     events = apply_global_start_offset(events, offset_ms=50)
     events = apply_extension_then_merge(events, target_cps=22.0)
     events = apply_hybrid_linger_with_report(events, linger_ms=600)
 
-    for ev in events:
+    total_events = max(1, len(events))
+    for idx, ev in enumerate(events, 1):
         ev["text"] = shape_block_text(ev["words"], max_chars=42)
+        _report_progress(progress_callback, 0.80 + 0.15 * (idx / total_events))
 
     events = enforce_timing_constraints(events, min_dur=1.0, min_gap=0.084)
+    _report_progress(progress_callback, 1.0)
     return events
 
 

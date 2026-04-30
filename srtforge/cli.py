@@ -122,6 +122,19 @@ def _emit_worker_event(payload: dict) -> None:
     sys.stdout.flush()
 
 
+def _pipeline_log_metadata(result) -> dict:
+    """Return optional worker fields that link a job to its performance log."""
+
+    meta: dict[str, str] = {}
+    run_id = getattr(result, "run_id", None)
+    performance_log_path = getattr(result, "performance_log_path", None)
+    if run_id:
+        meta["run_id"] = str(run_id)
+    if performance_log_path is not None:
+        meta["performance_log_path"] = str(performance_log_path)
+    return meta
+
+
 _AUDIO_OUT_EXT = {"wav": ".wav", "flac": ".flac", "mp3": ".mp3"}
 
 
@@ -515,18 +528,27 @@ def worker(
             result = run_pipeline(config)
 
             if result.failed or result.output_path is None:
+                log_meta = _pipeline_log_metadata(result)
                 _emit_worker_event(
                     {
                         "event": "job_failed",
                         "id": job_id,
                         "file": str(media_path),
-                        "run_id": result.run_id,
                         "error": result.error or "pipeline did not produce output",
+                        **log_meta,
                     }
                 )
                 continue
 
-            _emit_worker_event({"event": "srt_written", "id": job_id, "path": str(result.output_path)})
+            log_meta = _pipeline_log_metadata(result)
+            _emit_worker_event(
+                {
+                    "event": "srt_written",
+                    "id": job_id,
+                    "path": str(result.output_path),
+                    **log_meta,
+                }
+            )
             if result.embedded_path is not None:
                 _emit_worker_event(
                     {
@@ -545,7 +567,14 @@ def worker(
                         "path": str(result.burned_path),
                     }
                 )
-            _emit_worker_event({"event": "job_completed", "id": job_id, "seconds": None})
+            _emit_worker_event(
+                {
+                    "event": "job_completed",
+                    "id": job_id,
+                    "seconds": None,
+                    **log_meta,
+                }
+            )
         except Exception as exc:
             _emit_worker_event(
                 {
