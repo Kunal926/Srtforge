@@ -27,14 +27,17 @@ PowerShell when PowerShell 7 is not installed.
 ## Current branch / git state
 
 - Branch: `codex-windows-agent-layer`.
-- Latest commit: `4a7fcf7 codex: add Windows app operating layer`.
-- Worktree has uncommitted changes. It includes this Studio debug-log work,
-  the harness fallback fix, and the earlier completed progress-event work from
-  the previous session.
-- Pre-existing unrelated uncommitted files still left untouched:
-  `srtforge-studio/src-tauri/Cargo.toml` and untracked
-  `srtforge-studio/pnpm-lock.yaml`.
-- No commit and no push done this session.
+- Latest local implementation commit: `6bfa5ca studio: persist debug logs`.
+- Worktree was clean immediately after `6bfa5ca`; this handoff update is being
+  committed separately so the push failure is recorded in repo state.
+- The previously uncommitted `srtforge-studio/pnpm-lock.yaml` was included in
+  `6bfa5ca`. `srtforge-studio/src-tauri/Cargo.toml` was not present in the
+  staged diff by commit time.
+- Local commit created for the requested dirty-file work:
+  `6bfa5ca studio: persist debug logs`.
+- Push attempted with `git push -u origin codex-windows-agent-layer` but failed
+  with GitHub HTTP 403 because the active credential is for `Kunal926`, which
+  lacks write permission to `StiensGate928/Srtforge.git`.
 
 ## Changed files
 
@@ -71,7 +74,7 @@ Harness fallback fix:
 - `docs/agent/TASK_TEMPLATE.md`
 - `scripts/check.ps1`
 
-Earlier progress-event uncommitted files still present:
+Earlier progress-event files included in the local commit:
 
 - `srtforge/logging.py`
 - `srtforge/engine_whisper.py`
@@ -103,6 +106,16 @@ Earlier progress-event uncommitted files still present:
   all executed checks passed, including default pytest (`78 passed`).
 - `.\.venv\Scripts\python.exe scripts\check_docs.py` after the harness-doc
   updates - pass; `docs check OK`.
+- `git add -A` - pass; staged all uncommitted files requested by the user.
+- `git diff --cached --check` - pass.
+- `git config --local --get-regexp "remote|branch" | Select-String "github_pat|ghp_|token" -SimpleMatch` - pass; no token-like output printed.
+- `git commit -m "studio: persist debug logs"` - pass; created local commit
+  `6bfa5ca`.
+- `git push -u origin codex-windows-agent-layer` - fail; GitHub returned 403
+  permission denied for account `Kunal926`.
+- `git remote -v` after push failure - pass; `origin` remains
+  `https://github.com/StiensGate928/Srtforge.git`.
+- post-push-failure token scan with `git config --local --get-regexp "remote|branch" | Select-String "github_pat|ghp_|token" -SimpleMatch` - pass; no token-like output printed.
 
 ## Skipped checks and why
 
@@ -131,11 +144,14 @@ Earlier progress-event uncommitted files still present:
 
 - `rg.exe` still returns access denied in this environment; use PowerShell
   `Select-String` fallback.
-- Existing unrelated uncommitted Studio files remain:
-  `srtforge-studio/src-tauri/Cargo.toml` and untracked
-  `srtforge-studio/pnpm-lock.yaml`.
+- Push is blocked until Git Credential Manager or GitHub CLI is authenticated
+  as an account with write access to `StiensGate928/Srtforge.git`.
 
 ## Next recommended action
 
-Review the combined progress-event and Studio log-persistence changes, then
-commit them together or split them into two commits before pushing.
+Authenticate Git Credential Manager or GitHub CLI with a GitHub account that
+can write to `StiensGate928/Srtforge.git`, then rerun:
+
+```powershell
+git push -u origin codex-windows-agent-layer
+```
