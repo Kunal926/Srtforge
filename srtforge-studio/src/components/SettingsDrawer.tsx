@@ -53,6 +53,7 @@ export const SettingsDrawer = () => {
   const resetSettings = useUi((s) => s.resetSettings);
   const showToast = useUi((s) => s.showToast);
   const [tab, setTab] = useState<Tab>("basic");
+  const embedDisabled = !settings.embed;
 
   return (
     <>
@@ -148,7 +149,7 @@ export const SettingsDrawer = () => {
                 </Row>
               </Group>
 
-              <Group title="Embed subtitles (soft track)">
+              <Group title="Video subtitle output">
                 <Row
                   label="Embed in container"
                   desc="Mux .srt as a soft track via mkvmerge."
@@ -160,24 +161,42 @@ export const SettingsDrawer = () => {
                   />
                 </Row>
                 <Row
+                  label="Burn subtitles (hard sub)"
+                  desc="Hard-encode subtitles into the video. Slow."
+                  compact
+                >
+                  <Toggle
+                    on={settings.embed && settings.burn}
+                    disabled={embedDisabled}
+                    onClick={() => setSetting("burn", !settings.burn)}
+                  />
+                </Row>
+                <Row
                   label="Soft-embed method"
                   desc="Auto prefers MKVToolNix; falls back to FFmpeg remux."
                 >
                   <div className="seg">
                     <button
-                      className={settings.softEmbed === "auto" ? "active" : ""}
+                      className={settings.embed && settings.softEmbed === "auto" ? "active" : ""}
+                      disabled={embedDisabled}
                       onClick={() => setSetting("softEmbed", "auto")}
                     >
                       Auto
                     </button>
                     <button
-                      className={settings.softEmbed === "mkvtoolnix" ? "active" : ""}
+                      className={
+                        settings.embed && settings.softEmbed === "mkvtoolnix"
+                          ? "active"
+                          : ""
+                      }
+                      disabled={embedDisabled}
                       onClick={() => setSetting("softEmbed", "mkvtoolnix")}
                     >
                       MKVToolNix
                     </button>
                     <button
-                      className={settings.softEmbed === "ffmpeg" ? "active" : ""}
+                      className={settings.embed && settings.softEmbed === "ffmpeg" ? "active" : ""}
+                      disabled={embedDisabled}
                       onClick={() => setSetting("softEmbed", "ffmpeg")}
                     >
                       FFmpeg
@@ -187,6 +206,7 @@ export const SettingsDrawer = () => {
                 <Row label="Track title">
                   <input
                     className="input wide"
+                    disabled={embedDisabled}
                     value={settings.trackTitle}
                     onChange={(e) => setSetting("trackTitle", e.target.value)}
                   />
@@ -195,19 +215,22 @@ export const SettingsDrawer = () => {
                   <input
                     className="input mono"
                     style={{ width: 96, textAlign: "right" }}
+                    disabled={embedDisabled}
                     value={settings.trackLang}
                     onChange={(e) => setSetting("trackLang", e.target.value)}
                   />
                 </Row>
                 <Row label="Set as default track" compact>
                   <Toggle
-                    on={settings.defaultTrack}
+                    on={settings.embed && settings.defaultTrack}
+                    disabled={embedDisabled}
                     onClick={() => setSetting("defaultTrack", !settings.defaultTrack)}
                   />
                 </Row>
                 <Row label="Mark as forced" compact>
                   <Toggle
-                    on={settings.forcedTrack}
+                    on={settings.embed && settings.forcedTrack}
+                    disabled={embedDisabled}
                     onClick={() => setSetting("forcedTrack", !settings.forcedTrack)}
                   />
                 </Row>
@@ -217,7 +240,8 @@ export const SettingsDrawer = () => {
                   compact
                 >
                   <Toggle
-                    on={settings.replaceOriginal}
+                    on={settings.embed && settings.replaceOriginal}
+                    disabled={embedDisabled}
                     onClick={() =>
                       setSetting("replaceOriginal", !settings.replaceOriginal)
                     }
@@ -240,16 +264,6 @@ export const SettingsDrawer = () => {
                   <Toggle
                     on={settings.dumpWords}
                     onClick={() => setSetting("dumpWords", !settings.dumpWords)}
-                  />
-                </Row>
-                <Row
-                  label="Burn subtitles (hard sub)"
-                  desc="Hard-encode subtitles into the video. Slow."
-                  compact
-                >
-                  <Toggle
-                    on={settings.burn}
-                    onClick={() => setSetting("burn", !settings.burn)}
                   />
                 </Row>
                 <Row
@@ -310,6 +324,21 @@ export const SettingsDrawer = () => {
 
           {tab === "performance" && (
             <div className="set-pane">
+              <Group title="Studio performance">
+                <Row
+                  label="Max CUDA mode"
+                  desc="Reduces foreground Studio rendering while GPU jobs run."
+                  compact
+                >
+                  <Toggle
+                    on={settings.gpuPerformanceMode}
+                    onClick={() =>
+                      setSetting("gpuPerformanceMode", !settings.gpuPerformanceMode)
+                    }
+                  />
+                </Row>
+              </Group>
+
               <Group title="ASR engine">
                 <Row label="ASR model">
                   <select

@@ -1963,17 +1963,17 @@ class OptionsDialog(QtWidgets.QDialog):
         )
         perf_form.addRow("Force float32 (Parakeet)", self.force_float32)
 
-        rel_pos_local_attn = getattr(initial_settings.whisper, "rel_pos_local_attn", [768, 768])
+        rel_pos_local_attn = getattr(initial_settings.whisper, "rel_pos_local_attn", [1280, 1280])
         if not isinstance(rel_pos_local_attn, list) or len(rel_pos_local_attn) < 2:
-            rel_pos_local_attn = [768, 768]
+            rel_pos_local_attn = [1280, 1280]
         try:
             left_window_default = int(rel_pos_local_attn[0])
         except Exception:
-            left_window_default = 768
+            left_window_default = 1280
         try:
             right_window_default = int(rel_pos_local_attn[1])
         except Exception:
-            right_window_default = 768
+            right_window_default = 1280
 
         self.local_attn_left = QtWidgets.QSpinBox()
         self.local_attn_left.setRange(0, 8192)
@@ -2279,11 +2279,11 @@ class OptionsDialog(QtWidgets.QDialog):
         self.whisper_model.setCurrentIndex(max(0, whisper_idx))
         self.whisper_language.setText(str(getattr(settings.whisper, "language", "en") or "en"))
         self.force_float32.setChecked(bool(getattr(settings.whisper, "force_float32", False)))
-        default_rel_pos_local_attn = getattr(settings.whisper, "rel_pos_local_attn", [768, 768])
+        default_rel_pos_local_attn = getattr(settings.whisper, "rel_pos_local_attn", [1280, 1280])
         if not isinstance(default_rel_pos_local_attn, list) or len(default_rel_pos_local_attn) < 2:
-            default_rel_pos_local_attn = [768, 768]
-        self.local_attn_left.setValue(int(default_rel_pos_local_attn[0] or 768))
-        self.local_attn_right.setValue(int(default_rel_pos_local_attn[1] or 768))
+            default_rel_pos_local_attn = [1280, 1280]
+        self.local_attn_left.setValue(int(default_rel_pos_local_attn[0] or 1280))
+        self.local_attn_right.setValue(int(default_rel_pos_local_attn[1] or 1280))
         default_chunking_factor = getattr(settings.whisper, "subsampling_conv_chunking_factor", 1)
         self.subsampling_conv_chunking_factor.setChecked(
             int(1 if default_chunking_factor is None else default_chunking_factor) == 1

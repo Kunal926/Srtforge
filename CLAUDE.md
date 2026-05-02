@@ -81,13 +81,19 @@ pnpm tauri dev          # dev shell + Vite + bundled sidecar
 ```
 
 `pnpm tauri dev` does **not** rebuild the Python sidecar. After any change
-to `srtforge/`, the spec, or the entry shim, rebuild it manually:
+to `srtforge/`, the spec, or the entry shim, rebuild it with the Windows
+helper before benchmarking Studio:
 
 ```powershell
-.\.venv\Scripts\Activate.ps1     # MUST be the project venv
-pyinstaller --clean --noconfirm srtforge-studio\packaging\windows\srtforge_worker.spec --distpath srtforge-studio\src-tauri\binaries
-ren srtforge-studio\src-tauri\binaries\srtforge_worker.exe srtforge_worker-x86_64-pc-windows-msvc.exe
+.\.venv\Scripts\Activate.ps1
+.\scripts\rebuild_studio_sidecar.ps1
 ```
+
+The helper stops stale `srtforge_worker.exe` processes, runs PyInstaller,
+copies `srtforge_worker.exe` over Tauri's target-triple-suffixed sidecar, and
+runs the suffixed sidecar's `gpu-smoke` command. Studio benchmarks are only
+valid after the performance log shows `Parakeet CUDA Python bindings preloaded
+before ASR`.
 
 If `pnpm tauri dev` fails with `tauri-build ... PermissionDenied "Access is
 denied"`, it's almost always a zombie worker holding the sidecar `.exe`
@@ -179,8 +185,11 @@ must not require any of these to run.
   entry shim is redundant and has historically broken the bootloader. If a
   child crashes with "Bootloader did not set sys._pyinstaller_pyz", do a
   `--clean` rebuild before assuming a multiprocessing bug.
-- **CUDA / GPU constraints:** `cuda-python>=12.3,<13` is a hard pin; the
-  Parakeet GPU path rejects 13+. NeMo's Megatron-microbatch shim lives in
-  `srtforge.asr._nemo_compat`. PyInstaller spec uses `collect_all` and
-  `module_collection_mode={"nemo": "pyz+py", "torch": "pyz+py"}` so
-  TorchScript can find source at runtime.
+- **CUDA / GPU constraints:** the supported packaged GPU stack is CUDA 12.8:
+  `torch/torchaudio/torchvision==2.11.0/0.26.0+cu128`,
+  `onnxruntime-gpu==1.25.1`, and `cuda-python==12.9.6`. CUDA 13 is
+  experimental only. NeMo's Megatron-microbatch shim lives in
+  `srtforge.asr._nemo_compat`. PyInstaller spec imports
+  `_cuda_bindings_redirector` with a runtime hook and uses `collect_all` plus
+  `module_collection_mode={"nemo": "pyz+py", "torch": "pyz+py"}` so TorchScript
+  can find source at runtime. Validate sidecars with `srtforge gpu-smoke`.

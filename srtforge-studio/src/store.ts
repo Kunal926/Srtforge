@@ -35,6 +35,7 @@ const DEFAULT_SETTINGS: Settings = {
   gpuPct: 100,
   fp32: false,
   preferGpu: true,
+  gpuPerformanceMode: true,
   sep: "fv4",
   preferCenter: true,
   sepHz: 44100,
@@ -44,8 +45,8 @@ const DEFAULT_SETTINGS: Settings = {
   engine: "parakeet",
   asrModel: "nvidia/parakeet-tdt-0.6b-v2",
   language: "en",
-  attnLeft: 768,
-  attnRight: 768,
+  attnLeft: 1280,
+  attnRight: 1280,
   subsamplingChunkFactor: 0,
   embed: true,
   burn: false,
@@ -58,7 +59,7 @@ const DEFAULT_SETTINGS: Settings = {
   defaultTrack: true,
   forcedTrack: true,
   replaceOriginal: true,
-  sidecarSrt: false,
+  sidecarSrt: true,
   dumpWords: false,
   freeGpuOnStop: true,
   extract: "dual_mono_center",
@@ -306,6 +307,7 @@ export const useUi = create<UiState>()(
                   : f,
               ),
               selectedId: id,
+              logs: [],
             };
           }
           // Worker started a job we don't know about — synthesize a row.
@@ -325,7 +327,7 @@ export const useUi = create<UiState>()(
             stage: 0,
             debugLogPath,
           };
-          return { files: [...s.files, fresh], selectedId: id };
+          return { files: [...s.files, fresh], selectedId: id, logs: [] };
         });
         break;
       }
@@ -479,7 +481,7 @@ export const useUi = create<UiState>()(
           source: (ev as unknown as { source?: string }).source,
         };
         set((s) => ({
-          logs: [...s.logs.slice(-499), line],
+          logs: [...s.logs, line],
           files:
             id && debugLogPath
               ? s.files.map((f) => (f.id === id ? { ...f, debugLogPath } : f))
@@ -505,10 +507,35 @@ export const useUi = create<UiState>()(
         settings: s.settings,
         libraries: s.libraries,
       }),
+      migrate: (persisted, version) => {
+        if (typeof persisted !== "object" || persisted === null) {
+          return persisted as UiState;
+        }
+        const state = persisted as Partial<UiState>;
+        const settings = state.settings;
+        if (!settings) {
+          return persisted as UiState;
+        }
+
+        let migratedSettings = settings;
+        if (version < 4 && settings.attnLeft === 768 && settings.attnRight === 768) {
+          migratedSettings = { ...migratedSettings, attnLeft: 1280, attnRight: 1280 };
+        }
+        if (
+          version < 5 &&
+          (migratedSettings as Partial<Settings>).gpuPerformanceMode === undefined
+        ) {
+          migratedSettings = { ...migratedSettings, gpuPerformanceMode: true };
+        }
+        if (migratedSettings !== settings) {
+          return { ...state, settings: migratedSettings } as UiState;
+        }
+        return persisted as UiState;
+      },
       // Bump when Settings union shapes change so old stored values that
       // would now fail the type unions (e.g. device "gpu" → "cuda",
       // style "default" → "bbc"|"custom") get discarded cleanly.
-      version: 3,
+      version: 5,
     },
   ),
 );

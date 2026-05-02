@@ -359,6 +359,7 @@ def _build_pipeline_config(
     # FV4 model/config overrides — fall back to bundled paths in settings.
     fv4_ckpt = _resolve_under_project_root(fv4_cfg.get("ckpt")) or settings.separation.fv4.ckpt
     fv4_cfg_path = _resolve_under_project_root(fv4_cfg.get("cfg")) or settings.separation.fv4.cfg
+    embed_enabled = bool(embed_cfg.get("enabled", False))
 
     return PipelineConfig(
         media_path=media_path,
@@ -403,14 +404,14 @@ def _build_pipeline_config(
             cfg.get("allow_untagged_english", settings.separation.allow_untagged_english)
         ),
         # Output muxing — straight pass-through from the Settings drawer.
-        embed_enabled=bool(embed_cfg.get("enabled", False)),
+        embed_enabled=embed_enabled,
         embed_method=str(embed_cfg.get("method") or "auto"),
         embed_track_title=str(embed_cfg.get("track_title") or "Srtforge (English)"),
         embed_track_lang=str(embed_cfg.get("track_lang") or "eng"),
         embed_default=bool(embed_cfg.get("default", True)),
         embed_forced=bool(embed_cfg.get("forced", False)),
-        replace_original=bool(output_cfg.get("replace_original", False)),
-        burn_enabled=bool(output_cfg.get("burn", False)),
+        replace_original=embed_enabled and bool(output_cfg.get("replace_original", False)),
+        burn_enabled=embed_enabled and bool(output_cfg.get("burn", False)),
         sidecar_srt=bool(output_cfg.get("sidecar_srt", True)),
     )
 
@@ -593,6 +594,17 @@ def sonarr_hook() -> None:
     """Entry point used by the Sonarr custom script integration."""
 
     sonarr_main()
+
+
+@app.command("gpu-smoke")
+def gpu_smoke() -> None:
+    """Validate the packaged GPU runtime used by the Studio sidecar."""
+
+    from .gpu_runtime import collect_gpu_runtime_report, gpu_runtime_exit_code
+
+    report = collect_gpu_runtime_report()
+    typer.echo(json.dumps(report, indent=2, ensure_ascii=False))
+    raise typer.Exit(code=gpu_runtime_exit_code(report))
 
 
 @app.callback(invoke_without_command=True)

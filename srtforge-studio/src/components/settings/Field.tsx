@@ -36,7 +36,17 @@ export const Group = ({ title, children }: GroupProps) => (
 export const Toggle = ({
   on,
   onClick,
+  disabled = false,
 }: {
   on: boolean;
   onClick: () => void;
-}) => <div className={`toggle ${on ? "on" : ""}`} onClick={onClick} />;
+  disabled?: boolean;
+}) => (
+  <div
+    className={`toggle ${on ? "on" : ""}${disabled ? " disabled" : ""}`}
+    aria-disabled={disabled}
+    onClick={() => {
+      if (!disabled) onClick();
+    }}
+  />
+);

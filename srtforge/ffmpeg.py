@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Iterable, List, Mapping, Optional, Sequence
 
 from .logging import get_console
+from .gpu_runtime import preload_onnxruntime_cuda_dlls
 
 
 def _as_ffmpeg_path(path: Path) -> str:
@@ -430,17 +431,18 @@ class FFmpegTooling:
         onnx_cuda_available = False
         onnx_probe_error: str | None = None
         if prefer_gpu:
+            onnx_probe_error = preload_onnxruntime_cuda_dlls(prefer_gpu=True)
             try:
                 import onnxruntime as ort  # type: ignore
             except ModuleNotFoundError:
-                onnx_probe_error = "onnxruntime is not installed"
+                onnx_probe_error = onnx_probe_error or "onnxruntime is not installed"
             except Exception as exc:  # pragma: no cover - unexpected import failure
-                onnx_probe_error = str(exc)
+                onnx_probe_error = onnx_probe_error or str(exc)
             else:
                 try:
                     onnx_cuda_available = "CUDAExecutionProvider" in set(ort.get_available_providers())
                 except Exception as exc:  # pragma: no cover - defensive fallback if provider probing fails
-                    onnx_probe_error = str(exc)
+                    onnx_probe_error = onnx_probe_error or str(exc)
 
         if prefer_gpu and torch_module is not None and not torch_cuda_available:
             if not torch_cuda_built:

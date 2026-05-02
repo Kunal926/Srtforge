@@ -443,6 +443,42 @@ function Invoke-Pip {
     Invoke-WithArgs -Command @($venvPip) -Args ($script:PipGlobalArgs + $Args)
 }
 
+function Resolve-CudaTag {
+    if ($Cuda -eq 'auto') {
+        return '128'
+    }
+    return $Cuda
+}
+
+function Get-CudaRuntimeVersionForTag {
+    param([Parameter(Mandatory = $true)][string]$CudaTag)
+
+    switch ($CudaTag) {
+        '118' { return '11.8' }
+        '121' { return '12.1' }
+        '124' { return '12.4' }
+        '126' { return '12.6' }
+        '128' { return '12.8' }
+        '130' { return '13.0' }
+        default { return $null }
+    }
+}
+
+function Get-GpuConstraintsArgs {
+    param([Parameter(Mandatory = $true)][string]$CudaTag)
+
+    if ($CudaTag -ne '128') {
+        return @()
+    }
+
+    $constraintsPath = Join-Path (Get-Location) 'constraints-gpu-cu128.txt'
+    if (Test-Path $constraintsPath) {
+        return @('-c', 'constraints-gpu-cu128.txt')
+    }
+
+    return @()
+}
+
 function Test-PipPackageInstalled {
     param(
         [Parameter(Mandatory = $true)]
@@ -480,8 +516,33 @@ function Get-RequirementsPackages {
 }
 
 function Ensure-RequirementsInstalled {
+    param(
+        [string]$Device = 'cpu',
+        [string]$CudaTag = ''
+    )
+
     $requirements = Get-RequirementsPackages
     if ($requirements.Count -eq 0) {
+        return
+    }
+
+    $constraintsArgs = @()
+    if ($Device -eq 'gpu' -and $CudaTag) {
+        $constraintsArgs = Get-GpuConstraintsArgs -CudaTag $CudaTag
+    }
+
+    if ($constraintsArgs.Count -gt 0) {
+        Write-Host "Installing requirements with CUDA $CudaTag constraints"
+        $installArgs = @(
+            'install',
+            '--progress-bar', 'off',
+            '--upgrade',
+            '--upgrade-strategy', 'only-if-needed',
+            '--prefer-binary'
+        ) + $constraintsArgs + @(
+            '-r', 'requirements.txt'
+        )
+        Invoke-Pip -Args $installArgs
         return
     }
 
@@ -578,18 +639,39 @@ function Install-Torch($device) {
     $torchInfo = if ($torchInstalled) { Get-TorchCudaInfo } else { $null }
 
     if ($device -eq 'gpu') {
-        if ($torchInstalled -and $torchInfo -and $torchInfo.ok -and $torchInfo.cuda_version) {
+        $cudaTag = Resolve-CudaTag
+        $expectedCudaRuntime = Get-CudaRuntimeVersionForTag -CudaTag $cudaTag
+
+        if ($cudaTag -eq '130') {
+            Write-Warning 'CUDA 13.0 Torch is experimental for Srtforge packaging. The default supported GPU stack is CUDA 12.8.'
+        }
+
+        if (
+            $torchInstalled -and
+            $torchInfo -and
+            $torchInfo.ok -and
+            $torchInfo.cuda_version -and
+            $expectedCudaRuntime -and
+            ([string]$torchInfo.cuda_version -eq [string]$expectedCudaRuntime)
+        ) {
             Write-Host "CUDA-enabled PyTorch already installed (CUDA $($torchInfo.cuda_version)). Skipping reinstall."
             return
         }
 
-        $cudaTag = if ($Cuda -eq 'auto') { '130' } else { $Cuda }
+        if ($torchInstalled -and $torchInfo -and $torchInfo.ok -and $torchInfo.cuda_version) {
+            Write-Host "Replacing PyTorch CUDA $($torchInfo.cuda_version) with CUDA $expectedCudaRuntime wheels."
+        }
         Write-Host "Installing Torch with CUDA $cudaTag wheels"
-        $packages = @('torch', 'torchvision', 'torchaudio')
+        $packages = @(
+            "torch==2.11.0+cu$cudaTag",
+            "torchvision==0.26.0+cu$cudaTag",
+            "torchaudio==2.11.0+cu$cudaTag"
+        )
 
         $installArgs = @(
             'install',
             '--upgrade',
+            '--force-reinstall',
             '--no-cache-dir',
             '--index-url', "https://download.pytorch.org/whl/cu$cudaTag",
             '--extra-index-url', 'https://pypi.org/simple'
@@ -597,11 +679,12 @@ function Install-Torch($device) {
         Invoke-WithArgs -Command @($venvPip) -Args $installArgs
 
         # NeMo decoding performance relies on CUDA graph support from cuda-python.
-        # Ensure a recent build is present to avoid falling back to slower paths.
+        # Keep the supported CUDA 12 package line pinned for the default stack.
         Invoke-Pip -Args @(
             'install',
             '--upgrade',
-            'cuda-python>=12.3,<13'
+            'cuda-python==12.9.6',
+            'cuda-bindings==12.9.6'
         )
 
         $torchInfo = Get-TorchCudaInfo
@@ -648,6 +731,8 @@ if ($Cpu) {
     }
 }
 
+$script:SelectedCudaTag = Resolve-CudaTag
+
 $script:TorchInstalledBeforeRequirements = $false
 Start-StepTimer -Name "Install Torch"
 $torchStepSucceeded = $true
@@ -669,7 +754,7 @@ finally {
 Start-StepTimer -Name "Install requirements"
 $requirementsStepSucceeded = $true
 try {
-    Ensure-RequirementsInstalled
+    Ensure-RequirementsInstalled -Device $selectedDevice -CudaTag $script:SelectedCudaTag
 }
 catch {
     $requirementsStepSucceeded = $false
@@ -879,85 +964,85 @@ finally {
 
 function Install-OnnxRuntime($device) {
     if ($device -eq 'gpu') {
-        if (Test-PipPackageInstalled -Name 'onnxruntime-gpu') {
-            Write-Host 'ONNX Runtime GPU package already installed. Skipping reinstall.'
-            return $true
+        if (Test-PipPackageInstalled -Name 'onnxruntime') {
+            Write-Host 'Removing CPU ONNX Runtime package so only onnxruntime-gpu remains.'
+            try {
+                Invoke-WithArgs -Command @($venvPip) -Args @('uninstall', '-y', 'onnxruntime') | Out-Null
+            }
+            catch {
+                Write-Warning "Unable to uninstall CPU onnxruntime package cleanly: $_"
+            }
         }
 
-        Write-Host "Installing ONNX Runtime GPU package"
+        Write-Host "Installing ONNX Runtime GPU package 1.25.1"
         try {
-            Invoke-WithArgs -Command @($venvPip) -Args @('install', 'onnxruntime-gpu>=1.23.2')
+            Invoke-WithArgs -Command @($venvPip) -Args @(
+                'install',
+                '--upgrade',
+                'onnxruntime-gpu==1.25.1'
+            )
             return $true
         }
         catch {
-            Write-Warning "Failed to install onnxruntime-gpu. Ensure a compatible NVIDIA driver is available if you expect GPU vocal separation. Falling back to the CPU build."
-            Invoke-WithArgs -Command @($venvPip) -Args @('install', 'onnxruntime>=1.23.2')
-            return $false
+            throw "Failed to install onnxruntime-gpu==1.25.1. GPU installs must not fall back to CPU onnxruntime because that hides CUDA provider failures."
         }
     } else {
-        if (Test-PipPackageInstalled -Name 'onnxruntime') {
-            Write-Host 'ONNX Runtime CPU package already installed. Skipping reinstall.'
-            return $true
+        if (Test-PipPackageInstalled -Name 'onnxruntime-gpu') {
+            Write-Host 'Removing GPU ONNX Runtime package for CPU install.'
+            try {
+                Invoke-WithArgs -Command @($venvPip) -Args @('uninstall', '-y', 'onnxruntime-gpu') | Out-Null
+            }
+            catch {
+                Write-Warning "Unable to uninstall GPU onnxruntime package cleanly: $_"
+            }
         }
 
         Write-Host "Installing ONNX Runtime CPU package"
-        Invoke-WithArgs -Command @($venvPip) -Args @('install', 'onnxruntime>=1.23.2')
+        Invoke-WithArgs -Command @($venvPip) -Args @('install', '--upgrade', 'onnxruntime==1.25.1')
         return $true
     }
 }
 
-function Test-CudaToolkitInstalled {
-    $cudaPath = $env:CUDA_PATH
-    if ($cudaPath -and (Test-Path $cudaPath)) {
-        return $true
+function Get-NvidiaDriverVersion {
+    if (-not (Get-Command nvidia-smi.exe -ErrorAction SilentlyContinue)) {
+        return $null
     }
 
-    $defaultCudaRoot = 'C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA'
-    if (Test-Path $defaultCudaRoot) {
-        return $true
-    }
-
-    if (Get-Command nvcc.exe -ErrorAction SilentlyContinue) {
-        return $true
-    }
-
-    return $false
-}
-
-function Ensure-CudaToolkit {
-    param (
-        [switch] $Silent
-    )
-
-    if (Test-CudaToolkitInstalled) {
-        Write-Host 'CUDA toolkit already present'
-        return $true
-    }
-
-    if (-not (Get-Command winget.exe -ErrorAction SilentlyContinue)) {
-        Write-Warning 'winget not available. Install NVIDIA CUDA manually from https://developer.nvidia.com/cuda-downloads'
-        return $false
-    }
-
-    Write-Host 'Installing NVIDIA CUDA toolkit via winget'
     try {
-        $arguments = @(
-            'install',
-            '--id', 'NVIDIA.CUDA',
-            '-e',
-            '--accept-package-agreements',
-            '--accept-source-agreements'
-        )
-        if ($Silent) {
-            $arguments += '--silent'
+        $raw = & nvidia-smi.exe --query-gpu=driver_version --format=csv,noheader 2>$null |
+            Select-Object -First 1
+        $text = ($raw | Out-String).Trim()
+        if (-not $text) {
+            return $null
         }
-
-        Invoke-WithArgs -Command @('winget.exe') -Args $arguments
-        return $true
+        return [Version]$text
     }
     catch {
-        Write-Warning "Failed to install CUDA toolkit automatically. Install it manually from NVIDIA's website."
-        return $false
+        return $null
+    }
+}
+
+function Check-NvidiaDriverForRuntime {
+    param([Parameter(Mandatory = $true)][string]$CudaTag)
+
+    if ($CudaTag -eq '128') {
+        $minimum = [Version]'576.57'
+    } elseif ($CudaTag -eq '130') {
+        $minimum = [Version]'580.65'
+    } else {
+        return
+    }
+
+    $driver = Get-NvidiaDriverVersion
+    if ($null -eq $driver) {
+        Write-Warning "Unable to read NVIDIA driver version with nvidia-smi. Srtforge does not require CUDA Toolkit, but it does require an NVIDIA driver compatible with CUDA $CudaTag."
+        return
+    }
+
+    if ($driver -lt $minimum) {
+        Write-Warning "Detected NVIDIA driver $driver. CUDA $CudaTag runtime packages require driver $minimum or newer. Update the NVIDIA driver before running GPU jobs."
+    } else {
+        Write-Host "NVIDIA driver $driver satisfies the CUDA $CudaTag runtime floor ($minimum)."
     }
 }
 
@@ -965,20 +1050,18 @@ function Ensure-CudaToolkit {
 # that GPU installs can pull the CUDA-enabled PyTorch wheels up front.
 
 if ($selectedDevice -eq 'gpu') {
-    Start-StepTimer -Name "Ensure CUDA toolkit"
-    $cudaStepSucceeded = $true
+    Start-StepTimer -Name "Check NVIDIA driver"
+    $driverStepSucceeded = $true
     try {
-        if (-not (Ensure-CudaToolkit)) {
-            Write-Warning 'Continuing with GPU Python packages, but CUDA toolkit installation may be incomplete.'
-        }
+        Check-NvidiaDriverForRuntime -CudaTag $script:SelectedCudaTag
     }
     catch {
-        $cudaStepSucceeded = $false
+        $driverStepSucceeded = $false
         throw
     }
     finally {
-        $cudaStatus = if ($cudaStepSucceeded) { 'OK' } else { 'Failed' }
-        Stop-StepTimer -Name "Ensure CUDA toolkit" -Status $cudaStatus
+        $driverStatus = if ($driverStepSucceeded) { 'OK' } else { 'Failed' }
+        Stop-StepTimer -Name "Check NVIDIA driver" -Status $driverStatus
     }
 }
 
@@ -995,15 +1078,12 @@ finally {
     $onnxStatus = if ($onnxStepSucceeded) { 'OK' } else { 'Failed' }
     Stop-StepTimer -Name "Install ONNX Runtime" -Status $onnxStatus
 }
-if (-not $onnxGpuInstalled -and $selectedDevice -eq 'gpu') {
-    Write-Warning "Vocal separation is falling back to the CPU build of ONNX Runtime. Re-run the installer after fixing your CUDA driver to re-enable GPU separation."
-}
 
 # Install the local package in editable mode
 Start-StepTimer -Name "Editable install and import verification"
 $editableStepSucceeded = $true
 try {
-    Invoke-WithArgs -Command @($venvPip) -Args @('install', '-e', '.')
+    Invoke-WithArgs -Command @($venvPip) -Args @('install', '--no-deps', '-e', '.')
 
     $importCheckScript = @'
 import importlib
