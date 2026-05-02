@@ -5,6 +5,7 @@ from typing import Any
 import pytest
 
 from srtforge.engine_parakeet import (
+    _apply_cuda_precision_policy,
     _maybe_apply_cuda_force_float32,
     _maybe_apply_long_audio_settings,
     _maybe_apply_subsampling_conv_chunking_factor,
@@ -106,6 +107,48 @@ def test_transcribe_uses_audio_filepath_and_lang_argument() -> None:
     assert words
     assert captured["audio_filepath"] == "clip.wav"
     assert captured["lang"] == "fr"
+
+
+def test_transcribe_single_episode_suppresses_lhotse_and_verbose_output() -> None:
+    captured: dict[str, Any] = {}
+
+    class Model:
+        def transcribe(
+            self,
+            audio,
+            return_hypotheses=True,
+            timestamps=False,
+            batch_size=1,
+            use_lhotse=True,
+            num_workers=2,
+            verbose=True,
+        ):
+            captured.update(
+                {
+                    "audio": audio,
+                    "return_hypotheses": return_hypotheses,
+                    "timestamps": timestamps,
+                    "batch_size": batch_size,
+                    "use_lhotse": use_lhotse,
+                    "num_workers": num_workers,
+                    "verbose": verbose,
+                }
+            )
+            return [_Hypothesis("one"), _Hypothesis("two")]
+
+    transcript, words = _transcribe_with_timestamps(Model(), "episode.wav")
+
+    assert transcript == "one"
+    assert words
+    assert captured == {
+        "audio": "episode.wav",
+        "return_hypotheses": True,
+        "timestamps": True,
+        "batch_size": 1,
+        "use_lhotse": False,
+        "num_workers": 0,
+        "verbose": False,
+    }
 
 
 def test_transcribe_raises_runtime_error_when_no_audio_parameter() -> None:
@@ -493,3 +536,104 @@ def test_apply_cuda_force_float32_supported_vs_unsupported_hooks_do_not_crash(
     model = UnsupportedModel()
     _maybe_apply_cuda_force_float32(model, force_float32=True)
     assert getattr(model, "_parakeet_force_float32", False) is False
+
+
+def test_apply_cuda_precision_policy_uses_bfloat16_when_available(monkeypatch: pytest.MonkeyPatch) -> None:
+    import builtins
+
+    class FakeTorch:
+        class cuda:
+            @staticmethod
+            def is_available() -> bool:
+                return True
+
+            @staticmethod
+            def is_bf16_supported() -> bool:
+                return True
+
+        @staticmethod
+        def set_float32_matmul_precision(_value: str) -> None:
+            return
+
+        @staticmethod
+        def device(name: str) -> str:
+            return name
+
+        bfloat16 = "bfloat16"
+        float16 = "float16"
+
+    real_import = builtins.__import__
+
+    def fake_import(name, *args, **kwargs):
+        if name == "torch":
+            return FakeTorch
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+
+    class Model:
+        calls: list[tuple[object, object]] = []
+        dtype = None
+        device = None
+
+        def to(self, *, device=None, dtype=None):
+            self.calls.append((device, dtype))
+            self.device = device
+            self.dtype = dtype
+            return self
+
+    model = Model()
+    dtype = _apply_cuda_precision_policy(model, force_float32=False)
+
+    assert model.calls == [("cuda", "bfloat16")]
+    assert getattr(model, "_parakeet_precision_policy") == "bfloat16"
+    assert dtype == "bfloat16 on cuda"
+
+
+def test_apply_cuda_precision_policy_falls_back_to_float16(monkeypatch: pytest.MonkeyPatch) -> None:
+    import builtins
+
+    class FakeTorch:
+        class cuda:
+            @staticmethod
+            def is_available() -> bool:
+                return True
+
+            @staticmethod
+            def is_bf16_supported() -> bool:
+                return False
+
+        @staticmethod
+        def set_float32_matmul_precision(_value: str) -> None:
+            return
+
+        @staticmethod
+        def device(name: str) -> str:
+            return name
+
+        bfloat16 = "bfloat16"
+        float16 = "float16"
+
+    real_import = builtins.__import__
+
+    def fake_import(name, *args, **kwargs):
+        if name == "torch":
+            return FakeTorch
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+
+    class Model:
+        dtype = None
+        device = None
+
+        def to(self, *, device=None, dtype=None):
+            self.device = device
+            self.dtype = dtype
+            return self
+
+    model = Model()
+    dtype = _apply_cuda_precision_policy(model, force_float32=False)
+
+    assert getattr(model, "_parakeet_precision_policy") == "float16"
+    assert dtype == "float16 on cuda"

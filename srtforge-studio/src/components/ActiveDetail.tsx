@@ -7,9 +7,10 @@ import type { LogLine, QueueFile } from "../types";
 interface WaveProps {
   progress: number;
   active: boolean;
+  quiet?: boolean;
 }
 
-export const WaveformBig = ({ progress, active }: WaveProps) => {
+export const WaveformBig = ({ progress, active, quiet = false }: WaveProps) => {
   const N = 240;
   const bars = useMemo(() => {
     const arr: number[] = [];
@@ -22,6 +23,22 @@ export const WaveformBig = ({ progress, active }: WaveProps) => {
     }
     return arr;
   }, []);
+  if (quiet && active) {
+    return (
+      <div className="wave-canvas wave-canvas-static" role="img" aria-label="audio progress">
+        <div className="wave-static">
+          <span style={{ width: `${Math.max(0, Math.min(1, progress)) * 100}%` }} />
+        </div>
+        <div className="wave-axis">
+          <span>00:00</span>
+          <span>25%</span>
+          <span>50%</span>
+          <span>75%</span>
+          <span>100%</span>
+        </div>
+      </div>
+    );
+  }
   return (
     <div className="wave-canvas" role="img" aria-label="audio waveform">
       <svg width="100%" height="100%" preserveAspectRatio="none" viewBox={`0 0 ${N} 100`}>
@@ -96,13 +113,14 @@ export const StageList = ({ currentStage, paused }: StageListProps) => (
 interface LogsPanelProps {
   logs: LogLine[];
   height?: number;
+  quiet?: boolean;
 }
 
-export const LogsPanel = ({ logs, height = 220 }: LogsPanelProps) => {
+export const LogsPanel = ({ logs, height = 220, quiet = false }: LogsPanelProps) => {
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (ref.current) ref.current.scrollTop = ref.current.scrollHeight;
-  }, [logs]);
+  }, [logs, quiet]);
   return (
     <div className="logs" ref={ref} style={{ height }}>
       {logs.map((l, i) => (
@@ -121,9 +139,10 @@ interface DetailProps {
   paused: boolean;
   logs: LogLine[];
   expanded?: boolean;
+  quiet?: boolean;
 }
 
-export const ActiveDetail = ({ file, paused, logs, expanded }: DetailProps) => {
+export const ActiveDetail = ({ file, paused, logs, expanded, quiet = false }: DetailProps) => {
   const progress = file.progress;
   const currentStage = file.stage;
   return (
@@ -131,7 +150,11 @@ export const ActiveDetail = ({ file, paused, logs, expanded }: DetailProps) => {
       <div className="detail-top">
         <div className="detail-left">
           <h4>Active job · waveform &amp; vocal isolation</h4>
-          <WaveformBig progress={progress} active={!paused && file.status === "processing"} />
+          <WaveformBig
+            progress={progress}
+            active={!paused && file.status === "processing"}
+            quiet={quiet}
+          />
           <div className="detail-cols">
             <div>
               <h4>File</h4>
@@ -201,7 +224,7 @@ export const ActiveDetail = ({ file, paused, logs, expanded }: DetailProps) => {
             {logs.length} lines
           </span>
         </h4>
-        <LogsPanel logs={logs} />
+        <LogsPanel logs={logs} quiet={quiet} />
       </div>
     </div>
   );

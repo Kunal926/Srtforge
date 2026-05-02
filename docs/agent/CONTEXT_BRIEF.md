@@ -86,6 +86,17 @@ Both GUIs use the **same** stdin/stdout JSON-line worker protocol against
   `pwsh` -> Windows PowerShell fallback) or `bash ./scripts/check.sh` (Unix).
 - Codex layer check: `python scripts/check_docs.py` now validates `CODEX.md`,
   `.agents/skills/`, and `.codex/`.
+- Studio sidecar rebuilds: after any `srtforge/`, entry-shim, or PyInstaller
+  spec change, run `.\scripts\rebuild_studio_sidecar.ps1` before benchmarking
+  Tauri. The helper stops stale workers, rebuilds/copies the suffixed sidecar,
+  and runs the suffixed `gpu-smoke`.
+- Studio GPU throughput: focused Studio now matches the old PySide/CLI
+  baseline when the rebuilt sidecar is used, the window is opaque, WebView2 GPU
+  acceleration is disabled, and active-job UI rendering is quiet. Treat the
+  likely regression cause as a combination of stale sidecar plus foreground
+  WebView2/DWM compositing and high-frequency React/log/waveform repaint
+  pressure competing with CUDA. During GPU jobs, reintroduce design polish only
+  as static CSS/DOM, CPU-light state, or idle-only effects.
 
 ## Open gaps and follow-ups
 
@@ -100,12 +111,18 @@ Both GUIs use the **same** stdin/stdout JSON-line worker protocol against
 
 - **Windows file locking on the sidecar `.exe`.** Zombie worker processes
   break `pnpm tauri dev` rebuilds. Diagnose by running
-  `Get-Process srtforge_worker`.
+  `Get-Process srtforge_worker`; the rebuild helper stops stale workers before
+  copying the sidecar.
+- **Studio foreground rendering can steal GPU headroom.** Keep active-job
+  Studio surfaces low cost: no WebView GPU acceleration, no transparent window,
+  no animated waveform/playhead/pulse loops, and no synthetic high-frequency
+  log events during FV4/ASR.
 - **PyInstaller fragility.** Always activate the project venv before
   running `pyinstaller`, and use `--clean` on spec changes.
-- **CUDA pin.** `cuda-python>=12.3,<13` is enforced at runtime; relaxing
-  this without verifying NeMo + ONNX Runtime CUDA EP compat will break the
-  Parakeet GPU path.
+- **CUDA runtime pin.** The supported packaged GPU stack targets CUDA 12.8
+  (`torch==2.11.0+cu128`, `onnxruntime-gpu==1.25.1`, `cuda-python==12.9.6`).
+  CUDA 13 remains experimental until `srtforge gpu-smoke` and real media
+  benchmarks prove NeMo + ONNX Runtime compatibility without shims.
 
 ## Canonical lightweight check
 

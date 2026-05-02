@@ -11,6 +11,7 @@ import json
 import logging
 from dataclasses import dataclass
 from pathlib import Path
+from time import monotonic
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 try:  # pragma: no cover - optional dependency
@@ -39,8 +40,30 @@ def _report_progress(callback: Optional[Callable[[float], None]], fraction: floa
         logger.debug("ASR progress callback failed", exc_info=True)
 
 
+def _report_timing(
+    callback: Optional[Callable[[str, float], None]],
+    label: str,
+    seconds: float,
+) -> None:
+    if callback is None:
+        return
+    try:
+        callback(label, seconds)
+    except Exception:
+        logger.debug("ASR timing callback failed", exc_info=True)
+
+
+def _report_diagnostic(callback: Optional[Callable[[str], None]], message: str) -> None:
+    if callback is None:
+        return
+    try:
+        callback(message)
+    except Exception:
+        logger.debug("ASR diagnostic callback failed", exc_info=True)
+
+
 LONG_AUDIO_THRESHOLD_S = 480.0
-DEFAULT_REL_POS_LOCAL_ATTN: Tuple[int, int] = (768, 768)
+DEFAULT_REL_POS_LOCAL_ATTN: Tuple[int, int] = (1280, 1280)
 
 
 @dataclass(frozen=True)
@@ -169,9 +192,6 @@ def _maybe_apply_cuda_force_float32(model: Any, *, force_float32: bool) -> None:
     if not force_float32:
         return
 
-    if getattr(model, "_parakeet_force_float32", False):
-        return
-
     try:
         import torch  # heavy; only inside worker process paths
     except Exception:
@@ -221,6 +241,81 @@ def _maybe_apply_cuda_force_float32(model: Any, *, force_float32: bool) -> None:
         logger.warning("force_float32 requested, but no supported CUDA fp32 hooks were available.")
 
 
+def _select_cuda_mixed_precision_dtype(torch_module: Any) -> Any:
+    try:
+        if hasattr(torch_module.cuda, "is_bf16_supported") and torch_module.cuda.is_bf16_supported():
+            return torch_module.bfloat16
+    except Exception:
+        logger.debug("Unable to query CUDA bf16 support; falling back to fp16.", exc_info=True)
+    return torch_module.float16
+
+
+def _dtype_name(dtype: Any) -> str:
+    if dtype is None:
+        return "unknown"
+    text = str(dtype)
+    return text.split(".")[-1] if "." in text else text
+
+
+def _describe_model_runtime_dtype(model: Any) -> str:
+    for getter_name in ("parameters", "buffers"):
+        getter = getattr(model, getter_name, None)
+        if not callable(getter):
+            continue
+        try:
+            for item in getter():
+                dtype = getattr(item, "dtype", None)
+                device = getattr(item, "device", None)
+                if dtype is not None:
+                    if device is not None:
+                        return f"{_dtype_name(dtype)} on {device}"
+                    return _dtype_name(dtype)
+        except Exception:
+            continue
+
+    dtype = getattr(model, "dtype", None)
+    device = getattr(model, "device", None)
+    if dtype is not None:
+        if device is not None:
+            return f"{_dtype_name(dtype)} on {device}"
+        return _dtype_name(dtype)
+    return "unknown"
+
+
+def _apply_cuda_precision_policy(model: Any, *, force_float32: bool) -> str:
+    try:
+        import torch  # heavy; only inside worker process paths
+    except Exception:
+        logger.warning("Unable to import torch while applying Parakeet precision policy.")
+        return _describe_model_runtime_dtype(model)
+
+    if not torch.cuda.is_available():
+        logger.info("CUDA is not available; leaving Parakeet precision unchanged.")
+        return _describe_model_runtime_dtype(model)
+
+    if force_float32:
+        _maybe_apply_cuda_force_float32(model, force_float32=True)
+        return _describe_model_runtime_dtype(model)
+
+    dtype = _select_cuda_mixed_precision_dtype(torch)
+    try:
+        torch.set_float32_matmul_precision("high")
+    except Exception:
+        logger.debug("torch.set_float32_matmul_precision('high') is unavailable.", exc_info=True)
+
+    try:
+        model.to(device=torch.device("cuda"), dtype=dtype)
+        setattr(model, "_parakeet_force_float32", False)
+        setattr(model, "_parakeet_precision_policy", _dtype_name(dtype))
+        logger.info("Applied Parakeet CUDA mixed precision preference: %s", _dtype_name(dtype))
+    except Exception:
+        logger.warning(
+            "force_float32=false requested, but moving Parakeet model to mixed precision failed; continuing with current dtype.",
+            exc_info=True,
+        )
+    return _describe_model_runtime_dtype(model)
+
+
 def _detect_cuda_available() -> bool:
     try:
         import torch  # heavy; only inside worker process paths
@@ -245,9 +340,16 @@ def load_parakeet_model(model_name: str, *, prefer_gpu: bool = True) -> Any:
     logger.info("Loading Parakeet model '%s' (device=%s)...", model_name, device)
 
     from .asr._nemo_compat import ensure_cuda_python_available, install_megatron_microbatch_stub
+    from .gpu_runtime import preload_onnxruntime_cuda_dlls
 
     install_megatron_microbatch_stub()
     if device == "cuda":
+        preload_error = preload_onnxruntime_cuda_dlls(prefer_gpu=True)
+        if preload_error:
+            raise RuntimeError(
+                "ONNX Runtime CUDA DLL preload failed before Parakeet startup: "
+                f"{preload_error}"
+            )
         ensure_cuda_python_available()
 
     from nemo.collections.asr.models import ASRModel, EncDecRNNTBPEModel  # type: ignore
@@ -360,7 +462,7 @@ def _enable_parakeet_timestamping(model: Any) -> None:
     # Apply the updated config to the model decoder (best-effort).
     if hasattr(model, "change_decoding_strategy"):
         try:
-            model.change_decoding_strategy(decoding_cfg=decoding_cfg)
+            model.change_decoding_strategy(decoding_cfg=decoding_cfg, verbose=False)
         except TypeError:
             try:
                 model.change_decoding_strategy(decoding_cfg)
@@ -884,7 +986,21 @@ def _resolve_language(model_name: str, language: str) -> str:
     return requested
 
 
-def _transcribe_with_timestamps(model: Any, audio_path: str, *, language: Optional[str] = None) -> Tuple[str, List[Dict[str, Any]]]:
+def _outputs_per_audio(outputs: Any) -> List[Any]:
+    if isinstance(outputs, tuple) and outputs and isinstance(outputs[0], (list, tuple)):
+        return list(outputs[0])
+    if isinstance(outputs, list):
+        return list(outputs)
+    return [outputs]
+
+
+def _transcribe_paths_once(
+    model: Any,
+    audio_paths: Sequence[str],
+    *,
+    language: Optional[str] = None,
+    batch_size: int = 1,
+) -> List[Tuple[str, List[Dict[str, Any]]]]:
     try:
         sig = inspect.signature(model.transcribe)
     except Exception:
@@ -903,11 +1019,15 @@ def _transcribe_with_timestamps(model: Any, audio_path: str, *, language: Option
 
     selected_audio_key: Optional[str] = None
     selected_audio_value: Any = None
+    paths = [str(path) for path in audio_paths]
+    if not paths:
+        return []
+
     for key, expects_list in audio_key_candidates:
         if key not in parameters:
             continue
         selected_audio_key = key
-        selected_audio_value = [audio_path] if expects_list else audio_path
+        selected_audio_value = paths if expects_list or len(paths) > 1 else paths[0]
         break
 
     if selected_audio_key is None:
@@ -923,7 +1043,13 @@ def _transcribe_with_timestamps(model: Any, audio_path: str, *, language: Option
         "return_hypotheses": True,
     }
     if sig and "batch_size" in sig.parameters:
-        transcribe_kwargs["batch_size"] = 1
+        transcribe_kwargs["batch_size"] = max(1, int(batch_size))
+    if sig and "use_lhotse" in sig.parameters:
+        transcribe_kwargs["use_lhotse"] = False
+    if sig and "num_workers" in sig.parameters:
+        transcribe_kwargs["num_workers"] = 0
+    if sig and "verbose" in sig.parameters:
+        transcribe_kwargs["verbose"] = False
     if language:
         if sig and "language" in sig.parameters:
             transcribe_kwargs["language"] = language
@@ -955,17 +1081,36 @@ def _transcribe_with_timestamps(model: Any, audio_path: str, *, language: Option
             f"Detected audio keys in signature: [{attempted_keys}]."
         ) from last_type_error
 
-    transcript = _extract_transcript_from_outputs(outputs)
-    words = _extract_words_from_outputs(outputs)
-    if not words and transcript:
-        try:
-            words = _derive_word_timestamps_with_alignment(model, audio_path, transcript, outputs=outputs)
-        except Exception as exc:
-            logger.warning(
-                "Parakeet was unable to provide/derive word timestamps (%s). Falling back to uniform timestamps.",
-                exc,
-            )
-            words = _fallback_word_timestamps_uniform(audio_path, transcript)
+    per_audio = _outputs_per_audio(outputs)
+    results: List[Tuple[str, List[Dict[str, Any]]]] = []
+    for idx, path in enumerate(paths):
+        output = per_audio[idx] if idx < len(per_audio) else outputs
+        transcript = _extract_transcript_from_outputs(output)
+        words = _extract_words_from_outputs(output)
+        if not words and transcript:
+            try:
+                words = _derive_word_timestamps_with_alignment(model, path, transcript, outputs=output)
+            except Exception as exc:
+                logger.warning(
+                    "Parakeet was unable to provide/derive word timestamps (%s). Falling back to uniform timestamps.",
+                    exc,
+                )
+                words = _fallback_word_timestamps_uniform(path, transcript)
+        results.append((transcript, words))
+
+    return results
+
+
+def _transcribe_with_timestamps(
+    model: Any,
+    audio_path: str,
+    *,
+    language: Optional[str] = None,
+) -> Tuple[str, List[Dict[str, Any]]]:
+    results = _transcribe_paths_once(model, [audio_path], language=language, batch_size=1)
+    if not results:
+        return "", []
+    transcript, words = results[0]
 
     return transcript, words
 
@@ -984,6 +1129,8 @@ def generate_optimized_events(
     rel_pos_local_attn: Optional[Sequence[int]] = None,
     subsampling_conv_chunking_factor: Optional[int] = None,
     progress_callback: Optional[Callable[[float], None]] = None,
+    timing_callback: Optional[Callable[[str, float], None]] = None,
+    diagnostic_callback: Optional[Callable[[str], None]] = None,
 ) -> List[Dict[str, Any]]:
     logger.info("Generating optimized events with Parakeet (NeMo)... model=%s language=%s", model_name, language)
     _report_progress(progress_callback, 0.0)
@@ -994,25 +1141,47 @@ def generate_optimized_events(
             "Parakeet option enabled: subsampling_conv_chunking_factor=%s",
             subsampling_conv_chunking_factor,
         )
+    started = monotonic()
     model = load_parakeet_model(model_name, prefer_gpu=prefer_gpu)
+    _report_timing(timing_callback, "parakeet_model_load_or_cache", monotonic() - started)
+    _report_diagnostic(
+        diagnostic_callback,
+        f"Parakeet runtime dtype after model load: {_describe_model_runtime_dtype(model)}",
+    )
     _report_progress(progress_callback, 0.05)
+    started = monotonic()
+    initial_dtype = _apply_cuda_precision_policy(model, force_float32=force_float32)
+    _report_diagnostic(
+        diagnostic_callback,
+        f"Parakeet runtime dtype after precision policy: {initial_dtype}",
+    )
     _maybe_apply_long_audio_settings(model, audio_path, rel_pos_local_attn=rel_pos_local_attn)
     _maybe_apply_subsampling_conv_chunking_factor(model, subsampling_conv_chunking_factor)
-    _maybe_apply_cuda_force_float32(model, force_float32=force_float32)
+    final_dtype = _apply_cuda_precision_policy(model, force_float32=force_float32)
+    _report_diagnostic(
+        diagnostic_callback,
+        f"Parakeet runtime dtype after long-audio settings: {final_dtype}",
+    )
+    _report_timing(timing_callback, "parakeet_runtime_settings", monotonic() - started)
     _report_progress(progress_callback, 0.10)
 
     resolved_language = _resolve_language(model_name, language)
+    started = monotonic()
     transcript, words = _transcribe_with_timestamps(model, audio_path, language=resolved_language)
+    _report_timing(timing_callback, "parakeet_transcribe_with_timestamps", monotonic() - started)
     _report_progress(progress_callback, 0.65)
     if not words and transcript:
         logger.warning("Parakeet returned no word timestamps; derived alignment may be required.")
 
     if word_timestamps_out:
+        started = monotonic()
         path = Path(word_timestamps_out)
         with path.open("w", encoding="utf-8") as fp:
             json.dump(words, fp, ensure_ascii=False, indent=2)
+        _report_timing(timing_callback, "parakeet_write_word_timestamps", monotonic() - started)
     _report_progress(progress_callback, 0.72)
 
+    started = monotonic()
     events = segment_smart_stream(words, pause_ms=pause_ms, max_chars=max_chars, max_dur_s=max_dur_s)
     _report_progress(progress_callback, 0.80)
     events = apply_global_start_offset(events, offset_ms=50)
@@ -1025,6 +1194,7 @@ def generate_optimized_events(
         _report_progress(progress_callback, 0.80 + 0.15 * (idx / total_events))
 
     events = enforce_timing_constraints(events, min_dur=1.0, min_gap=0.084)
+    _report_timing(timing_callback, "parakeet_event_shaping", monotonic() - started)
     _report_progress(progress_callback, 1.0)
     return events
 

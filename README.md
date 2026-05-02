@@ -54,9 +54,11 @@ is set before installing so NeMo can authenticate.
    Hugging Face access.
 5. Run the installer from an elevated PowerShell prompt if CUDA drivers are
    present, otherwise a normal prompt is fine. When a CUDA-capable GPU is
-   detected the script installs the matching `torch` wheels and the
-   `onnxruntime-gpu` package; otherwise it falls back to CPU builds and prints a
-   warning:
+   detected the script installs the supported CUDA 12.8 `torch` wheels and
+   `onnxruntime-gpu==1.25.1`; otherwise it falls back to CPU builds and prints a
+   warning. GPU installs require an NVIDIA driver compatible with CUDA 12.8
+   (Windows driver 576.57 or newer), but do not require the CUDA Toolkit or
+   `nvcc`:
    ```powershell
    ./install.ps1              # auto-detects GPU
    ./install.ps1 -Cpu         # force CPU wheels
@@ -76,6 +78,7 @@ is set before installing so NeMo can authenticate.
    ```powershell
    .\.venv\Scripts\Activate.ps1
    srtforge --help
+   srtforge gpu-smoke       # optional GPU runtime smoke check
    ```
 
 Both installers will download FV4 model assets into `./models`. Re-running the
@@ -117,10 +120,11 @@ separation:
   prefer_gpu: true
 ```
 
-Internally `FFmpegTooling.isolate_vocals` probes PyTorch for CUDA support and
-passes `use_autocast=True` to `audio_separator` when `onnxruntime-gpu` is
-present, logging whether CUDA, DirectML, or pure CPU execution is being used
-before the FV4 stem is rendered.
+Internally `FFmpegTooling.isolate_vocals` preloads ONNX Runtime CUDA/cuDNN DLLs
+from the packaged runtime, probes PyTorch for CUDA support, and passes
+`use_autocast=True` to `audio_separator` when `onnxruntime-gpu` exposes
+`CUDAExecutionProvider`. This keeps Studio bundles from depending on a system
+CUDA Toolkit install.
 
 ## Usage examples
 

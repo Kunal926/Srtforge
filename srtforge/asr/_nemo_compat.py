@@ -23,6 +23,7 @@ import importlib.util
 import math
 import sys
 import types
+from collections.abc import Iterable
 from importlib import metadata
 from threading import Lock
 from typing import Any, Optional
@@ -203,25 +204,46 @@ def install_megatron_microbatch_stub() -> None:
     _install_stub_module()
 
 
-def ensure_cuda_python_available(min_version: str = "12.3.0", max_version: str = "13.0.0") -> None:
+def _format_import_failure(module_name: str, exc: BaseException) -> str:
+    return f"{module_name} failed with {type(exc).__name__}: {exc}"
+
+
+def _import_first_available(module_names: Iterable[str]) -> None:
+    failures: list[str] = []
+    for module_name in module_names:
+        try:
+            importlib.import_module(module_name)
+            return
+        except ModuleNotFoundError as exc:
+            failures.append(_format_import_failure(module_name, exc))
+        except ImportError as exc:
+            failures.append(_format_import_failure(module_name, exc))
+        except OSError as exc:
+            failures.append(_format_import_failure(module_name, exc))
+
+    joined = "; ".join(failures) if failures else "no import attempts were made"
+    raise RuntimeError(joined)
+
+
+def ensure_cuda_python_available(min_version: str = "12.9.6", max_version: str = "13.0.0") -> None:
     """Validate that the ``cuda-python`` bindings are importable.
 
     Parameters
     ----------
     min_version:
-        Minimum acceptable version string.  Defaults to ``"12.3.0"`` which is
-        the level required by NeMo for CUDA graph conditional nodes.
+        Minimum acceptable version string. Defaults to ``"12.9.6"`` to match
+        the packaged CUDA 12.8 GPU runtime stack.
     max_version:
         First unsupported version string. Defaults to ``"13.0.0"`` to keep
         ``cuda-python`` below the CUDA 13 release line.
     """
 
     try:
-        importlib.import_module("cuda")
+        cuda_module = importlib.import_module("cuda")
     except ModuleNotFoundError as exc:  # pragma: no cover - exercised in tests
         raise RuntimeError(
-            "cuda-python>=12.3,<13 is required for GPU inference. Install it with "
-            "'pip install \"cuda-python>=12.3,<13\"' before running srtforge."
+            "cuda-python==12.9.6 is required for the packaged CUDA 12.8 GPU runtime. "
+            "Install the GPU constraints or run install.ps1 -Gpu before running srtforge."
         ) from exc
     except Exception as exc:  # pragma: no cover - defensive: unexpected failure
         raise RuntimeError(
@@ -229,26 +251,22 @@ def ensure_cuda_python_available(min_version: str = "12.3.0", max_version: str =
             "is working by reinstalling it with 'pip install --force-reinstall cuda-python'."
         ) from exc
 
-    try:
-        importlib.import_module("cuda.bindings.runtime")
-    except ModuleNotFoundError:
-        try:
-            importlib.import_module("cuda.cudart")
-        except ModuleNotFoundError as exc:  # pragma: no cover - exercised in tests
-            raise RuntimeError(
-                "cuda-python is installed but its CUDA runtime bindings are missing. "
-                "Install the NVIDIA CUDA Toolkit 12.3 or newer so that "
-                "cuda.bindings.runtime or cuda.cudart is available."
-            ) from exc
-        except Exception as exc:  # pragma: no cover - defensive: unexpected failure
-            raise RuntimeError(
-                "cuda-python failed to load the CUDA runtime bindings (cuda.cudart). "
-                "Ensure the NVIDIA CUDA Toolkit is installed and visible on your system PATH."
-            ) from exc
-    except Exception as exc:  # pragma: no cover - defensive: unexpected failure
+    cuda_version = getattr(cuda_module, "__version__", None)
+    if not cuda_version:
         raise RuntimeError(
-            "cuda-python failed to load the CUDA runtime bindings (cuda.bindings.runtime). "
-            "Ensure the NVIDIA CUDA Toolkit is installed and visible on your system PATH."
+            "cuda-python is importable, but cuda.__version__ is unavailable. "
+            "Reinstall cuda-python==12.9.6 and ensure the PyInstaller sidecar bundles "
+            "_cuda_bindings_redirector."
+        )
+
+    try:
+        _import_first_available(("cuda.bindings.runtime", "cuda.cudart"))
+        _import_first_available(("cuda.bindings.driver", "cuda.cuda"))
+        _import_first_available(("cuda.bindings.nvrtc", "cuda.nvrtc"))
+    except RuntimeError as exc:
+        raise RuntimeError(
+            "cuda-python failed to load the CUDA runtime bindings. "
+            f"Ensure the packaged CUDA Python runtime is installed correctly. Details: {exc}"
         ) from exc
 
     if Version is None:
@@ -264,12 +282,12 @@ def ensure_cuda_python_available(min_version: str = "12.3.0", max_version: str =
     if installed_version < required:
         raise RuntimeError(
             f"cuda-python>={min_version},<{max_version} is required, found version {installed_version}. "
-            "Upgrade with 'pip install --upgrade \"cuda-python<13\"'."
+            "Install the pinned CUDA 12.8 GPU constraints with cuda-python==12.9.6."
         )
     if installed_version >= maximum:
         raise RuntimeError(
             f"cuda-python>={min_version},<{max_version} is required, found version {installed_version}. "
-            "Install a CUDA 12.x compatible build with 'pip install --upgrade \"cuda-python<13\"'."
+            "Install the pinned CUDA 12.8 GPU constraints with cuda-python==12.9.6."
         )
 
 

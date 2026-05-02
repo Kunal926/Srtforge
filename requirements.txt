@@ -1,4 +1,8 @@
-# Runtime libs (install Torch + NeMo via installer after Torch)
+# Runtime libs.
+#
+# For the supported Windows GPU build, install through install.ps1 or apply
+# constraints-gpu-cu128.txt so Torch, ONNX Runtime, CUDA Python, NeMo, and the
+# separator share the same CUDA 12.8 runtime surface.
 # Typer's "all" extra was removed in v0.20.0; install the base package instead.
 typer>=0.12.3
 rich>=13.7.1
@@ -7,18 +11,15 @@ pyyaml>=6.0.1
 requests>=2.32.3
 # GUI runtime
 PySide6>=6.7.0
-# NeMo ASR depends on NumPy <2.0 today. Keep NumPy below 2.x so NeMo and the
-# audio-separator dependency resolver can agree.
-numpy>=1.24.0,<2.0.0
-pyarrow>=20.0.0,<21
+numpy>=2.0.0,<3.0.0
+pyarrow>=24.0.0,<25
 matplotlib>=3.8.0
 soundfile>=0.12.1
 watchdog>=4.0.0
-# audio-separator 0.31+ requires NumPy >=2.0, which conflicts with NeMo's
-# current NumPy constraint. Pin to the latest compatible release on NumPy 1.x.
-audio-separator>=0.30.2,<0.31.0
-cuda-python>=12.3,<13
-faster-whisper
-ctranslate2==4.6.3
+audio-separator==0.44.1
+cuda-python==12.9.6
+cuda-bindings==12.9.6
+faster-whisper==1.2.1
+ctranslate2==4.7.1
 google-genai
-nemo_toolkit[asr]>=2.5.1,<2.6
+nemo_toolkit[asr]==2.7.3

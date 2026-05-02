@@ -19,7 +19,7 @@ whisper:
     settings = load_settings(config_path)
 
     assert settings.whisper.force_float32 is False
-    assert settings.whisper.rel_pos_local_attn == [768, 768]
+    assert settings.whisper.rel_pos_local_attn == [1280, 1280]
     # Default for ``subsampling_conv_chunking_factor`` is 0 (no chunking).
     # Match the dataclass default in ``srtforge.settings.WhisperSettings``.
     assert settings.whisper.subsampling_conv_chunking_factor == 0
@@ -65,3 +65,43 @@ whisper:
     assert settings.whisper.force_float32 is True
     assert settings.whisper.rel_pos_local_attn == [1200, 300]
     assert settings.whisper.subsampling_conv_chunking_factor == 6
+
+
+def test_load_settings_migrates_legacy_parakeet_block(tmp_path: Path) -> None:
+    config_path = tmp_path / "legacy-parakeet.yaml"
+    config_path.write_text(
+        """
+parakeet:
+  force_float32: false
+  prefer_gpu: true
+  rel_pos_local_attn:
+    - 1280
+    - 1280
+  subsampling_conv_chunking: true
+""".strip()
+    )
+
+    settings = load_settings(config_path)
+
+    assert settings.whisper.force_float32 is False
+    assert settings.whisper.rel_pos_local_attn == [1280, 1280]
+    assert settings.whisper.subsampling_conv_chunking_factor == 1
+
+
+def test_load_settings_prefers_explicit_whisper_over_legacy_parakeet(tmp_path: Path) -> None:
+    config_path = tmp_path / "mixed.yaml"
+    config_path.write_text(
+        """
+whisper:
+  rel_pos_local_attn: [1024, 512]
+  subsampling_conv_chunking_factor: 0
+parakeet:
+  rel_pos_local_attn: [1280, 1280]
+  subsampling_conv_chunking: true
+""".strip()
+    )
+
+    settings = load_settings(config_path)
+
+    assert settings.whisper.rel_pos_local_attn == [1024, 512]
+    assert settings.whisper.subsampling_conv_chunking_factor == 0

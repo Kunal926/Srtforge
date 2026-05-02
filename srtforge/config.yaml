@@ -17,7 +17,7 @@ whisper:
   model: nvidia/parakeet-tdt-0.6b-v2
   language: en
   force_float32: false
-  rel_pos_local_attn: [768, 768]
+  rel_pos_local_attn: [1280, 1280]
   subsampling_conv_chunking_factor: 0
 gemini:
   enabled: false
