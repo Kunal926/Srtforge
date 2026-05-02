@@ -256,9 +256,12 @@ Latest Studio UI/log cleanup:
 
 - Branch: `codex-windows-agent-layer`.
 - Upstream: `origin/codex-windows-agent-layer`.
-- Working tree has uncommitted GPU runtime stack changes plus Parakeet ASR
-  timing diagnostics.
-- Latest pushed commit before this work: `068e909 docs: record successful push`.
+- Latest implementation push: `dded575 studio: restore cuda throughput`.
+- `dded575` is pushed to `origin/codex-windows-agent-layer`.
+- Working tree was clean immediately after the implementation push; this
+  handoff record is being committed and pushed separately.
+- Latest pushed commit before the GPU throughput work:
+  `068e909 docs: record successful push`.
 
 ## Changed files
 
@@ -513,6 +516,19 @@ Docs and project context:
   warnings were printed.
 - `.\.venv\Scripts\python.exe scripts\check_docs.py` after refreshing the
   project map - pass; `docs check OK`.
+- `git branch --show-current` before push - pass;
+  `codex-windows-agent-layer`, not `main`.
+- Pre-push remote/config token scan - pass; no token-like remote or branch
+  config entries found.
+- `git diff --cached --check` before commit - pass.
+- `git commit -m "studio: restore cuda throughput"` - pass; created
+  `dded575`.
+- `git push -u origin codex-windows-agent-layer` - pass; pushed
+  `068e909..dded575` to GitHub and set upstream tracking.
+- Post-push `git remote -v` - pass; `origin` remains
+  `https://github.com/StiensGate928/Srtforge.git`.
+- Post-push remote/config token scan - pass; no token-like remote or branch
+  config entries found.
 
 ## Skipped checks and why
 
