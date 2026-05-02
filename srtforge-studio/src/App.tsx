@@ -26,7 +26,11 @@ import {
   pickFolder,
   probeFile,
 } from "./lib/tauri";
-import { buildWorkerConfig, computeOutputPath } from "./lib/workerConfig";
+import {
+  buildWorkerConfig,
+  computeOutputPath,
+  computeSidecarOutputPath,
+} from "./lib/workerConfig";
 import { useUi } from "./store";
 
 export const App = () => {
@@ -56,12 +60,18 @@ export const App = () => {
   const selectedId = useUi((s) => s.selectedId);
 
   const [over, setOver] = useState(false);
+  const gpuPerformanceMode =
+    settings.gpuPerformanceMode && files.some((f) => f.status === "processing");
 
-  // Apply theme + density attributes on root.
+  // Apply theme, density, and active-GPU-job attributes on root.
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
     document.documentElement.setAttribute("data-density", density);
-  }, [theme, density]);
+    document.documentElement.setAttribute(
+      "data-gpu-performance",
+      gpuPerformanceMode ? "active" : "idle",
+    );
+  }, [theme, density, gpuPerformanceMode]);
 
   // Subscribe to worker events for the lifetime of the app.
   useEffect(() => {
@@ -185,7 +195,9 @@ export const App = () => {
     if (!next) return;
     markSending(next.id);
     const cfg = buildWorkerConfig(settings);
-    const output = computeOutputPath(next.path, settings.outputDir) ?? undefined;
+    const output = settings.sidecarSrt
+      ? computeSidecarOutputPath(next.path) ?? undefined
+      : computeOutputPath(next.path, settings.outputDir) ?? undefined;
     enqueue(next.path, cfg, { id: next.id, output }).catch((e) => {
       showToast(`Failed to dispatch: ${e}`);
     });
@@ -196,7 +208,7 @@ export const App = () => {
 
   return (
     <div
-      className="win-shell"
+      className={`win-shell ${gpuPerformanceMode ? "gpu-max-mode" : ""}`}
       onDragOver={(e) => {
         e.preventDefault();
         setOver(true);
@@ -329,13 +341,21 @@ export const App = () => {
                 <>
                   <DropZone over={over} onAdd={onAddFiles} onAddFolder={onAddFolder} />
                   {layout === "hybrid" && <QueueTable files={visible} />}
-                  {layout === "card" && <QueueCards files={visible} />}
+                  {layout === "card" && (
+                    <QueueCards files={visible} quiet={gpuPerformanceMode} />
+                  )}
                 </>
               ))}
 
             {active === "active" &&
               (activeFile && activeFile.status === "processing" ? (
-                <ActiveDetail file={activeFile} paused={paused} logs={logs} expanded />
+                <ActiveDetail
+                  file={activeFile}
+                  paused={paused}
+                  logs={logs}
+                  expanded
+                  quiet={gpuPerformanceMode}
+                />
               ) : (
                 <EmptyState
                   icon={<I.Wave size={32} />}

@@ -106,8 +106,8 @@ const fileExt = (n: string) => (n.split(".").pop() ?? "").toUpperCase();
 
 interface OutputMenuProps {
   onPick: (kind: LocateKind) => void;
-  /** Anchor coordinates in viewport space (right + top of the button). */
-  anchor: { right: number; top: number };
+  /** Anchor coordinates in viewport space. Opens upward near the footer. */
+  anchor: { right: number; top?: number; bottom?: number };
 }
 
 // Rendered with `position: fixed` against viewport coords so the menu
@@ -119,6 +119,7 @@ const OutputMenu = ({ onPick, anchor }: OutputMenuProps) => (
       position: "fixed",
       right: anchor.right,
       top: anchor.top,
+      bottom: anchor.bottom,
     }}
     onClick={(e) => e.stopPropagation()}
   >
@@ -142,10 +143,11 @@ interface OutputSplitProps {
 }
 
 export const OutputSplitButton = ({ onLocate }: OutputSplitProps) => {
-  const [anchor, setAnchor] = useState<{ right: number; top: number } | null>(
+  const [anchor, setAnchor] = useState<OutputMenuProps["anchor"] | null>(
     null,
   );
   const btnRef = useRef<HTMLButtonElement>(null);
+  const menuHeight = 152;
   useEffect(() => {
     if (!anchor) return;
     const close = () => setAnchor(null);
@@ -174,10 +176,20 @@ export const OutputSplitButton = ({ onLocate }: OutputSplitProps) => {
           }
           const r = btnRef.current?.getBoundingClientRect();
           if (!r) return;
-          setAnchor({
-            right: window.innerWidth - r.right,
-            top: r.bottom + 4,
-          });
+          const right = Math.max(8, window.innerWidth - r.right);
+          const top = r.bottom + 4;
+          const opensPastViewport = top + menuHeight > window.innerHeight - 8;
+          setAnchor(
+            opensPastViewport && r.top > menuHeight
+              ? {
+                  right,
+                  bottom: window.innerHeight - r.top + 4,
+                }
+              : {
+                  right,
+                  top: Math.max(8, Math.min(top, window.innerHeight - menuHeight - 8)),
+                },
+          );
         }}
       >
         <I.FolderOpen size={14} />
@@ -261,9 +273,16 @@ interface SparklineProps {
   active: boolean;
   height?: number;
   seed?: number;
+  quiet?: boolean;
 }
 
-export const Sparkline = ({ progress, active, height = 44, seed = 7 }: SparklineProps) => {
+export const Sparkline = ({
+  progress,
+  active,
+  height = 44,
+  seed = 7,
+  quiet = false,
+}: SparklineProps) => {
   const N = 96;
   const bars = useMemo(() => {
     const arr: number[] = [];
@@ -276,6 +295,13 @@ export const Sparkline = ({ progress, active, height = 44, seed = 7 }: Sparkline
     }
     return arr;
   }, [seed]);
+  if (quiet && active) {
+    return (
+      <div className="wave wave-static-small" style={{ height }}>
+        <span style={{ width: `${Math.max(0, Math.min(1, progress)) * 100}%` }} />
+      </div>
+    );
+  }
   return (
     <div className="wave" style={{ height }}>
       <svg width="100%" height="100%" preserveAspectRatio="none" viewBox={`0 0 ${N} 100`}>
@@ -315,9 +341,10 @@ export const Sparkline = ({ progress, active, height = 44, seed = 7 }: Sparkline
 
 interface QueueCardsProps {
   files: QueueFile[];
+  quiet?: boolean;
 }
 
-export const QueueCards = ({ files }: QueueCardsProps) => {
+export const QueueCards = ({ files, quiet = false }: QueueCardsProps) => {
   const selectedId = useUi((s) => s.selectedId);
   const setSelectedId = useUi((s) => s.setSelectedId);
   return (
@@ -341,7 +368,11 @@ export const QueueCards = ({ files }: QueueCardsProps) => {
             </div>
             <StatusPill s={f.status} progress={f.progress} />
           </div>
-          <Sparkline progress={f.progress} active={f.status === "processing"} />
+          <Sparkline
+            progress={f.progress}
+            active={f.status === "processing"}
+            quiet={quiet}
+          />
           <div className="progress-row">
             <div className="progress" style={{ opacity: f.status === "queued" ? 0.35 : 1 }}>
               <span style={{ width: `${f.progress * 100}%` }} />

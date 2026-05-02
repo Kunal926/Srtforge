@@ -5,10 +5,11 @@
 // protocol — the same protocol the existing PySide6 GUI already uses
 // to talk to `python -m srtforge worker`.
 
+use std::collections::HashMap;
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
@@ -66,6 +67,8 @@ struct WorkerState {
     tx: Mutex<Option<mpsc::UnboundedSender<String>>>,
     /// Active Studio debug log for the currently-running worker job.
     debug_log: Arc<Mutex<Option<ActiveDebugLog>>>,
+    /// Studio-only per-job metadata used for debug-log diagnostics.
+    job_meta: Arc<Mutex<HashMap<String, StudioJobMeta>>>,
 }
 
 impl WorkerState {
@@ -74,6 +77,7 @@ impl WorkerState {
             child: Mutex::new(None),
             tx: Mutex::new(None),
             debug_log: Arc::new(Mutex::new(None)),
+            job_meta: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 }
@@ -84,6 +88,19 @@ struct ActiveDebugLog {
     file: std::fs::File,
 }
 
+#[derive(Debug, Clone)]
+struct StudioJobMeta {
+    gpu_performance_mode: bool,
+    enqueued_at: u64,
+}
+
+const WEBVIEW_GPU_ACCELERATION_DISABLED: bool = true;
+
+#[cfg(target_os = "windows")]
+const SIDECAR_EXE_NAME: &str = "srtforge_worker-x86_64-pc-windows-msvc.exe";
+#[cfg(not(target_os = "windows"))]
+const SIDECAR_EXE_NAME: &str = "srtforge_worker";
+
 /// Spawn the bundled `srtforge_worker` sidecar and start the I/O pumps.
 /// Called once at app startup; safe to call again to recover from a crash.
 fn spawn_worker(app: &AppHandle, state: &WorkerState) -> anyhow::Result<()> {
@@ -91,6 +108,7 @@ fn spawn_worker(app: &AppHandle, state: &WorkerState) -> anyhow::Result<()> {
     if let Some(prev) = state.child.lock().take() {
         let _ = prev.kill();
     }
+    state.job_meta.lock().clear();
 
     let mut sidecar = app
         .shell()
@@ -98,8 +116,9 @@ fn spawn_worker(app: &AppHandle, state: &WorkerState) -> anyhow::Result<()> {
         .map_err(|e| anyhow::anyhow!("sidecar lookup failed: {e}"))?
         // The bundled exe ships `python -m srtforge` as a whole; the
         // persistent stdin/stdout JSON loop lives behind the `worker`
-        // subcommand (see srtforge/cli.py).
-        .args(["worker"]);
+        // subcommand (see srtforge/cli.py). Studio sends job settings per
+        // request, so startup must not preload from root srtforge.config.
+        .args(["worker", "--no-preload"]);
 
     // Pin the worker's "project root" so it can find the `models/` folder
     // (FV4 ckpt + config). Inside a PyInstaller one-file bundle the package
@@ -154,14 +173,19 @@ fn spawn_worker(app: &AppHandle, state: &WorkerState) -> anyhow::Result<()> {
     // Inbound reader pump: each stdout line is forwarded to the frontend.
     let app_handle = app.clone();
     let debug_log = state.debug_log.clone();
+    let job_meta = state.job_meta.clone();
     tauri::async_runtime::spawn(async move {
+        let mut live_event_filter = LiveWorkerEventFilter::default();
         while let Some(ev) = rx.recv().await {
             match ev {
                 CommandEvent::Stdout(line_bytes) => {
                     let line = String::from_utf8_lossy(&line_bytes).to_string();
+                    let trimmed_line = line.trim_end();
                     // Worker emits one JSON object per line. We tolerate
                     // malformed lines by forwarding them raw under "log".
-                    let mut payload: serde_json::Value = serde_json::from_str::<WorkerEvent>(&line)
+                    let parsed_worker_event = serde_json::from_str::<WorkerEvent>(&line);
+                    let is_raw_log = parsed_worker_event.is_err();
+                    let mut payload: serde_json::Value = parsed_worker_event
                         .map(|ev| {
                             let mut map = ev.rest;
                             if let Some(name) = ev.event {
@@ -173,18 +197,26 @@ fn spawn_worker(app: &AppHandle, state: &WorkerState) -> anyhow::Result<()> {
                             serde_json::json!({
                                 "event": "log",
                                 "source": "stdout",
-                                "msg": line.trim_end()
+                                "msg": trimmed_line
                             })
                         });
-                    enrich_worker_payload(&mut payload, &debug_log);
-                    let _ = app_handle.emit("worker:event", payload);
+                    enrich_worker_payload(&mut payload, &debug_log, &job_meta);
+                    if (!is_raw_log || should_emit_live_terminal_line(trimmed_line))
+                        && live_event_filter.should_emit(&payload)
+                    {
+                        let _ = app_handle.emit("worker:event", payload);
+                    }
                 }
                 CommandEvent::Stderr(line_bytes) => {
                     let line = String::from_utf8_lossy(&line_bytes).to_string();
-                    let _ = app_handle.emit(
-                        "worker:event",
-                        log_payload_for_line(&debug_log, "stderr", Some("warn"), line.trim_end()),
-                    );
+                    let trimmed_line = line.trim_end();
+                    let payload =
+                        log_payload_for_line(&debug_log, "stderr", Some("warn"), trimmed_line);
+                    if should_emit_live_terminal_line(trimmed_line)
+                        && live_event_filter.should_emit(&payload)
+                    {
+                        let _ = app_handle.emit("worker:event", payload);
+                    }
                 }
                 CommandEvent::Terminated(payload) => {
                     let detail = payload.code.map(|code| format!("exit code {code}"));
@@ -199,6 +231,7 @@ fn spawn_worker(app: &AppHandle, state: &WorkerState) -> anyhow::Result<()> {
                             insert_string_field(map, "debug_log_path", path);
                         }
                     }
+                    job_meta.lock().clear();
                     let _ = app_handle.emit("worker:event", event_payload);
                     break;
                 }
@@ -433,9 +466,77 @@ fn insert_string_field(
     map.insert(key.into(), serde_json::Value::String(value));
 }
 
+fn expected_sidecar_binary_path() -> Option<PathBuf> {
+    if let Some(root) = find_dev_project_root() {
+        let dev_path = root
+            .join("srtforge-studio")
+            .join("src-tauri")
+            .join("binaries")
+            .join(SIDECAR_EXE_NAME);
+        if dev_path.exists() {
+            return Some(dev_path);
+        }
+    }
+    std::env::current_exe()
+        .ok()
+        .and_then(|path| path.parent().map(|parent| parent.join(SIDECAR_EXE_NAME)))
+}
+
+fn file_modified_unix(path: &PathBuf) -> Option<u64> {
+    std::fs::metadata(path)
+        .ok()?
+        .modified()
+        .ok()?
+        .duration_since(UNIX_EPOCH)
+        .ok()
+        .map(|duration| duration.as_secs())
+}
+
+fn append_studio_job_metadata(
+    debug_log: &Arc<Mutex<Option<ActiveDebugLog>>>,
+    job_id: &str,
+    job_meta: &Arc<Mutex<HashMap<String, StudioJobMeta>>>,
+) {
+    let meta = job_meta.lock().get(job_id).cloned();
+    let sidecar_path = expected_sidecar_binary_path();
+    let sidecar_path_text = sidecar_path
+        .as_ref()
+        .map(|path| path.display().to_string())
+        .unwrap_or_else(|| "unavailable".to_string());
+    let sidecar_modified_text = sidecar_path
+        .as_ref()
+        .and_then(file_modified_unix)
+        .map(|seconds| seconds.to_string())
+        .unwrap_or_else(|| "unavailable".to_string());
+    let max_cuda_text = meta
+        .as_ref()
+        .map(|value| {
+            if value.gpu_performance_mode {
+                "enabled"
+            } else {
+                "disabled"
+            }
+        })
+        .unwrap_or("unknown");
+    let enqueued_text = meta
+        .as_ref()
+        .map(|value| value.enqueued_at.to_string())
+        .unwrap_or_else(|| "unknown".to_string());
+    let webview_gpu_text = if WEBVIEW_GPU_ACCELERATION_DISABLED {
+        "disabled"
+    } else {
+        "enabled"
+    };
+    let line = format!(
+        "Studio runtime: max_cuda_mode={max_cuda_text} webview_gpu_acceleration={webview_gpu_text} sidecar_path={sidecar_path_text} sidecar_modified_unix={sidecar_modified_text} enqueued_unix={enqueued_text}"
+    );
+    let _ = append_active_debug_line(debug_log, Some(job_id), "studio", Some("info"), &line);
+}
+
 fn enrich_worker_payload(
     payload: &mut serde_json::Value,
     debug_log: &Arc<Mutex<Option<ActiveDebugLog>>>,
+    job_meta: &Arc<Mutex<HashMap<String, StudioJobMeta>>>,
 ) {
     let Some(map) = payload.as_object_mut() else {
         return;
@@ -460,6 +561,7 @@ fn enrich_worker_payload(
                 if let Some(path) = start_debug_log(debug_log, id, file.as_deref()) {
                     insert_string_field(map, "debug_log_path", path);
                 }
+                append_studio_job_metadata(debug_log, id, job_meta);
             }
         }
         "log" => {
@@ -505,6 +607,9 @@ fn enrich_worker_payload(
             ) {
                 insert_string_field(map, "debug_log_path", path);
             }
+            if let Some(id) = job_id.as_deref() {
+                job_meta.lock().remove(id);
+            }
         }
         _ => {
             if let Some(id) = job_id.as_deref() {
@@ -539,6 +644,102 @@ fn log_payload_for_line(
     serde_json::Value::Object(map)
 }
 
+fn is_terminal_progress_line(msg: &str) -> bool {
+    let trimmed = msg.trim();
+    (trimmed.starts_with("Transcribing:")
+        && (trimmed.contains("it/s") || trimmed.contains("?it/s") || trimmed.contains("s/it")))
+        || (trimmed.contains("%|") && (trimmed.contains("it/s") || trimmed.contains("?it/s")))
+}
+
+fn should_emit_live_terminal_line(msg: &str) -> bool {
+    let trimmed = msg.trim();
+    !trimmed.is_empty()
+}
+
+#[derive(Default)]
+struct LiveWorkerEventFilter {
+    last_progress_job: Option<String>,
+    last_progress_stage: Option<String>,
+    last_progress_at: Option<Instant>,
+    last_log_at: Option<Instant>,
+}
+
+impl LiveWorkerEventFilter {
+    fn should_emit(&mut self, payload: &serde_json::Value) -> bool {
+        match payload.get("event").and_then(serde_json::Value::as_str) {
+            Some("progress") => self.should_emit_progress(payload),
+            Some("log") => self.should_emit_log(payload),
+            _ => true,
+        }
+    }
+
+    fn should_emit_progress(&mut self, payload: &serde_json::Value) -> bool {
+        let Some(fraction) = payload
+            .get("fraction")
+            .or_else(|| payload.get("progress"))
+            .and_then(serde_json::Value::as_f64)
+        else {
+            return true;
+        };
+
+        let job = payload
+            .get("id")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        let stage = payload
+            .get("stage")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+
+        let job_changed = self.last_progress_job.as_deref() != Some(job.as_str());
+        let stage_changed = self.last_progress_stage.as_deref() != Some(stage.as_str());
+        let enough_time = self
+            .last_progress_at
+            .map(|last| last.elapsed() >= Duration::from_secs(1))
+            .unwrap_or(true);
+
+        if job_changed || stage_changed || fraction >= 1.0 || enough_time {
+            self.last_progress_job = Some(job);
+            self.last_progress_stage = Some(stage);
+            self.last_progress_at = Some(Instant::now());
+            return true;
+        }
+
+        false
+    }
+
+    fn should_emit_log(&mut self, payload: &serde_json::Value) -> bool {
+        let msg = payload
+            .get("msg")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default();
+        let lvl = payload
+            .get("lvl")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        if is_terminal_progress_line(msg)
+            || lvl.contains("warn")
+            || lvl.contains("err")
+            || lvl.contains("error")
+        {
+            return true;
+        }
+
+        let enough_time = self
+            .last_log_at
+            .map(|last| last.elapsed() >= Duration::from_secs(1))
+            .unwrap_or(true);
+        if enough_time {
+            self.last_log_at = Some(Instant::now());
+            return true;
+        }
+        false
+    }
+}
+
 #[tauri::command]
 fn enqueue(
     state: State<'_, WorkerState>,
@@ -551,7 +752,19 @@ fn enqueue(
     // the Tauri shell, the React store, and the Python worker all agree
     // on the same id from the moment the user clicks "Add files".
     let id = id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-    send_to_worker(
+    let gpu_performance_mode = config
+        .get("studio")
+        .and_then(|studio| studio.get("gpu_performance_mode"))
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(true);
+    state.job_meta.lock().insert(
+        id.clone(),
+        StudioJobMeta {
+            gpu_performance_mode,
+            enqueued_at: now_unix_seconds(),
+        },
+    );
+    let send_result = send_to_worker(
         &state,
         &WorkerRequest::Transcribe {
             id: id.clone(),
@@ -559,7 +772,11 @@ fn enqueue(
             output,
             config,
         },
-    )?;
+    );
+    if send_result.is_err() {
+        state.job_meta.lock().remove(&id);
+    }
+    send_result?;
     Ok(id)
 }
 
@@ -837,7 +1054,10 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::{debug_log_filename, format_debug_log_line, sanitize_debug_log_token};
+    use super::{
+        debug_log_filename, format_debug_log_line, is_terminal_progress_line,
+        sanitize_debug_log_token, should_emit_live_terminal_line, LiveWorkerEventFilter,
+    };
 
     #[test]
     fn debug_log_filename_sanitizes_job_id() {
@@ -862,5 +1082,75 @@ mod tests {
             format_debug_log_line("stdout", None, "plain"),
             "[stdout] plain\n"
         );
+    }
+
+    #[test]
+    fn terminal_progress_lines_are_forwarded_raw() {
+        let separator_line = " 57%|#####7    | 102/178 [00:56<00:42,  1.79it/s]";
+        let transcribe_line = "Transcribing: 1it [04:35, 275.00s/it]";
+
+        assert!(is_terminal_progress_line(separator_line));
+        assert!(is_terminal_progress_line(transcribe_line));
+        assert!(should_emit_live_terminal_line(separator_line));
+        assert!(should_emit_live_terminal_line(transcribe_line));
+        assert!(should_emit_live_terminal_line(
+            "FV4 separation is running with CUDA acceleration"
+        ));
+    }
+
+    #[test]
+    fn live_worker_filter_throttles_progress_updates() {
+        let mut filter = LiveWorkerEventFilter::default();
+
+        assert!(filter.should_emit(&serde_json::json!({
+            "event": "progress",
+            "id": "job-1",
+            "stage": "separation",
+            "fraction": 0.10
+        })));
+        assert!(!filter.should_emit(&serde_json::json!({
+            "event": "progress",
+            "id": "job-1",
+            "stage": "separation",
+            "fraction": 0.11
+        })));
+        assert!(filter.should_emit(&serde_json::json!({
+            "event": "progress",
+            "id": "job-1",
+            "stage": "asr",
+            "fraction": 0.12
+        })));
+        assert!(filter.should_emit(&serde_json::json!({
+            "event": "progress",
+            "id": "job-1",
+            "stage": "asr",
+            "fraction": 1.0
+        })));
+    }
+
+    #[test]
+    fn live_worker_filter_keeps_raw_progress_and_warnings() {
+        let mut filter = LiveWorkerEventFilter::default();
+
+        assert!(filter.should_emit(&serde_json::json!({
+            "event": "log",
+            "lvl": "info",
+            "msg": "loading model"
+        })));
+        assert!(!filter.should_emit(&serde_json::json!({
+            "event": "log",
+            "lvl": "info",
+            "msg": "another info line"
+        })));
+        assert!(filter.should_emit(&serde_json::json!({
+            "event": "log",
+            "lvl": "warn",
+            "msg": "worker warning"
+        })));
+        assert!(filter.should_emit(&serde_json::json!({
+            "event": "log",
+            "lvl": "info",
+            "msg": " 57%|#####7    | 102/178 [00:56<00:42,  2.15it/s]"
+        })));
     }
 }

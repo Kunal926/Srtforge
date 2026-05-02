@@ -1,0 +1,24 @@
+# Srtforge Windows GPU runtime lock: CUDA 12.8 user-distributed build.
+#
+# Use this constraints file with the PyTorch CUDA 12.8 wheel index:
+#
+#   pip install --index-url https://download.pytorch.org/whl/cu128 `
+#       --extra-index-url https://pypi.org/simple `
+#       -c constraints-gpu-cu128.txt torch torchvision torchaudio
+#   pip install -c constraints-gpu-cu128.txt -r requirements.txt
+#
+# End users need a compatible NVIDIA driver, not the CUDA Toolkit or nvcc.
+
+torch==2.11.0+cu128
+torchvision==0.26.0+cu128
+torchaudio==2.11.0+cu128
+onnxruntime-gpu==1.25.1
+cuda-python==12.9.6
+cuda-bindings==12.9.6
+nemo_toolkit==2.7.3
+audio-separator==0.44.1
+faster-whisper==1.2.1
+ctranslate2==4.7.1
+numpy==2.4.4
+pyarrow==24.0.0
+pyinstaller==6.20.0

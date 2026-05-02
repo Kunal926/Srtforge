@@ -14,6 +14,7 @@ from .config import FV4_CONFIG, FV4_MODEL, PACKAGE_ROOT, PROJECT_ROOT
 
 CONFIG_ENV_VAR = "SRTFORGE_CONFIG"
 DEFAULT_CONFIG_FILENAME = "config.yaml"
+DEFAULT_REL_POS_LOCAL_ATTN = [1280, 1280]
 
 # FFmpeg audio extraction mode values.
 #
@@ -153,7 +154,7 @@ class WhisperSettings:
     model: str = "nvidia/parakeet-tdt-0.6b-v2"
     language: str = "en"
     force_float32: bool = False
-    rel_pos_local_attn: list[int] = field(default_factory=lambda: [768, 768])
+    rel_pos_local_attn: list[int] = field(default_factory=lambda: list(DEFAULT_REL_POS_LOCAL_ATTN))
     subsampling_conv_chunking_factor: int = 0
 
 
@@ -238,6 +239,35 @@ def _merge_dataclass(instance: Any, data: dict[str, Any]) -> Any:
     return instance
 
 
+def _migrate_legacy_parakeet_settings(loaded: dict[str, Any]) -> dict[str, Any]:
+    """Map older top-level ``parakeet`` settings into the current ASR block."""
+
+    parakeet_payload = loaded.get("parakeet")
+    if not isinstance(parakeet_payload, dict):
+        return loaded
+
+    whisper_payload = loaded.get("whisper")
+    current_whisper = dict(whisper_payload) if isinstance(whisper_payload, dict) else {}
+    migrated_whisper = dict(current_whisper)
+
+    for key in ("force_float32", "rel_pos_local_attn"):
+        if key in parakeet_payload and key not in migrated_whisper:
+            migrated_whisper[key] = parakeet_payload[key]
+
+    if "subsampling_conv_chunking_factor" not in migrated_whisper:
+        if "subsampling_conv_chunking_factor" in parakeet_payload:
+            migrated_whisper["subsampling_conv_chunking_factor"] = parakeet_payload[
+                "subsampling_conv_chunking_factor"
+            ]
+        elif "subsampling_conv_chunking" in parakeet_payload:
+            enabled = _coerce_value(parakeet_payload.get("subsampling_conv_chunking"), bool)
+            migrated_whisper["subsampling_conv_chunking_factor"] = 1 if enabled else 0
+
+    patched = dict(loaded)
+    patched["whisper"] = migrated_whisper
+    return patched
+
+
 def load_settings(path: Optional[Path] = None) -> AppSettings:
     """Load configuration from ``path`` falling back to defaults."""
 
@@ -276,6 +306,7 @@ def load_settings(path: Optional[Path] = None) -> AppSettings:
                 loaded = dict(loaded)
                 loaded["ffmpeg"] = patched_ffmpeg
 
+            loaded = _migrate_legacy_parakeet_settings(loaded)
             _merge_dataclass(config, loaded)
 
     # Ensure FV4 paths default to package data when left relative
@@ -299,6 +330,7 @@ __all__ = [
     "FV4Settings",
     "WhisperSettings",
     "GeminiSettings",
+    "DEFAULT_REL_POS_LOCAL_ATTN",
     "PERSISTENT_CONFIG_FILENAME",
     "PERSISTENT_CONFIG_ENV_VAR",
     "get_persistent_config_path",

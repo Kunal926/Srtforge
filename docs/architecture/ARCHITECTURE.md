@@ -54,6 +54,8 @@ spilling into implementation detail. Implementation detail goes in
 - `ffmpeg.py` — `FFmpegTooling` with `probe_audio_streams`,
   `extract_audio_stream`, `isolate_vocals`, `preprocess_audio`,
   `normalize_audio`.
+- `gpu_runtime.py` — CUDA/ONNX Runtime preload, cache cleanup, and packaged
+  sidecar GPU smoke checks.
 - `engine_whisper.py`, `engine_parakeet.py` — ASR engines, picked by
   `whisper.engine` config (default: `parakeet`).
 - `post/` — Subtitle post-processing (segmenter, srt_utils).
@@ -145,6 +147,20 @@ spilling into implementation detail. Implementation detail goes in
   `requires_model`, `requires_cuda`, `requires_media`.
 - Integration / golden tests that need real assets must be marked.
 - CI runs only the lightweight default.
+
+### Studio must yield GPU headroom during CUDA jobs
+
+- FV4 separation and Parakeet ASR own the GPU while a worker job is active.
+  Studio UI polish is allowed, but active-job rendering must not compete with
+  CUDA for WebView/DWM GPU time.
+- The Windows Studio shell uses an opaque window and disables WebView2 GPU
+  acceleration. `gpuPerformanceMode` defaults on and switches active surfaces
+  to low-cost rendering: static progress surfaces, no playhead/pulse loops, and
+  throttled normal live updates.
+- Future design work can come back as idle-only effects or static CSS/DOM that
+  does not repaint every progress/log event. Avoid adding animated SVG/canvas
+  waveforms, gradient loops, or synthetic per-progress log events during active
+  FV4/ASR stages.
 
 ## Cross-cutting concerns
 

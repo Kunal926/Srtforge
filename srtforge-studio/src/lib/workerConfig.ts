@@ -12,7 +12,11 @@ export const buildWorkerConfig = (s: Settings): Record<string, unknown> => {
   // The Python worker treats Studio's "mkvtoolnix" label as "mkvmerge".
   const embedMethod =
     s.softEmbed === "mkvtoolnix" ? "mkvmerge" : s.softEmbed === "ffmpeg" ? "ffmpeg" : "auto";
+  const embedEnabled = s.embed;
   return {
+    studio: {
+      gpu_performance_mode: s.gpuPerformanceMode,
+    },
     prefer_gpu: preferGpu,
     separation_prefer_gpu: preferGpu,
     allow_untagged_english: s.allowUntaggedEnglish,
@@ -51,19 +55,28 @@ export const buildWorkerConfig = (s: Settings): Record<string, unknown> => {
     },
     output: {
       embed: {
-        enabled: s.embed,
+        enabled: embedEnabled,
         method: embedMethod,
         track_title: s.trackTitle,
         track_lang: s.trackLang,
         default: s.defaultTrack,
         forced: s.forcedTrack,
       },
-      replace_original: s.replaceOriginal,
-      burn: s.burn,
+      replace_original: embedEnabled && s.replaceOriginal,
+      burn: embedEnabled && s.burn,
       sidecar_srt: s.sidecarSrt,
     },
     style: s.style,
   };
+};
+
+const splitInputPath = (inputPath: string): { dir: string; stem: string } | null => {
+  const match = inputPath.match(/^(.*[\\/])?([^\\/]+)$/);
+  const base = match?.[2];
+  if (!base) return null;
+  const stem = base.replace(/\.[^.]+$/, "");
+  if (!stem) return null;
+  return { dir: match?.[1]?.replace(/[\\/]+$/, "") ?? "", stem };
 };
 
 /** Compute `<settings.outputDir>/<input-basename>.srt` so each job lands
@@ -74,12 +87,20 @@ export const computeOutputPath = (
   outputDir: string,
 ): string | null => {
   if (!outputDir.trim()) return null;
-  const base = inputPath.split(/[\\/]/).pop();
-  if (!base) return null;
-  const stem = base.replace(/\.[^.]+$/, "");
-  if (!stem) return null;
+  const parsed = splitInputPath(inputPath);
+  if (!parsed) return null;
   // Best-effort path joining: respect whichever separator the user typed.
   const sep = outputDir.includes("\\") ? "\\" : "/";
   const dir = outputDir.replace(/[\\/]+$/, "");
-  return `${dir}${sep}${stem}.srt`;
+  return `${dir}${sep}${parsed.stem}.srt`;
+};
+
+/** Compute `<input-dir>/<input-basename>.srt` for the "save next to video"
+ *  setting. Returns null when the input path is unparseable. */
+export const computeSidecarOutputPath = (inputPath: string): string | null => {
+  const parsed = splitInputPath(inputPath);
+  if (!parsed) return null;
+  if (!parsed.dir) return `${parsed.stem}.srt`;
+  const sep = parsed.dir.includes("\\") ? "\\" : "/";
+  return `${parsed.dir}${sep}${parsed.stem}.srt`;
 };

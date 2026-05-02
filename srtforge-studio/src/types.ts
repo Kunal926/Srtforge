@@ -42,6 +42,7 @@ export interface Settings {
   gpuPct: number;
   fp32: boolean;
   preferGpu: boolean;
+  gpuPerformanceMode: boolean;
   // Separation
   sep: "fv4" | "none";
   preferCenter: boolean;

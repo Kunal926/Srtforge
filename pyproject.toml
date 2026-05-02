@@ -17,14 +17,17 @@ dependencies = [
   "pyyaml>=6.0.1",
   "requests>=2.32.3",
   "PySide6>=6.7.0",
-  "numpy>=2.0.0",
-  "pyarrow>=20.0.0,<21",
+  "numpy>=2.0.0,<3.0.0",
+  "pyarrow>=24.0.0,<25",
   "matplotlib>=3.8.0",
   "soundfile>=0.12.1",
   "watchdog>=4.0.0",
-  "audio-separator>=0.39.0",
-  "cuda-python>=12.3,<13",
-  "faster-whisper",
+  "audio-separator==0.44.1",
+  "cuda-python==12.9.6",
+  "cuda-bindings==12.9.6",
+  "faster-whisper==1.2.1",
+  "ctranslate2==4.7.1",
+  "nemo_toolkit[asr]==2.7.3",
   "google-genai",
 ]
 
@@ -35,6 +38,16 @@ dev = [
   "pytest>=8.0",
   "pytest-cov>=5.0",
   "ruff>=0.5",
+]
+
+# Install this extra only with the PyTorch CUDA 12.8 wheel index. The Windows
+# installer handles that automatically; this is recorded here so packaging and
+# local installs share one version story.
+gpu-cu128 = [
+  "torch==2.11.0+cu128",
+  "torchvision==0.26.0+cu128",
+  "torchaudio==2.11.0+cu128",
+  "onnxruntime-gpu==1.25.1",
 ]
 
 [project.scripts]

@@ -64,12 +64,14 @@ def test_install_megatron_microbatch_stub_handles_missing_parent_package(monkeyp
 
 
 def test_ensure_cuda_python_available_happy_path(monkeypatch):
-    dummy_module = SimpleNamespace(__name__="cuda")
+    dummy_module = SimpleNamespace(__name__="cuda", __version__="12.9.6")
 
     monkeypatch.setitem(sys.modules, "cuda", dummy_module)
     original_import = importlib.import_module
 
     runtime_module = SimpleNamespace(__name__="cuda.bindings.runtime")
+    driver_module = SimpleNamespace(__name__="cuda.bindings.driver")
+    nvrtc_module = SimpleNamespace(__name__="cuda.bindings.nvrtc")
     import_calls: list[str] = []
 
     def fake_import(name, package=None):
@@ -78,6 +80,10 @@ def test_ensure_cuda_python_available_happy_path(monkeypatch):
             return dummy_module
         if name == "cuda.bindings.runtime":
             return runtime_module
+        if name == "cuda.bindings.driver":
+            return driver_module
+        if name == "cuda.bindings.nvrtc":
+            return nvrtc_module
         return original_import(name, package=package)
 
     monkeypatch.setattr(importlib, "import_module", fake_import)
@@ -85,17 +91,19 @@ def test_ensure_cuda_python_available_happy_path(monkeypatch):
 
     def fake_version(package: str) -> str:
         if package == "cuda-python":
-            return "12.3.0"
+            return "12.9.6"
         return original_version(package)
 
     monkeypatch.setattr(_nemo_compat.metadata, "version", fake_version, raising=False)
 
     _nemo_compat.ensure_cuda_python_available()
     assert "cuda.bindings.runtime" in import_calls
+    assert "cuda.bindings.driver" in import_calls
+    assert "cuda.bindings.nvrtc" in import_calls
 
 
 def test_ensure_cuda_python_available_rejects_cuda_13(monkeypatch):
-    dummy_module = SimpleNamespace(__name__="cuda")
+    dummy_module = SimpleNamespace(__name__="cuda", __version__="13.0.0")
 
     monkeypatch.setitem(sys.modules, "cuda", dummy_module)
     original_import = importlib.import_module
@@ -137,8 +145,27 @@ def test_ensure_cuda_python_available_missing_module(monkeypatch):
         _nemo_compat.ensure_cuda_python_available()
 
 
-def test_ensure_cuda_python_available_missing_cudart(monkeypatch):
+def test_ensure_cuda_python_available_requires_cuda_version_attr(monkeypatch):
     dummy_module = SimpleNamespace(__name__="cuda")
+
+    monkeypatch.setitem(sys.modules, "cuda", dummy_module)
+    original_import = importlib.import_module
+
+    def fake_import(name, package=None):
+        if name == "cuda":
+            return dummy_module
+        return original_import(name, package=package)
+
+    monkeypatch.setattr(importlib, "import_module", fake_import)
+
+    with pytest.raises(RuntimeError) as excinfo:
+        _nemo_compat.ensure_cuda_python_available()
+
+    assert "cuda.__version__" in str(excinfo.value)
+
+
+def test_ensure_cuda_python_available_missing_cudart(monkeypatch):
+    dummy_module = SimpleNamespace(__name__="cuda", __version__="12.9.6")
 
     monkeypatch.setitem(sys.modules, "cuda", dummy_module)
     original_import = importlib.import_module

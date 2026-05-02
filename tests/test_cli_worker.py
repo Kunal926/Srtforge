@@ -118,7 +118,7 @@ def test_build_pipeline_config_preserves_zero_chunking_factor(monkeypatch, tmp_p
     test_settings.whisper.model = "nvidia/parakeet-tdt_ctc-110m"
     test_settings.whisper.language = "en"
     test_settings.whisper.force_float32 = False
-    test_settings.whisper.rel_pos_local_attn = [768, 768]
+    test_settings.whisper.rel_pos_local_attn = [1280, 1280]
     test_settings.whisper.subsampling_conv_chunking_factor = 1
 
     monkeypatch.setattr(cli, "load_settings", lambda: test_settings)
@@ -135,3 +135,51 @@ def test_build_pipeline_config_preserves_zero_chunking_factor(monkeypatch, tmp_p
     )
 
     assert config.parakeet_subsampling_conv_chunking_factor == 0
+
+
+def test_build_pipeline_config_disables_video_outputs_when_embed_off(monkeypatch, tmp_path):
+    media = tmp_path / "episode-output.mkv"
+    media.write_text("stub")
+
+    from srtforge.settings import AppSettings
+
+    monkeypatch.setattr(cli, "load_settings", lambda: AppSettings())
+
+    config = cli._build_pipeline_config(
+        media,
+        media.with_suffix(".srt"),
+        {
+            "output": {
+                "embed": {
+                    "enabled": False,
+                    "method": "mkvmerge",
+                    "default": True,
+                    "forced": True,
+                },
+                "burn": True,
+                "replace_original": True,
+            }
+        },
+        default_prefer_gpu=True,
+    )
+
+    assert config.embed_enabled is False
+    assert config.burn_enabled is False
+    assert config.replace_original is False
+
+
+def test_gpu_smoke_exits_nonzero_when_runtime_report_fails(monkeypatch):
+    from srtforge import gpu_runtime
+
+    monkeypatch.setattr(
+        gpu_runtime,
+        "collect_gpu_runtime_report",
+        lambda: {"ok": False, "errors": ["NeMo CUDA graphs with while loops are disabled"]},
+    )
+
+    result = runner.invoke(cli.app, ["gpu-smoke"])
+
+    assert result.exit_code == 1
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is False
+    assert "NeMo CUDA graphs" in payload["errors"][0]

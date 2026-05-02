@@ -19,7 +19,9 @@
         "minWidth": 1024,
         "minHeight": 700,
         "decorations": false,
-        "transparent": true,
+        "transparent": false,
+        "backgroundColor": "#202020",
+        "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --disable-gpu",
         "resizable": true,
         "center": true
       }

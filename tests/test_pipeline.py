@@ -185,7 +185,13 @@ def test_pipeline_parakeet_forwards_optimized_generation_fields(tmp_path, monkey
         subsampling_conv_chunking_factor: int,
         word_timestamps_out: str | None = None,
         progress_callback=None,
+        timing_callback=None,
+        diagnostic_callback=None,
     ):
+        if timing_callback is not None:
+            timing_callback("parakeet_transcribe_with_timestamps", 1.25)
+        if diagnostic_callback is not None:
+            diagnostic_callback("Parakeet runtime dtype after long-audio settings: bfloat16 on cuda:0")
         captured.update(
             {
                 "preprocessed": preprocessed,
@@ -223,9 +229,68 @@ def test_pipeline_parakeet_forwards_optimized_generation_fields(tmp_path, monkey
     result = Pipeline(config).run()
 
     assert not result.skipped
+    assert result.performance_log_path is not None
+    assert "ASR detail: parakeet_transcribe_with_timestamps - 1.25s" in (
+        result.performance_log_path.read_text(encoding="utf-8")
+    )
+    assert "ASR detail: Parakeet runtime dtype after long-audio settings: bfloat16 on cuda:0" in (
+        result.performance_log_path.read_text(encoding="utf-8")
+    )
     assert captured["model_name"] == config.whisper_model
     assert captured["language"] == config.whisper_language
     assert captured["prefer_gpu"] is False
     assert captured["force_float32"] is True
     assert captured["rel_pos_local_attn"] == [1024, 256]
     assert captured["subsampling_conv_chunking_factor"] == 4
+
+
+def test_pipeline_parakeet_prewarms_cuda_python_after_separation(tmp_path, monkeypatch):
+    media = tmp_path / "episode.mkv"
+    media.write_bytes(b"video")
+
+    tools = DummyTools()
+    prewarm_observations: list[list[tuple]] = []
+
+    def fake_generate(
+        preprocessed: str,
+        *,
+        model_name: str,
+        language: str,
+        prefer_gpu: bool,
+        force_float32: bool,
+        rel_pos_local_attn: list[int],
+        subsampling_conv_chunking_factor: int,
+        word_timestamps_out: str | None = None,
+        progress_callback=None,
+        timing_callback=None,
+        diagnostic_callback=None,
+    ):
+        return [{"start": 0.0, "end": 1.0, "text": "Hello", "words": []}]
+
+    def fake_write_srt(events, srt_path: str) -> None:
+        Path(srt_path).write_text("1\n00:00:00,000 --> 00:00:01,000\nHello\n\n")
+
+    def fake_ensure_cuda_python_available() -> None:
+        prewarm_observations.append(list(tools.calls))
+
+    monkeypatch.setattr("srtforge.engine_parakeet.generate_optimized_events", fake_generate)
+    monkeypatch.setattr("srtforge.engine_parakeet.get_parakeet_device_config", lambda *, prefer_gpu: ("cuda", "float16"))
+    monkeypatch.setattr("srtforge.asr._nemo_compat.ensure_cuda_python_available", fake_ensure_cuda_python_available)
+    monkeypatch.setattr("srtforge.gpu_runtime.preload_onnxruntime_cuda_dlls", lambda *, prefer_gpu: None)
+    monkeypatch.setattr("srtforge.post.srt_utils.write_srt", fake_write_srt)
+    monkeypatch.setattr("srtforge.pipeline._write_srt_with_diag", fake_write_srt)
+
+    config = PipelineConfig(
+        media_path=media,
+        tools=tools,
+        output_path=media.with_suffix(".srt"),
+        asr_engine="parakeet",
+        prefer_gpu=True,
+        separation_prefer_gpu=False,
+    )
+
+    result = Pipeline(config).run()
+
+    assert not result.skipped
+    assert [name for name, *_ in tools.calls] == ["extract", "isolate", "preprocess"]
+    assert prewarm_observations == [tools.calls.copy()]
