@@ -14,6 +14,7 @@ from rich.table import Table
 
 from .config import DEFAULT_OUTPUT_SUFFIX, FV4_CONFIG, FV4_MODEL, MODELS_DIR
 from .ffmpeg import DEFAULT_TOOLS, AudioStream, FFmpegTooling
+from .gpu_runtime import clear_accelerator_caches
 from .logging import RunLogger, emit_progress, get_console, status
 from .mux import (
     burn_subtitles,
@@ -319,14 +320,36 @@ class Pipeline:
                             filter_chain=filter_chain,
                         )
 
+                    with run_logger.step("Release separation GPU resources"):
+                        clear_accelerator_caches()
+
+                    engine = (self.config.asr_engine or "whisper").strip().lower()
+                    if engine in {"", "default"}:
+                        engine = "whisper"
+                    if engine == "parakeet" and self.config.prefer_gpu:
+                        with run_logger.step("Prepare Parakeet CUDA runtime", stage="asr"):
+                            from .asr._nemo_compat import ensure_cuda_python_available
+                            from .engine_parakeet import get_parakeet_device_config
+                            from .gpu_runtime import preload_onnxruntime_cuda_dlls
+
+                            device, _compute_type = get_parakeet_device_config(
+                                prefer_gpu=self.config.prefer_gpu,
+                            )
+                            if device == "cuda":
+                                preload_error = preload_onnxruntime_cuda_dlls(prefer_gpu=True)
+                                if preload_error:
+                                    raise RuntimeError(
+                                        "ONNX Runtime CUDA DLL preload failed before Parakeet startup: "
+                                        f"{preload_error}"
+                                    )
+                                ensure_cuda_python_available()
+                                run_logger.log("Parakeet CUDA Python bindings preloaded before ASR")
+
                     with status("Running ASR and subtitle post-processing"), run_logger.step(
                         "ASR pipeline", stage="asr"
                     ):
                         asr_progress = progress.callback("asr")
                         asr_progress(0.0)
-                        engine = (self.config.asr_engine or "whisper").strip().lower()
-                        if engine in {"", "default"}:
-                            engine = "whisper"
 
                         output_path.parent.mkdir(parents=True, exist_ok=True)
                         if self.config.dump_word_timestamps:
@@ -371,6 +394,20 @@ class Pipeline:
                                 "ASR engine: parakeet "
                                 f"device: {device} compute: {compute_type} model: {self.config.whisper_model}"
                             )
+                            run_logger.log(
+                                "Parakeet options: "
+                                f"rel_pos_local_attn={self.config.parakeet_rel_pos_local_attn} "
+                                "subsampling_conv_chunking_factor="
+                                f"{self.config.parakeet_subsampling_conv_chunking_factor} "
+                                f"force_float32={self.config.parakeet_force_float32}"
+                            )
+
+                            def _log_parakeet_timing(label: str, seconds: float) -> None:
+                                run_logger.log(f"ASR detail: {label} - {seconds:.2f}s")
+
+                            def _log_parakeet_diagnostic(message: str) -> None:
+                                run_logger.log(f"ASR detail: {message}")
+
                             events = generate_optimized_events(
                                 str(preprocessed),
                                 model_name=self.config.whisper_model,
@@ -385,6 +422,8 @@ class Pipeline:
                                     str(word_timestamps_path.resolve()) if word_timestamps_path else None
                                 ),
                                 progress_callback=asr_progress,
+                                timing_callback=_log_parakeet_timing,
+                                diagnostic_callback=_log_parakeet_diagnostic,
                             )
                             run_logger.log(f"Parakeet segments: {len(events)}")
                         else:

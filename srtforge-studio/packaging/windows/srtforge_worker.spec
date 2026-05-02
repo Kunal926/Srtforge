@@ -21,6 +21,7 @@
 
 # -*- mode: python ; coding: utf-8 -*-
 
+import importlib.util
 import os
 from PyInstaller.utils.hooks import collect_all, collect_submodules
 
@@ -37,6 +38,7 @@ PROJECT_ROOT = os.path.abspath(os.path.join(SPECPATH, "..", "..", ".."))
 # being run as `python -m srtforge`; PyInstaller runs the entry as a
 # top-level script, so we use a tiny shim with an absolute import.
 worker_entry = os.path.join(SPECPATH, "srtforge_worker_entry.py")
+cuda_redirector_hook = os.path.join(SPECPATH, "pyi_rth_cuda_bindings_redirector.py")
 
 datas = []
 binaries = []
@@ -81,6 +83,22 @@ for pkg in (
     except Exception as exc:
         print(f"[srtforge spec] skip collect_all({pkg!r}): {exc}")
 
+# cuda-python 12.x installs a top-level redirector and .pth file that make
+# `from cuda import __version__` and legacy trampoline imports work. PyInstaller
+# does not execute .pth files, so include the module explicitly and import it
+# from a runtime hook before NeMo's CUDA-graph checks run.
+hidden.append("_cuda_bindings_redirector")
+try:
+    redirector_spec = importlib.util.find_spec("_cuda_bindings_redirector")
+except Exception as exc:
+    print(f"[srtforge spec] skip CUDA redirector discovery: {exc}")
+else:
+    if redirector_spec and redirector_spec.origin and os.path.isfile(redirector_spec.origin):
+        datas.append((redirector_spec.origin, "."))
+        pth = os.path.join(os.path.dirname(redirector_spec.origin), "_cuda_bindings_redirector.pth")
+        if os.path.isfile(pth):
+            datas.append((pth, "."))
+
 # Optional: include nemo_toolkit if installed (only needed when the
 # Parakeet engine is selected at runtime).
 try:
@@ -113,7 +131,7 @@ a = Analysis(
     hiddenimports=hidden,
     hookspath=[],
     hooksconfig={},
-    runtime_hooks=[],
+    runtime_hooks=[cuda_redirector_hook],
     # IMPORTANT: exclude PySide6 — this build is the headless worker only.
     # matplotlib is NOT excluded: NeMo's ASR imports it at runtime for
     # spectrogram/debug helpers and the bundle fails with

@@ -69,7 +69,7 @@ srtforge-studio/
   "Desktop development with C++" workload
 - **WebView2 Runtime** — already installed on Windows 11; on Win10 install
   the [Evergreen runtime](https://developer.microsoft.com/en-us/microsoft-edge/webview2/)
-- **Python 3.11** with the existing Srtforge venv (used to build the sidecar)
+- **Python 3.12** with the existing Srtforge venv (used to build the sidecar)
 - **PyInstaller** — `pip install pyinstaller`
 
 ## One-time setup
@@ -97,17 +97,17 @@ behind a `cfg!(debug_assertions)` guard. Reload Rust.
 **Option B — build the sidecar once, then iterate on the UI:**
 
 ```powershell
-# From the Srtforge repo root, with the venv active:
-pyinstaller packaging\windows\srtforge_worker.spec `
-    --distpath ..\srtforge-studio\src-tauri\binaries
-
-# Tauri's sidecar lookup expects the Rust target triple suffix:
-cd ..\srtforge-studio\src-tauri\binaries
-ren srtforge_worker.exe srtforge_worker-x86_64-pc-windows-msvc.exe
-cd ..\..
-
+cd C:\Srtforge-lat\Srtforge
+.\.venv\Scripts\Activate.ps1
+.\scripts\rebuild_studio_sidecar.ps1
+cd .\srtforge-studio
 pnpm tauri dev
 ```
+
+The helper stops stale `srtforge_worker.exe` processes, builds the PyInstaller
+sidecar, copies it to Tauri's target-triple-suffixed filename, and runs the
+suffixed sidecar `gpu-smoke` check. Re-run it after any Python pipeline, entry
+shim, or PyInstaller spec change before comparing Studio performance.
 
 The Vite dev server runs on `http://localhost:1420`; Tauri will open the
 desktop window pointing at it. Edits to `src/**/*.tsx` hot-reload; edits to
@@ -143,6 +143,18 @@ before invoking pyinstaller:
 $env:SRTFORGE_FFMPEG_DIR = "C:\path\to\ffmpeg\bin"
 pyinstaller packaging\windows\srtforge_worker.spec --distpath ..\srtforge-studio\src-tauri\binaries
 ```
+
+The supported GPU sidecar stack is CUDA 12.8. Build from an environment
+installed through `install.ps1 -Gpu` or with `constraints-gpu-cu128.txt`, then
+run the sidecar smoke check before shipping:
+
+```powershell
+srtforge gpu-smoke
+```
+
+The smoke check must report PyTorch CUDA, ONNX Runtime `CUDAExecutionProvider`,
+`cuda.__version__`, and NeMo CUDA graph conditional-node support. End-user
+machines need a compatible NVIDIA driver, not the CUDA Toolkit.
 
 ## Worker JSON protocol
 
