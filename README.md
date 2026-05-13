@@ -119,7 +119,7 @@ and optional Gemini correction.
 and a PyInstaller one-dir Python worker sidecar. Studio communicates with the
 same `srtforge worker` JSON-line protocol used by the legacy GUI.
 
-![Empty Queue UI](srtforge/assets/images/Empty20%Queue.png)
+![Empty Queue UI](srtforge/assets/images/Empty%20Queue.png)
 Development workflow:
 
 ```powershell
