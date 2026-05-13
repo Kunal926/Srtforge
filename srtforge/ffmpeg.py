@@ -7,12 +7,14 @@ import json
 import os
 import shutil
 import subprocess
+import time
 import types
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, List, Mapping, Optional, Sequence
+from typing import Callable, Iterable, List, Mapping, Optional, Sequence
 
-from .logging import get_console
+from .logging import get_console, log_heartbeat
 from .gpu_runtime import preload_onnxruntime_cuda_dlls
 
 
@@ -374,75 +376,120 @@ class FFmpegTooling:
         config: Path,
         *,
         prefer_gpu: bool = True,
+        diagnostic_callback: Callable[[str], None] | None = None,
     ) -> Path:
         """Run MelBand Roformer separation to keep vocals only."""
 
         console = get_console()
 
-        try:
-            from audio_separator.separator import Separator
-        except ModuleNotFoundError as exc:  # pragma: no cover - explicit dependency message
-            missing = exc.name or ""
-            if missing.startswith("onnxruntime"):
-                raise RuntimeError(
-                    "audio-separator requires onnxruntime for vocal isolation. "
-                    "Install it with 'pip install onnxruntime' or re-run the installer."
-                ) from exc
-            raise RuntimeError(
-                "audio-separator is required for vocal isolation. "
-                "Re-run the installer or install the optional dependency manually."
-            ) from exc
-        except Exception as exc:  # pragma: no cover - import errors propagated
-            raise RuntimeError(
-                f"audio-separator failed to initialize for vocal isolation: {exc}"
-            ) from exc
-
-        # ``audio-separator`` stores intermediate data in output directory and returns the
-        # paths through ``Separator.separate()``. We keep the canonical stems location.
-        model_dir = model.parent
-        os.environ.setdefault("AUDIO_SEPARATOR_MODEL_DIR", str(model_dir))
-        target_config = model_dir / config.name
-        config_for_registration: Path | None = None
-        if config.exists() and not target_config.exists():
-            shutil.copyfile(config, target_config)
-            config_for_registration = target_config
-        elif target_config.exists():
-            config_for_registration = target_config
-        elif config.exists():
-            config_for_registration = config
-
-        torch_spec = importlib.util.find_spec("torch")
-        torch_module = None
-        torch_cuda_available = False
-        torch_cuda_probe_error: str | None = None
-        torch_cuda_built = False
-        if torch_spec is not None:
-            torch_module = importlib.import_module("torch")
-            if prefer_gpu:
-                try:
-                    torch_cuda_available = bool(torch_module.cuda.is_available())
-                except Exception as exc:  # pragma: no cover - defensive fallback if CUDA probing fails
-                    torch_cuda_probe_error = str(exc)
-                    torch_cuda_available = False
-            torch_version = getattr(torch_module, "version", None)
-            cuda_version = getattr(torch_version, "cuda", None)
-            torch_cuda_built = bool(cuda_version)
-
-        onnx_cuda_available = False
-        onnx_probe_error: str | None = None
-        if prefer_gpu:
-            onnx_probe_error = preload_onnxruntime_cuda_dlls(prefer_gpu=True)
-            try:
-                import onnxruntime as ort  # type: ignore
-            except ModuleNotFoundError:
-                onnx_probe_error = onnx_probe_error or "onnxruntime is not installed"
-            except Exception as exc:  # pragma: no cover - unexpected import failure
-                onnx_probe_error = onnx_probe_error or str(exc)
+        def diagnostic(message: str) -> None:
+            text = f"FV4 detail: {message}"
+            if diagnostic_callback is not None:
+                diagnostic_callback(text)
             else:
+                console.log(f"[dim]{text}[/dim]")
+
+        @contextmanager
+        def timed_detail(label: str):
+            started = time.perf_counter()
+            diagnostic(f"{label} started")
+            heartbeat_seconds = 30.0 if label in {"Separator model load", "Separator inference"} else 0.0
+            try:
+                with log_heartbeat(label, diagnostic, interval_seconds=heartbeat_seconds):
+                    yield
+            except Exception as exc:
+                elapsed = time.perf_counter() - started
+                diagnostic(
+                    f"{label} failed after {elapsed:.2f}s: {type(exc).__name__}: {exc}"
+                )
+                raise
+            else:
+                elapsed = time.perf_counter() - started
+                diagnostic(f"{label} finished in {elapsed:.2f}s")
+
+        with timed_detail("audio_separator import"):
+            try:
+                from audio_separator.separator import Separator
+            except ModuleNotFoundError as exc:  # pragma: no cover - explicit dependency message
+                missing = exc.name or ""
+                if missing.startswith("onnxruntime"):
+                    raise RuntimeError(
+                        "audio-separator requires onnxruntime for vocal isolation. "
+                        "Install it with 'pip install onnxruntime' or re-run the installer."
+                    ) from exc
+                raise RuntimeError(
+                    "audio-separator is required for vocal isolation. "
+                    "Re-run the installer or install the optional dependency manually."
+                ) from exc
+            except Exception as exc:  # pragma: no cover - import errors propagated
+                raise RuntimeError(
+                    f"audio-separator failed to initialize for vocal isolation: {exc}"
+                ) from exc
+
+        diagnostic(
+            "source="
+            f"{source} destination={destination} model={model} config={config} "
+            f"prefer_gpu={prefer_gpu}"
+        )
+
+        with timed_detail("separator runtime probe"):
+            # ``audio-separator`` stores intermediate data in output directory and returns the
+            # paths through ``Separator.separate()``. We keep the canonical stems location.
+            model_dir = model.parent
+            os.environ.setdefault("AUDIO_SEPARATOR_MODEL_DIR", str(model_dir))
+            target_config = model_dir / config.name
+            config_for_registration: Path | None = None
+            if config.exists() and not target_config.exists():
+                shutil.copyfile(config, target_config)
+                config_for_registration = target_config
+            elif target_config.exists():
+                config_for_registration = target_config
+            elif config.exists():
+                config_for_registration = config
+
+            torch_spec = importlib.util.find_spec("torch")
+            torch_module = None
+            torch_cuda_available = False
+            torch_cuda_probe_error: str | None = None
+            torch_cuda_built = False
+            if torch_spec is not None:
+                torch_module = importlib.import_module("torch")
+                if prefer_gpu:
+                    try:
+                        torch_cuda_available = bool(torch_module.cuda.is_available())
+                    except Exception as exc:  # pragma: no cover - defensive fallback if CUDA probing fails
+                        torch_cuda_probe_error = str(exc)
+                        torch_cuda_available = False
+                torch_version = getattr(torch_module, "version", None)
+                cuda_version = getattr(torch_version, "cuda", None)
+                torch_cuda_built = bool(cuda_version)
+
+            onnx_cuda_available = False
+            onnx_probe_error: str | None = None
+            if prefer_gpu:
+                onnx_probe_error = preload_onnxruntime_cuda_dlls(prefer_gpu=True)
                 try:
-                    onnx_cuda_available = "CUDAExecutionProvider" in set(ort.get_available_providers())
-                except Exception as exc:  # pragma: no cover - defensive fallback if provider probing fails
+                    import onnxruntime as ort  # type: ignore
+                except ModuleNotFoundError:
+                    onnx_probe_error = onnx_probe_error or "onnxruntime is not installed"
+                except Exception as exc:  # pragma: no cover - unexpected import failure
                     onnx_probe_error = onnx_probe_error or str(exc)
+                else:
+                    try:
+                        onnx_cuda_available = "CUDAExecutionProvider" in set(
+                            ort.get_available_providers()
+                        )
+                    except Exception as exc:  # pragma: no cover - defensive fallback if provider probing fails
+                        onnx_probe_error = onnx_probe_error or str(exc)
+
+        diagnostic(
+            "runtime probe result: "
+            f"torch_cuda_available={torch_cuda_available} "
+            f"torch_cuda_built={torch_cuda_built} "
+            f"onnx_cuda_available={onnx_cuda_available} "
+            f"torch_error={torch_cuda_probe_error or 'none'} "
+            f"onnx_error={onnx_probe_error or 'none'}"
+        )
 
         if prefer_gpu and torch_module is not None and not torch_cuda_available:
             if not torch_cuda_built:
@@ -464,21 +511,25 @@ class FFmpegTooling:
                 f"({onnx_probe_error})[/yellow]"
             )
 
-        separator = Separator(
-            model_file_dir=str(model_dir),
-            output_dir=str(destination.parent),
-            output_format="WAV",
-            output_single_stem="vocals",
-            use_autocast=bool(prefer_gpu and torch_cuda_available),
-        )
-        _ensure_separator_supports_model(separator, model, config_for_registration)
-        separator.load_model(model_filename=str(model.name))
+        with timed_detail("Separator construction"):
+            separator = Separator(
+                model_file_dir=str(model_dir),
+                output_dir=str(destination.parent),
+                output_format="WAV",
+                output_single_stem="vocals",
+                use_autocast=bool(prefer_gpu and torch_cuda_available),
+            )
+        with timed_detail("Separator model registration"):
+            _ensure_separator_supports_model(separator, model, config_for_registration)
+        with timed_detail("Separator model load"):
+            separator.load_model(model_filename=str(model.name))
         if torch_module is not None:
-            model_instance = getattr(separator, "model_instance", None)
-            if model_instance is not None:
-                module = getattr(model_instance, "model", model_instance)
-                if hasattr(module, "to"):
-                    module.to(dtype=torch_module.float32)
+            with timed_detail("Separator model float32 policy"):
+                model_instance = getattr(separator, "model_instance", None)
+                if model_instance is not None:
+                    module = getattr(model_instance, "model", model_instance)
+                    if hasattr(module, "to"):
+                        module.to(dtype=torch_module.float32)
 
         execution_providers = [prov for prov in getattr(separator, "onnx_execution_provider", []) or []]
         torch_device = getattr(separator, "torch_device", None)
@@ -497,7 +548,8 @@ class FFmpegTooling:
             console.log(
                 "[yellow]Vocal separation GPU preference disabled; forcing CPU execution."
             )
-        outputs = separator.separate(str(source))
+        with timed_detail("Separator inference"):
+            outputs = separator.separate(str(source))
         vocals_path: Optional[Path] = None
         for path_obj in _iter_separator_output_paths(outputs):
             if "vocals" not in path_obj.stem.lower():

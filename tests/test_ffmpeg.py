@@ -55,12 +55,22 @@ def test_isolate_vocals_accepts_mapping_outputs(tmp_path, monkeypatch):
     config.write_text("{}")
 
     tool = FFmpegTooling(ffmpeg_bin="true", ffprobe_bin="true")
+    diagnostics: list[str] = []
 
-    result = tool.isolate_vocals(source, destination, model, config, prefer_gpu=False)
+    result = tool.isolate_vocals(
+        source,
+        destination,
+        model,
+        config,
+        prefer_gpu=False,
+        diagnostic_callback=diagnostics.append,
+    )
 
     assert result == destination
     assert destination.exists()
     assert destination.read_text() == "stem"
+    assert any("FV4 detail: Separator model load finished" in line for line in diagnostics)
+    assert any("FV4 detail: Separator inference finished" in line for line in diagnostics)
 
 
 class _DummySeparatorRelative(_DummySeparator):

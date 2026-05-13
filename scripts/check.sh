@@ -58,11 +58,24 @@ has() { command -v "$1" >/dev/null 2>&1; }
 echo "Srtforge lightweight check"
 echo "  Repo root: $REPO_ROOT"
 echo "  Platform:  $(uname -srm)"
-if has python || has python3; then
+if [ -x "$REPO_ROOT/.venv/bin/python" ]; then
+    PY="$REPO_ROOT/.venv/bin/python"
+    PY_ENV="repo venv"
+elif [ -x "$REPO_ROOT/.venv/Scripts/python.exe" ]; then
+    PY="$REPO_ROOT/.venv/Scripts/python.exe"
+    PY_ENV="repo venv"
+elif has python || has python3; then
     PY=$(command -v python || command -v python3)
-    echo "  Python:    $($PY --version 2>&1)"
+    PY_ENV="PATH"
 else
     PY=""
+    PY_ENV="not found"
+fi
+
+if [ -n "$PY" ]; then
+    echo "  Python:    $($PY --version 2>&1)"
+    echo "  Python env: $PY_ENV ($PY)"
+else
     echo "  Python:    not found on PATH"
 fi
 has pnpm  && echo "  pnpm:      $(pnpm --version)"
@@ -101,10 +114,10 @@ else
 fi
 
 # ----------------------------------------------------------------------
-# Doc freshness
+# Public docs / contract sanity
 # ----------------------------------------------------------------------
 if [ -n "$PY" ]; then
-    step 'Doc freshness (scripts/check_docs.py)' "$PY" scripts/check_docs.py
+    step 'Public docs and contract check (scripts/check_docs.py)' "$PY" scripts/check_docs.py
 fi
 
 # ----------------------------------------------------------------------

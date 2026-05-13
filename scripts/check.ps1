@@ -67,7 +67,7 @@ function Has-Command {
 # ----------------------------------------------------------------------
 # Environment summary
 # ----------------------------------------------------------------------
-Write-Host "Srtforge lightweight check" -ForegroundColor Magenta
+Write-Host "Srtforge lightweight check" -ForegroundColor Cyan
 Write-Host "  Repo root: $repoRoot"
 Write-Host "  Platform:  $($PSVersionTable.OS)"
 Write-Host "  PS edition: $($PSVersionTable.PSEdition) $($PSVersionTable.PSVersion)"
@@ -80,6 +80,19 @@ else {
     Write-Host "  Python:    not found on PATH" -ForegroundColor Yellow
 }
 
+$venvPython = Join-Path $repoRoot '.venv\Scripts\python.exe'
+if (Test-Path -LiteralPath $venvPython) {
+    $PythonCmd = $venvPython
+    Write-Host "  Python env: repo venv ($PythonCmd)"
+}
+elseif (Has-Command python) {
+    $PythonCmd = 'python'
+    Write-Host "  Python env: PATH"
+}
+else {
+    $PythonCmd = $null
+}
+
 if (Has-Command pnpm)   { Write-Host "  pnpm:      $(pnpm --version)" }
 if (Has-Command node)   { Write-Host "  node:      $(node --version)" }
 if (Has-Command cargo)  { Write-Host "  cargo:     $(cargo --version)" }
@@ -88,22 +101,22 @@ if (Has-Command ffmpeg) { Write-Host "  ffmpeg:    present (heavy tests still sk
 # ----------------------------------------------------------------------
 # Python smoke
 # ----------------------------------------------------------------------
-if (-not (Has-Command python)) {
+if (-not $PythonCmd) {
     Skip 'Python import smoke' 'python not on PATH'
     Skip 'pytest (default selection)' 'python not on PATH'
     Skip 'CLI smoke (--help)' 'python not on PATH'
 }
 else {
     Step 'Python import smoke' {
-        & python -c "import srtforge, srtforge.cli, srtforge.pipeline, srtforge.settings"
+        & $PythonCmd -c "import srtforge, srtforge.cli, srtforge.pipeline, srtforge.settings"
     }
 
     # Default pytest selection excludes slow/model/cuda/media/ffmpeg.
     # The exclusions are encoded in pyproject.toml, so a bare invocation works.
-    & python -c "import pytest" 2>$null
+    & $PythonCmd -c "import pytest" 2>$null
     if ($LASTEXITCODE -eq 0) {
         Step 'pytest (default selection)' {
-            & python -m pytest --color=no -q
+            & $PythonCmd -m pytest --color=no -q
         }
     }
     else {
@@ -111,17 +124,27 @@ else {
     }
 
     Step 'CLI smoke (--help)' {
-        & python -m srtforge --help | Out-Null
+        & $PythonCmd -m srtforge --help | Out-Null
     }
 }
 
 # ----------------------------------------------------------------------
 # Lint
 # ----------------------------------------------------------------------
-& python -c "import ruff" 2>$null
-if ($LASTEXITCODE -eq 0 -or (Has-Command ruff)) {
+if ($PythonCmd) {
+    & $PythonCmd -c "import ruff" 2>$null
+}
+else {
+    $global:LASTEXITCODE = 1
+}
+if (($PythonCmd -and $LASTEXITCODE -eq 0) -or (Has-Command ruff)) {
     Step 'ruff (srtforge + tests + scripts)' {
-        & python -m ruff check srtforge tests scripts
+        if ($PythonCmd -and $LASTEXITCODE -eq 0) {
+            & $PythonCmd -m ruff check srtforge tests scripts
+        }
+        else {
+            & ruff check srtforge tests scripts
+        }
     }
 }
 else {
@@ -129,11 +152,11 @@ else {
 }
 
 # ----------------------------------------------------------------------
-# Doc freshness
+# Public docs / contract sanity
 # ----------------------------------------------------------------------
-if (Has-Command python) {
-    Step 'Doc freshness (scripts/check_docs.py)' {
-        & python scripts/check_docs.py
+if ($PythonCmd) {
+    Step 'Public docs and contract check (scripts/check_docs.py)' {
+        & $PythonCmd scripts/check_docs.py
     }
 }
 
@@ -189,7 +212,7 @@ else {
 # Summary
 # ----------------------------------------------------------------------
 Write-Host ""
-Write-Host "Summary" -ForegroundColor Magenta
+Write-Host "Summary" -ForegroundColor Cyan
 if ($skipped.Count -gt 0) {
     Write-Host "  Skipped:" -ForegroundColor Yellow
     foreach ($s in $skipped) { Write-Host "    - $s" -ForegroundColor Yellow }

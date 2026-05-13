@@ -4,6 +4,7 @@ import { persist, createJSONStorage } from "zustand/middleware";
 import type {
   Density,
   FileStatus,
+  JobSettingsSummary,
   Layout,
   LogLine,
   QueueFile,
@@ -14,6 +15,17 @@ import type {
   WorkerEvent,
   WorkerStage,
 } from "./types";
+import {
+  recordWaveformStageDuration,
+  shouldRecordWaveformStageDuration,
+} from "./lib/waveformEta";
+import { DONE_VALUE, EMPTY_VALUE } from "./lib/format";
+import { recordQueueEtaSample } from "./lib/queueEta";
+import {
+  DEFAULT_ASR_MODEL,
+  asrEngineForModel,
+  normalizeAsrModel,
+} from "./lib/asrModels";
 
 // Map worker stage names → numeric index used by `QueueFile.stage`.
 // `mux` and `burn` are optional post-write stages and don't bump the
@@ -30,6 +42,30 @@ const STAGE_INDEX: Record<WorkerStage, number> = {
   burn: 6,
 };
 
+const MAX_LIVE_LOG_LINES = 400;
+const MAX_TOASTS = 4;
+const TOAST_MS = 2200;
+
+interface ToastItem {
+  id: string;
+  msg: string;
+}
+
+const appendLiveLog = (logs: LogLine[], line: LogLine) => {
+  if (logs.length < MAX_LIVE_LOG_LINES) return [...logs, line];
+  return [...logs.slice(logs.length - MAX_LIVE_LOG_LINES + 1), line];
+};
+
+const elapsedJobSeconds = (file: QueueFile, reported?: number | null) => {
+  if (typeof reported === "number" && Number.isFinite(reported) && reported > 0) {
+    return reported;
+  }
+  if (typeof file.jobStartedAtMs === "number") {
+    return Math.max(0, (Date.now() - file.jobStartedAtMs) / 1000);
+  }
+  return undefined;
+};
+
 const DEFAULT_SETTINGS: Settings = {
   device: "auto",
   gpuPct: 100,
@@ -42,8 +78,8 @@ const DEFAULT_SETTINGS: Settings = {
   allowUntaggedEnglish: false,
   fv4Cfg: "./models/voc_gabox.yaml",
   fv4Ckpt: "./models/voc_fv4.ckpt",
-  engine: "parakeet",
-  asrModel: "nvidia/parakeet-tdt-0.6b-v2",
+  engine: asrEngineForModel(DEFAULT_ASR_MODEL),
+  asrModel: DEFAULT_ASR_MODEL,
   language: "en",
   attnLeft: 1280,
   attnRight: 1280,
@@ -71,17 +107,48 @@ const DEFAULT_SETTINGS: Settings = {
   sonarr: true,
 };
 
+const formatStageLogSeconds = (seconds: number | undefined) =>
+  typeof seconds === "number" && Number.isFinite(seconds) ? ` (${seconds.toFixed(2)}s)` : "";
+
+const stageLogLine = (
+  stage: WorkerStage,
+  state: "start" | "end",
+  msg: string | undefined,
+  seconds: number | undefined,
+  ok: boolean | undefined,
+): LogLine => {
+  const label = msg ?? stage;
+  const t = new Date().toLocaleTimeString([], { hour12: false });
+  if (state === "start") {
+    return {
+      t,
+      lvl: "info",
+      msg: `Stage started: ${label}`,
+      source: "stage",
+      run: true,
+    };
+  }
+
+  return {
+    t,
+    lvl: ok === false ? "err" : "ok",
+    msg: `${ok === false ? "Stage failed" : "Stage finished"}: ${label}${formatStageLogSeconds(seconds)}`,
+    source: "stage",
+    run: true,
+  };
+};
+
 interface UiState {
   files: QueueFile[];
   selectedId: string | null;
   checked: Set<string>;
   active: Tab;
   running: boolean;
-  paused: boolean;
+  queuePaused: boolean;
   settingsOpen: boolean;
   logs: LogLine[];
   search: string;
-  toast: string | null;
+  toasts: ToastItem[];
 
   theme: Theme;
   layout: Layout;
@@ -105,7 +172,7 @@ interface UiState {
   setDensity: (d: Density) => void;
 
   setRunning: (r: boolean) => void;
-  setPaused: (p: boolean) => void;
+  setQueuePaused: (p: boolean) => void;
   resetSettings: () => void;
 
   // Watch folders (UI-only this round)
@@ -118,17 +185,45 @@ interface UiState {
   /** Add raw file paths picked from disk; the pump turns them into worker jobs. */
   enqueuePaths: (paths: string[]) => string[];
   /** Promote one queued file to "sent" before invoking enqueue() on the Rust side. */
-  markSending: (id: string) => void;
+  markSending: (
+    id: string,
+    runSettings?: JobSettingsSummary,
+    plannedOutputPath?: string,
+  ) => void;
+  /** Fail a row when the Rust bridge cannot hand it to the worker. */
+  markDispatchFailed: (id: string, error: string) => void;
   /** Patch one row's metadata (post-probe). */
   updateFileMeta: (id: string, meta: Partial<QueueFile>) => void;
   removeChecked: () => void;
   clearQueue: () => void;
+  clearHistory: () => void;
   showToast: (msg: string) => void;
 
   handleWorkerEvent: (ev: WorkerEvent) => void;
 }
 
-let toastTimer: ReturnType<typeof setTimeout> | null = null;
+const toastTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+const hideToast = (id: string) => {
+  const timer = toastTimers.get(id);
+  if (timer) {
+    clearTimeout(timer);
+    toastTimers.delete(id);
+  }
+  useUi.setState((s) => ({
+    toasts: s.toasts.filter((toast) => toast.id !== id),
+  }));
+};
+
+const normalizeEtaValue = (value: string | undefined) => {
+  if (!value) return EMPTY_VALUE;
+  const trimmed = value.trim();
+  return trimmed === "\u00e2\u20ac\u201d" ||
+    trimmed === "\u00c3\u00a2\u00e2\u201a\u00ac\u00e2\u20ac\u009d" ||
+    trimmed === "\u2014"
+    ? EMPTY_VALUE
+    : value;
+};
 
 export const useUi = create<UiState>()(
   persist(
@@ -138,11 +233,11 @@ export const useUi = create<UiState>()(
   checked: new Set(),
   active: "queue",
   running: false,
-  paused: false,
+  queuePaused: false,
   settingsOpen: false,
   logs: [],
   search: "",
-  toast: null,
+  toasts: [],
 
   theme: "dark",
   layout: "hybrid",
@@ -171,7 +266,7 @@ export const useUi = create<UiState>()(
   setDensity: (d) => set({ density: d }),
 
   setRunning: (r) => set({ running: r }),
-  setPaused: (p) => set({ paused: p }),
+  setQueuePaused: (p) => set({ queuePaused: p }),
   resetSettings: () => set({ settings: DEFAULT_SETTINGS }),
 
   addLibrary: (lib) => {
@@ -210,30 +305,68 @@ export const useUi = create<UiState>()(
       id: crypto.randomUUID(),
       name: path.split(/[\\/]/).pop() ?? path,
       path,
-      duration: "—",
+      duration: EMPTY_VALUE,
       durationSec: 0,
       sampleRate: 0,
       channels: 0,
-      fps: "—",
-      codec: "—",
+      fps: EMPTY_VALUE,
+      codec: EMPTY_VALUE,
       status: "queued",
       progress: 0,
-      eta: "—",
+      eta: EMPTY_VALUE,
       stage: 0,
     }));
     set((s) => ({ files: [...s.files, ...fresh] }));
     return fresh.map((f) => f.id);
   },
 
-  markSending: (id) =>
+  markSending: (id, runSettings, plannedOutputPath) =>
     // The pump grabs one queued file at a time, calls enqueue() on the
     // Rust side, and immediately marks it processing locally so the pump
     // doesn't pick it up again before the worker emits `job_started`.
+    set((s) => {
+      const now = Date.now();
+      return {
+        files: s.files.map((f) =>
+          f.id === id
+            ? {
+                ...f,
+                status: "processing" as FileStatus,
+                progress: 0,
+                eta: EMPTY_VALUE,
+                jobStartedAtMs: now,
+                etaUpdatedAtMs: now,
+                runTimeSec: undefined,
+                plannedOutputPath,
+                runSettings,
+                stage: 0,
+                currentStageName: undefined,
+                stageStartedAtMs: undefined,
+                stageDurations: undefined,
+              }
+            : f,
+        ),
+        selectedId: id,
+      };
+    }),
+
+  markDispatchFailed: (id, error) =>
     set((s) => ({
+      running: false,
+      queuePaused: false,
       files: s.files.map((f) =>
-        f.id === id ? { ...f, status: "processing" as FileStatus } : f,
+        f.id === id
+          ? {
+              ...f,
+              status: "error" as FileStatus,
+              error,
+              currentStageName: undefined,
+              stageStartedAtMs: undefined,
+              runTimeSec: elapsedJobSeconds(f),
+              eta: "failed",
+            }
+          : f,
       ),
-      selectedId: id,
     })),
 
   updateFileMeta: (id, meta) =>
@@ -241,29 +374,52 @@ export const useUi = create<UiState>()(
       files: s.files.map((f) => (f.id === id ? { ...f, ...meta } : f)),
     })),
 
-  removeChecked: () =>
+  removeChecked: () => {
+    const count = get().checked.size;
     set((s) => {
       const ids = s.checked;
       return {
         files: s.files.filter((f) => !ids.has(f.id)),
         checked: new Set(),
-        toast: `Removed ${ids.size} file${ids.size === 1 ? "" : "s"}`,
       };
-    }),
+    });
+    get().showToast(`Removed ${count} file${count === 1 ? "" : "s"}`);
+  },
 
-  clearQueue: () =>
+  clearQueue: () => {
+    const count = get().files.filter((f) => f.status === "queued").length;
     set((s) => ({
-      files: s.files.filter(
-        (f) => f.status === "done" || f.status === "error",
-      ),
+      files: s.files.filter((f) => f.status !== "queued"),
       checked: new Set(),
-      toast: "Queue cleared",
-    })),
+    }));
+    get().showToast(
+      count > 0
+        ? `Cleared ${count} queued file${count === 1 ? "" : "s"}`
+        : "No queued files to clear",
+    );
+  },
+
+  clearHistory: () => {
+    const count = get().files.filter(
+      (f) => f.status === "done" || f.status === "error",
+    ).length;
+    set((s) => ({
+      files: s.files.filter((f) => f.status !== "done" && f.status !== "error"),
+      checked: new Set(),
+    }));
+    get().showToast(
+      count > 0
+        ? `Cleared ${count} history row${count === 1 ? "" : "s"}`
+        : "No history rows to clear",
+    );
+  },
 
   showToast: (msg) => {
-    set({ toast: msg });
-    if (toastTimer) clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => set({ toast: null }), 1800);
+    const id = crypto.randomUUID();
+    set((s) => ({
+      toasts: [...s.toasts, { id, msg }].slice(-MAX_TOASTS),
+    }));
+    toastTimers.set(id, setTimeout(() => hideToast(id), TOAST_MS));
   },
 
   handleWorkerEvent: (ev) => {
@@ -273,16 +429,44 @@ export const useUi = create<UiState>()(
     switch (ev.event) {
       case "worker_starting":
       case "worker_preload_skipped":
-        set({ running: false });
         break;
       case "worker_ready":
-        set({ running: true });
         get().showToast("Worker ready");
         break;
       case "worker_stopping":
-      case "terminated":
-        set({ running: false });
+        set({ running: false, queuePaused: false });
         break;
+      case "terminated": {
+        const code = (ev as unknown as { code?: number | null }).code;
+        const debugLogPath = (ev as unknown as { debug_log_path?: string }).debug_log_path;
+        const error =
+          code === null || code === undefined
+            ? "Worker process ended before the active job finished."
+            : `Worker process exited with code ${code} before the active job finished.`;
+        const hadProcessing = get().files.some((f) => f.status === "processing");
+        set((s) => ({
+          running: false,
+          queuePaused: false,
+          files: s.files.map((f) =>
+            f.status === "processing"
+              ? {
+                  ...f,
+                  status: "error" as FileStatus,
+                  error,
+                  currentStageName: undefined,
+                  stageStartedAtMs: undefined,
+                  debugLogPath: debugLogPath ?? f.debugLogPath,
+                  runTimeSec: elapsedJobSeconds(f),
+                  eta: "failed",
+                }
+              : f,
+          ),
+        }));
+        if (hadProcessing) {
+          get().showToast(error);
+        }
+        break;
+      }
       case "worker_preload_failed": {
         const error = (ev as unknown as { error?: string }).error ?? "preload failed";
         get().showToast(`Worker preload failed: ${error}`);
@@ -294,6 +478,7 @@ export const useUi = create<UiState>()(
         const debugLogPath = (ev as unknown as { debug_log_path?: string }).debug_log_path;
         const name = file.split(/[\\/]/).pop() ?? file;
         set((s) => {
+          const now = Date.now();
           const exists = s.files.some((f) => f.id === id);
           if (exists) {
             return {
@@ -302,6 +487,15 @@ export const useUi = create<UiState>()(
                   ? {
                       ...f,
                       status: "processing" as FileStatus,
+                      progress: 0,
+                      eta: EMPTY_VALUE,
+                      jobStartedAtMs: now,
+                      etaUpdatedAtMs: now,
+                      runTimeSec: undefined,
+                      stage: 0,
+                      currentStageName: undefined,
+                      stageStartedAtMs: undefined,
+                      stageDurations: undefined,
                       debugLogPath: debugLogPath ?? f.debugLogPath,
                     }
                   : f,
@@ -315,15 +509,17 @@ export const useUi = create<UiState>()(
             id,
             name,
             path: file,
-            duration: "—",
+            duration: EMPTY_VALUE,
             durationSec: 0,
             sampleRate: 0,
             channels: 0,
-            fps: "—",
-            codec: "—",
+            fps: EMPTY_VALUE,
+            codec: EMPTY_VALUE,
             status: "processing",
             progress: 0,
-            eta: "—",
+            eta: EMPTY_VALUE,
+            jobStartedAtMs: now,
+            etaUpdatedAtMs: now,
             stage: 0,
             debugLogPath,
           };
@@ -335,22 +531,44 @@ export const useUi = create<UiState>()(
         const id = (ev as unknown as { id: string }).id;
         const name = (ev as unknown as { stage: WorkerStage }).stage;
         const state = (ev as unknown as { state: "start" | "end" }).state;
+        const msg = (ev as unknown as { msg?: string }).msg;
         const seconds = (ev as unknown as { seconds?: number }).seconds;
+        const ok = (ev as unknown as { ok?: boolean }).ok;
         const runId = (ev as unknown as { run_id?: string }).run_id;
         const debugLogPath = (ev as unknown as { debug_log_path?: string }).debug_log_path;
         const idx = STAGE_INDEX[name];
         if (idx === undefined) break;
+        const currentFile = get().files.find((f) => f.id === id);
+        const recordableStage = shouldRecordWaveformStageDuration(name, msg);
+        if (
+          currentFile &&
+          state === "end" &&
+          ok !== false &&
+          typeof seconds === "number" &&
+          recordableStage
+        ) {
+          recordWaveformStageDuration(name, currentFile.durationSec, seconds);
+        }
+        const line = stageLogLine(name, state, msg, seconds, ok);
         set((s) => ({
+          logs: appendLiveLog(s.logs, line),
           files: s.files.map((f) => {
             if (f.id !== id) return f;
             const stage = state === "start" ? Math.max(f.stage, idx) : f.stage;
-            const stageDurations =
-              state === "end" && typeof seconds === "number"
-                ? { ...(f.stageDurations ?? {}), [name]: seconds }
-                : f.stageDurations;
+            let stageDurations = f.stageDurations;
+            if (state === "start" && recordableStage && stageDurations?.[name] !== undefined) {
+              stageDurations = { ...stageDurations };
+              delete stageDurations[name];
+            } else if (state === "end" && recordableStage && typeof seconds === "number") {
+              stageDurations = { ...(stageDurations ?? {}), [name]: seconds };
+            }
             return {
               ...f,
               stage,
+              currentStageName:
+                state === "start" && recordableStage ? name : f.currentStageName,
+              stageStartedAtMs:
+                state === "start" && recordableStage ? Date.now() : f.stageStartedAtMs,
               stageDurations,
               runId: runId ?? f.runId,
               debugLogPath: debugLogPath ?? f.debugLogPath,
@@ -367,13 +585,15 @@ export const useUi = create<UiState>()(
         const debugLogPath = (ev as unknown as { debug_log_path?: string }).debug_log_path;
         const value = typeof fraction === "number" ? fraction : progress;
         if (typeof value !== "number") break;
+        const now = Date.now();
         set((s) => ({
           files: s.files.map((f) =>
             f.id === id
               ? {
                   ...f,
                   progress: Math.max(0, Math.min(1, value)),
-                  eta: eta ?? f.eta,
+                  eta: eta ? normalizeEtaValue(eta) : f.eta,
+                  etaUpdatedAtMs: now,
                   debugLogPath: debugLogPath ?? f.debugLogPath,
                 }
               : f,
@@ -417,21 +637,20 @@ export const useUi = create<UiState>()(
         get().showToast(`${kind}: ${path.split(/[\\/]/).pop() ?? path}`);
         break;
       }
-      case "srt_written":
-      case "job_completed": {
+      case "srt_written": {
         const id = (ev as unknown as { id: string }).id;
         const outputPath = (ev as unknown as { path?: string }).path;
         const runId = (ev as unknown as { run_id?: string }).run_id;
         const performanceLogPath = (ev as unknown as { performance_log_path?: string }).performance_log_path;
         const debugLogPath = (ev as unknown as { debug_log_path?: string }).debug_log_path;
+        const now = Date.now();
         set((s) => ({
           files: s.files.map((f) =>
             f.id === id
               ? {
                   ...f,
-                  status: "done" as FileStatus,
-                  progress: 1,
-                  eta: "✓",
+                  progress: Math.max(f.progress, 0.98),
+                  etaUpdatedAtMs: now,
                   outputPath: outputPath ?? f.outputPath,
                   runId: runId ?? f.runId,
                   performanceLogPath: performanceLogPath ?? f.performanceLogPath,
@@ -439,6 +658,37 @@ export const useUi = create<UiState>()(
                 }
               : f,
           ),
+        }));
+        break;
+      }
+      case "job_completed": {
+        const id = (ev as unknown as { id: string }).id;
+        const seconds = (ev as unknown as { seconds?: number | null }).seconds;
+        const outputPath = (ev as unknown as { path?: string }).path;
+        const runId = (ev as unknown as { run_id?: string }).run_id;
+        const performanceLogPath = (ev as unknown as { performance_log_path?: string }).performance_log_path;
+        const debugLogPath = (ev as unknown as { debug_log_path?: string }).debug_log_path;
+        const now = Date.now();
+        set((s) => ({
+          files: s.files.map((f) => {
+            if (f.id !== id) return f;
+            const runTimeSec = elapsedJobSeconds(f, seconds);
+            recordQueueEtaSample(f, runTimeSec, now);
+            return {
+              ...f,
+              status: "done" as FileStatus,
+              progress: 1,
+              eta: DONE_VALUE,
+              currentStageName: undefined,
+              stageStartedAtMs: undefined,
+              etaUpdatedAtMs: now,
+              runTimeSec,
+              outputPath: outputPath ?? f.outputPath,
+              runId: runId ?? f.runId,
+              performanceLogPath: performanceLogPath ?? f.performanceLogPath,
+              debugLogPath: debugLogPath ?? f.debugLogPath,
+            };
+          }),
         }));
         break;
       }
@@ -455,6 +705,9 @@ export const useUi = create<UiState>()(
                   ...f,
                   status: "error",
                   error,
+                  currentStageName: undefined,
+                  stageStartedAtMs: undefined,
+                  runTimeSec: elapsedJobSeconds(f),
                   runId: runId ?? f.runId,
                   performanceLogPath: performanceLogPath ?? f.performanceLogPath,
                   debugLogPath: debugLogPath ?? f.debugLogPath,
@@ -481,7 +734,7 @@ export const useUi = create<UiState>()(
           source: (ev as unknown as { source?: string }).source,
         };
         set((s) => ({
-          logs: [...s.logs, line],
+          logs: appendLiveLog(s.logs, line),
           files:
             id && debugLogPath
               ? s.files.map((f) => (f.id === id ? { ...f, debugLogPath } : f))
@@ -512,30 +765,61 @@ export const useUi = create<UiState>()(
           return persisted as UiState;
         }
         const state = persisted as Partial<UiState>;
-        const settings = state.settings;
-        if (!settings) {
-          return persisted as UiState;
+        const settings = state.settings as Partial<Settings> | undefined;
+
+        let migratedSettings: Settings | undefined = settings
+          ? { ...DEFAULT_SETTINGS, ...settings }
+          : undefined;
+        if (migratedSettings) {
+          if (
+            version < 4 &&
+            migratedSettings.attnLeft === 768 &&
+            migratedSettings.attnRight === 768
+          ) {
+            migratedSettings = { ...migratedSettings, attnLeft: 1280, attnRight: 1280 };
+          }
+          if (
+            version < 5 &&
+            settings?.gpuPerformanceMode === undefined
+          ) {
+            migratedSettings = { ...migratedSettings, gpuPerformanceMode: true };
+          }
+          if (version < 6) {
+            const asrModel = normalizeAsrModel(migratedSettings.asrModel);
+            const engine = asrEngineForModel(asrModel);
+            if (
+              asrModel !== migratedSettings.asrModel ||
+              engine !== migratedSettings.engine
+            ) {
+              migratedSettings = { ...migratedSettings, asrModel, engine };
+            }
+          }
         }
 
-        let migratedSettings = settings;
-        if (version < 4 && settings.attnLeft === 768 && settings.attnRight === 768) {
-          migratedSettings = { ...migratedSettings, attnLeft: 1280, attnRight: 1280 };
-        }
-        if (
-          version < 5 &&
-          (migratedSettings as Partial<Settings>).gpuPerformanceMode === undefined
-        ) {
-          migratedSettings = { ...migratedSettings, gpuPerformanceMode: true };
-        }
-        if (migratedSettings !== settings) {
-          return { ...state, settings: migratedSettings } as UiState;
+        const migratedFiles =
+          version < 7 && Array.isArray(state.files)
+            ? state.files.map((file) => ({
+                ...file,
+                duration: normalizeEtaValue(file.duration),
+                fps: normalizeEtaValue(file.fps),
+                codec: normalizeEtaValue(file.codec),
+                eta: normalizeEtaValue(file.eta),
+              }))
+            : state.files;
+
+        if (migratedSettings !== settings || migratedFiles !== state.files) {
+          return {
+            ...state,
+            ...(migratedSettings ? { settings: migratedSettings } : {}),
+            files: migratedFiles,
+          } as UiState;
         }
         return persisted as UiState;
       },
       // Bump when Settings union shapes change so old stored values that
       // would now fail the type unions (e.g. device "gpu" → "cuda",
       // style "default" → "bbc"|"custom") get discarded cleanly.
-      version: 5,
+      version: 7,
     },
   ),
 );

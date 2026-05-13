@@ -1,3 +1,5 @@
+import { memo } from "react";
+
 import { I } from "../icons";
 import { openPath } from "../lib/tauri";
 import { useUi } from "../store";
@@ -12,17 +14,19 @@ interface Props {
 
 const REPO_URL = "https://github.com/StiensGate928/Srtforge";
 
-export const Sidebar = ({ device, gpuPct, vram }: Props) => {
+const SidebarView = ({ device, gpuPct, vram }: Props) => {
   const active = useUi((s) => s.active);
   const setActive = useUi((s) => s.setActive);
   const setSettingsOpen = useUi((s) => s.setSettingsOpen);
   const showToast = useUi((s) => s.showToast);
   const asrModel = useUi((s) => s.settings.asrModel);
-  const counts = useUi((s) => ({
-    queue: s.files.filter((f) => f.status === "queued" || f.status === "processing").length,
-    active: s.files.find((f) => f.status === "processing") ? 1 : 0,
-    done: s.files.filter((f) => f.status === "done" || f.status === "error").length,
-  }));
+  const queueCount = useUi(
+    (s) => s.files.filter((f) => f.status === "queued" || f.status === "processing").length,
+  );
+  const activeCount = useUi((s) => (s.files.some((f) => f.status === "processing") ? 1 : 0));
+  const doneCount = useUi(
+    (s) => s.files.filter((f) => f.status === "done" || f.status === "error").length,
+  );
   // The settings store keeps the full HF id (e.g. nvidia/parakeet-tdt-0.6b-v2);
   // surface just the basename so it fits the sidebar.
   const modelLabel = asrModel.split("/").pop() ?? asrModel;
@@ -47,14 +51,14 @@ export const Sidebar = ({ device, gpuPct, vram }: Props) => {
         </div>
         <nav className="nav">
           <div className="nav-section">Workspace</div>
-          {navBtn("queue", "Queue", <I.List size={14} />, counts.queue)}
+          {navBtn("queue", "Queue", <I.List size={14} />, queueCount)}
           {navBtn(
             "active",
             "Active job",
             <I.Pulse size={14} />,
-            counts.active || "",
+            activeCount || "",
           )}
-          {navBtn("history", "History", <I.Archive size={14} />, counts.done)}
+          {navBtn("history", "History", <I.Archive size={14} />, doneCount)}
 
           <div className="nav-section">Tools</div>
           {navBtn("normalize", "Normalize", <I.Sliders size={14} />, "")}
@@ -79,9 +83,9 @@ export const Sidebar = ({ device, gpuPct, vram }: Props) => {
         <div className="device-card">
           <div className="row">
             <span className="label">GPU</span>
-            <span className="value">{device}</span>
+            <span className="value" title={device}>{device}</span>
           </div>
-          <div className="meter">
+          <div className="meter" title={`VRAM ${vram}`}>
             <span style={{ width: `${gpuPct}%` }} />
           </div>
           <div className="row">
@@ -116,3 +120,5 @@ export const Sidebar = ({ device, gpuPct, vram }: Props) => {
     </aside>
   );
 };
+
+export const Sidebar = memo(SidebarView);

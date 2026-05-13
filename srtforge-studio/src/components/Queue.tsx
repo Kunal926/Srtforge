@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { I } from "../icons";
+import { EMPTY_VALUE } from "../lib/format";
 import { locateFile, type LocateKind } from "../lib/locate";
 import { useUi } from "../store";
 import type { FileStatus, QueueFile } from "../types";
+import { LowCostWaveform } from "./LowCostWaveform";
 
 interface DropZoneProps {
   over: boolean;
@@ -209,9 +211,10 @@ export const OutputSplitButton = ({ onLocate }: OutputSplitProps) => {
 
 interface QueueTableProps {
   files: QueueFile[];
+  etaLabels?: Record<string, string>;
 }
 
-export const QueueTable = ({ files }: QueueTableProps) => {
+export const QueueTable = ({ files, etaLabels = {} }: QueueTableProps) => {
   const selectedId = useUi((s) => s.selectedId);
   const setSelectedId = useUi((s) => s.setSelectedId);
   const checked = useUi((s) => s.checked);
@@ -231,7 +234,9 @@ export const QueueTable = ({ files }: QueueTableProps) => {
         <span>Progress</span>
         <span></span>
       </div>
-      {files.map((f) => (
+      {files.map((f) => {
+        const eta = etaLabels[f.id] ?? f.eta;
+        return (
         <div
           key={f.id}
           className={`qrow is-${f.status} ${selectedId === f.id ? "selected" : ""}`}
@@ -255,15 +260,16 @@ export const QueueTable = ({ files }: QueueTableProps) => {
           <div className="metapills">
             {f.sampleRate > 0 && <span className="pill">{f.sampleRate} kHz</span>}
             {f.channels > 0 && <span className="pill">{f.channels} ch</span>}
-            {f.fps !== "—" && <span className="pill">{f.fps} fps</span>}
+            {f.fps !== EMPTY_VALUE && <span className="pill">{f.fps} fps</span>}
           </div>
-          <span className={`eta ${f.eta === "—" ? "dim" : ""}`}>{f.eta}</span>
+          <span className={`eta ${eta === EMPTY_VALUE ? "dim" : ""}`}>{eta}</span>
           <div className="progress" style={{ opacity: f.status === "queued" ? 0.35 : 1 }}>
             <span style={{ width: `${f.progress * 100}%` }} />
           </div>
           <OutputSplitButton onLocate={(k) => locateFile(f, k)} />
         </div>
-      ))}
+        );
+      })}
     </div>
   );
 };
@@ -276,13 +282,12 @@ interface SparklineProps {
   quiet?: boolean;
 }
 
-export const Sparkline = ({
+const RichSparkline = ({
   progress,
   active,
   height = 44,
   seed = 7,
-  quiet = false,
-}: SparklineProps) => {
+}: Omit<SparklineProps, "quiet">) => {
   const N = 96;
   const bars = useMemo(() => {
     const arr: number[] = [];
@@ -295,13 +300,6 @@ export const Sparkline = ({
     }
     return arr;
   }, [seed]);
-  if (quiet && active) {
-    return (
-      <div className="wave wave-static-small" style={{ height }}>
-        <span style={{ width: `${Math.max(0, Math.min(1, progress)) * 100}%` }} />
-      </div>
-    );
-  }
   return (
     <div className="wave" style={{ height }}>
       <svg width="100%" height="100%" preserveAspectRatio="none" viewBox={`0 0 ${N} 100`}>
@@ -339,17 +337,38 @@ export const Sparkline = ({
   );
 };
 
+export const Sparkline = ({
+  progress,
+  active,
+  height = 44,
+  seed = 7,
+  quiet = false,
+}: SparklineProps) =>
+  quiet ? (
+    <LowCostWaveform
+      progress={progress}
+      active={active}
+      variant="small"
+      seed={seed}
+    />
+  ) : (
+    <RichSparkline progress={progress} active={active} height={height} seed={seed} />
+  );
+
 interface QueueCardsProps {
   files: QueueFile[];
   quiet?: boolean;
+  etaLabels?: Record<string, string>;
 }
 
-export const QueueCards = ({ files, quiet = false }: QueueCardsProps) => {
+export const QueueCards = ({ files, quiet = false, etaLabels = {} }: QueueCardsProps) => {
   const selectedId = useUi((s) => s.selectedId);
   const setSelectedId = useUi((s) => s.setSelectedId);
   return (
     <div className="cards">
-      {files.map((f) => (
+      {files.map((f) => {
+        const eta = etaLabels[f.id] ?? f.eta;
+        return (
         <div
           key={f.id}
           className={`card ${selectedId === f.id ? "selected" : ""}`}
@@ -359,11 +378,11 @@ export const QueueCards = ({ files, quiet = false }: QueueCardsProps) => {
             <div>
               <div className="filename">{f.name}</div>
               <div className="meta" style={{ marginTop: 6 }}>
-                {f.duration !== "—" && <span className="pill">{f.duration}</span>}
+                {f.duration !== EMPTY_VALUE && <span className="pill">{f.duration}</span>}
                 {f.sampleRate > 0 && <span className="pill">{f.sampleRate} kHz</span>}
                 {f.channels > 0 && <span className="pill">{f.channels} ch</span>}
-                {f.fps !== "—" && <span className="pill">{f.fps} fps</span>}
-                {f.codec !== "—" && <span className="pill">{f.codec}</span>}
+                {f.fps !== EMPTY_VALUE && <span className="pill">{f.fps} fps</span>}
+                {f.codec !== EMPTY_VALUE && <span className="pill">{f.codec}</span>}
               </div>
             </div>
             <StatusPill s={f.status} progress={f.progress} />
@@ -378,11 +397,12 @@ export const QueueCards = ({ files, quiet = false }: QueueCardsProps) => {
               <span style={{ width: `${f.progress * 100}%` }} />
             </div>
             <span className="mono" style={{ minWidth: 36, textAlign: "right" }}>
-              {f.eta}
+              {eta}
             </span>
           </div>
         </div>
-      ))}
+        );
+      })}
     </div>
   );
 };

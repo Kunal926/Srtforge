@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import atexit
 import logging
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeoutError
 from contextlib import contextmanager
@@ -42,17 +43,18 @@ def set_event_emitter(cb: Optional[Callable[[dict], None]]) -> None:
     _event_emitter = cb
 
 
-def _emit_event(payload: dict) -> None:
+def _emit_event(payload: dict) -> bool:
     """Best-effort dispatch to the registered emitter (swallows exceptions)."""
 
     cb = _event_emitter
     if cb is None:
-        return
+        return False
     try:
         cb(payload)
+        return True
     except Exception:
         # A broken emitter must never take down the pipeline.
-        pass
+        return False
 
 
 def _emit_stage(payload: dict) -> None:
@@ -72,6 +74,52 @@ def emit_progress(stage: str, fraction: float, *, eta: Optional[str] = None) -> 
     payload = progress_event(id="", stage=stage, fraction=fraction, eta=eta)  # type: ignore[arg-type]
     payload.pop("id", None)
     _emit_event(payload)
+
+
+def emit_log(message: str, *, lvl: str = "info", source: str = "pipeline") -> bool:
+    """Emit a worker ``log`` event through the installed pipeline emitter."""
+
+    from .worker_protocol import log_event
+
+    payload = log_event(message, lvl=lvl, source=source)
+    return _emit_event(payload)
+
+
+@contextmanager
+def log_heartbeat(
+    label: str,
+    callback: Callable[[str], None],
+    *,
+    interval_seconds: float = 30.0,
+) -> Iterator[None]:
+    """Call ``callback`` periodically while a blocking operation is running."""
+
+    if interval_seconds <= 0:
+        yield
+        return
+
+    stop = threading.Event()
+    started = monotonic()
+
+    def beat() -> None:
+        while not stop.wait(interval_seconds):
+            elapsed = monotonic() - started
+            try:
+                callback(f"{label} still running after {elapsed:.0f}s")
+            except Exception:
+                logger.debug("Log heartbeat callback failed", exc_info=True)
+
+    thread = threading.Thread(
+        target=beat,
+        name=f"srtforge-{label.lower().replace(' ', '-')}-heartbeat",
+        daemon=True,
+    )
+    thread.start()
+    try:
+        yield
+    finally:
+        stop.set()
+        thread.join(timeout=1.0)
 
 
 def _shutdown_executor() -> None:
@@ -310,8 +358,10 @@ class RunLogger:
 __all__ = [
     "RunLogger",
     "cleanup_old_logs",
+    "emit_log",
     "emit_progress",
     "get_console",
+    "log_heartbeat",
     "set_event_emitter",
     "status",
 ]

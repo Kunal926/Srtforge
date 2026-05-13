@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "srtforge"
 version = "0.3.0"
-description = "Offline SRT generator with FV4 separation, Faster-Whisper ASR, and optional Gemini correction."
+description = "Offline SRT generator with FV4 separation, Parakeet ASR, Faster-Whisper fallback, and optional Gemini correction."
 requires-python = ">=3.10"
 authors = [{name="srtforge"}]
 readme = "README.md"
@@ -77,8 +77,7 @@ packages = [
 # the local `scripts/check.*` harness rely on this default. Run heavy
 # tests explicitly with e.g. `python -m pytest -m requires_model`.
 #
-# See docs/agent/WORKFLOW.md and docs/architecture/ARCHITECTURE.md for the
-# invariants this config encodes.
+# See docs/architecture/ARCHITECTURE.md for the invariants this config encodes.
 # ----------------------------------------------------------------------------
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -118,9 +117,8 @@ extend-exclude = [
 [tool.ruff.lint]
 # First-pass policy: pyflakes only (real bugs — unused imports, unused
 # locals, undefined names). Style rules (E*), import sorting (I), and
-# pyupgrade (UP) are intentionally OFF until the existing tree is
-# cleaned up; ratchet later. See docs/agent/QUALITY.md for the
-# tracked cleanup tasks.
+# pyupgrade (UP) are intentionally OFF until the existing tree is cleaned up.
+# Ratchet later in a dedicated lint cleanup.
 select = ["F"]
 ignore = []
 
@@ -128,10 +126,8 @@ ignore = []
 # Tests can shadow imports and use longer lines for fixture data.
 "tests/*" = ["E501", "B011"]
 "scripts/*" = ["E501"]
-# Legacy GUI / native shim code with stale locals from past refactors;
-# tracked in docs/agent/QUALITY.md for a future cleanup pass. Keeping
-# these as-is for now so the harness stays green without unrelated
-# rewrites.
+# Legacy GUI / native shim code with stale locals from past refactors. Keeping
+# these as-is for now so the harness stays green without unrelated rewrites.
 "srtforge/gui_app.py" = ["F841"]
 "srtforge/win11_backdrop.py" = ["F841"]
 "srtforge/post/srt_utils.py" = ["F841"]

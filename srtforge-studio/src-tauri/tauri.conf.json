@@ -37,9 +37,9 @@
       "icons/icon.png",
       "icons/icon.ico"
     ],
-    "externalBin": [
-      "binaries/srtforge_worker"
-    ],
+    "resources": {
+      "binaries/srtforge_worker/": "srtforge_worker/"
+    },
     "windows": {
       "wix": {
         "language": ["en-US"]

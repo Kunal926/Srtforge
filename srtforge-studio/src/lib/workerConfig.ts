@@ -3,16 +3,44 @@
 // doesn't recognise is silently dropped; anything the worker honors
 // becomes a per-job override on top of the YAML defaults.
 
-import type { Settings } from "../types";
+import type { JobSettingsSummary, Settings } from "../types";
+import { asrEngineForModel, normalizeAsrModel } from "./asrModels";
+
+const preferGpuForSettings = (s: Settings) =>
+  s.device === "cpu" ? false : s.device === "cuda" ? true : s.preferGpu;
+
+const embedMethodForSettings = (method: Settings["softEmbed"]) =>
+  method === "mkvtoolnix" ? "mkvmerge" : method === "ffmpeg" ? "ffmpeg" : "auto";
+
+export const buildRunSettingsSummary = (s: Settings): JobSettingsSummary => {
+  const asrModel = normalizeAsrModel(s.asrModel);
+  return {
+    device: s.device,
+    preferGpu: preferGpuForSettings(s),
+    fp32: s.fp32,
+    sep: s.sep,
+    engine: asrEngineForModel(asrModel),
+    asrModel,
+    language: s.language,
+    style: s.style,
+    embed: s.embed,
+    burn: s.embed && s.burn,
+    embedMethod: embedMethodForSettings(s.softEmbed),
+    replaceOriginal: s.embed && s.replaceOriginal,
+    sidecarSrt: s.sidecarSrt,
+    outputDir: s.outputDir,
+  };
+};
 
 export const buildWorkerConfig = (s: Settings): Record<string, unknown> => {
   // Device selector → prefer_gpu. "auto" defers to the worker's own
   // detection (default true); "cpu" forces CPU; "cuda" pins GPU.
-  const preferGpu = s.device === "cpu" ? false : s.device === "cuda" ? true : s.preferGpu;
+  const preferGpu = preferGpuForSettings(s);
   // The Python worker treats Studio's "mkvtoolnix" label as "mkvmerge".
-  const embedMethod =
-    s.softEmbed === "mkvtoolnix" ? "mkvmerge" : s.softEmbed === "ffmpeg" ? "ffmpeg" : "auto";
+  const embedMethod = embedMethodForSettings(s.softEmbed);
   const embedEnabled = s.embed;
+  const asrModel = normalizeAsrModel(s.asrModel);
+  const asrEngine = asrEngineForModel(asrModel);
   return {
     studio: {
       gpu_performance_mode: s.gpuPerformanceMode,
@@ -41,8 +69,8 @@ export const buildWorkerConfig = (s: Settings): Record<string, unknown> => {
       filter_chain: s.filterChain,
     },
     whisper: {
-      engine: s.engine,
-      model: s.asrModel,
+      engine: asrEngine,
+      model: asrModel,
       language: s.language,
       force_float32: s.fp32,
       rel_pos_local_attn: [s.attnLeft, s.attnRight],

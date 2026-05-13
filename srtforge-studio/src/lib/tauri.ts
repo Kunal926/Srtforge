@@ -5,7 +5,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 
-import type { WorkerEvent } from "../types";
+import type { GpuTelemetry, WorkerEvent } from "../types";
 
 export const enqueue = (
   file: string,
@@ -39,10 +39,15 @@ export const separate = (
 
 export const shutdownWorker = (): Promise<void> => invoke("shutdown_worker");
 export const restartWorker = (): Promise<void> => invoke("restart_worker");
+export const stopCurrentJob = (options?: {
+  freeGpuOnStop?: boolean;
+}): Promise<void> =>
+  invoke("stop_current_job", { freeGpuOnStop: options?.freeGpuOnStop });
 /** Tells the running worker to call torch.cuda.empty_cache(). Wired to
  *  the "Free GPU memory when stopping" toggle. Cheap no-op when CUDA
  *  isn't loaded. */
 export const clearGpuCache = (): Promise<void> => invoke("clear_gpu_cache");
+export const gpuTelemetry = (): Promise<GpuTelemetry> => invoke("gpu_telemetry");
 
 export const openPath = (path: string): Promise<void> =>
   invoke("open_path", { path });

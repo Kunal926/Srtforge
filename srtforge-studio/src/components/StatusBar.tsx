@@ -1,11 +1,16 @@
+import { formatTotalDuration } from "../lib/format";
+
 interface Props {
   runId: string;
-  queueEta: string;
+  queueEta: {
+    seconds: number;
+    updatedAtMs?: number;
+  };
   doneCount: number;
   totalCount: number;
   ffmpeg: string;
   model: string;
-  status: "idle" | "warn" | "running";
+  status: "idle" | "paused" | "running";
 }
 
 export const StatusBar = ({
@@ -17,20 +22,25 @@ export const StatusBar = ({
   model,
   status,
 }: Props) => {
+  const queueEtaLabel = formatTotalDuration(queueEta.seconds);
   const label =
-    status === "idle" ? "System ready" : status === "warn" ? "Stopped" : "Transcribing";
+    status === "idle"
+      ? "System ready"
+      : status === "paused"
+        ? "Queue paused"
+        : "Transcribing";
   return (
     <div className="statusbar">
       <div className="group shrink">
         <span
-          className={`dot ${status === "idle" ? "idle" : status === "warn" ? "warn" : ""}`}
+          className={`dot ${status === "idle" ? "idle" : status === "paused" ? "warn" : ""}`}
         />
         <span>{label}</span>
         <span style={{ color: "var(--text-3)" }}>·</span>
         <span className="ellipsis" style={{ color: "var(--text-3)" }}>
           {doneCount} / {totalCount} files complete · queue ETA{" "}
           <span className="mono" style={{ color: "var(--text-2)" }}>
-            {queueEta}
+            {queueEtaLabel}
           </span>
         </span>
       </div>
