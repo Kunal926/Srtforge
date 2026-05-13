@@ -11,8 +11,8 @@
 #
 # Heavy ML dependencies (audio-separator, cuda-python, faster-whisper,
 # NeMo, PySide6) are NOT installed in CI. The CI runs:
-#   - doc freshness / required-section check (`scripts/check_docs.py`)
-#   - ruff lint over the parts of the tree the agent touches
+#   - public docs and contract sanity check (`scripts/check_docs.py`)
+#   - ruff lint over the project, tests, and scripts
 #   - the default pytest selection (which excludes slow/model/cuda/media
 #     tests; see `pyproject.toml` `[tool.pytest.ini_options]`)
 #
@@ -85,7 +85,7 @@ jobs:
         run: |
           python -m pip install -e . --no-deps
 
-      - name: Doc freshness check
+      - name: Public docs and contract check
         run: python scripts/check_docs.py
 
       - name: Ruff lint

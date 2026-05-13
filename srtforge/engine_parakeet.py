@@ -27,6 +27,7 @@ from .engine_events import (
     segment_smart_stream,
     shape_block_text,
 )
+from .logging import log_heartbeat
 
 logger = logging.getLogger(__name__)
 
@@ -1142,7 +1143,12 @@ def generate_optimized_events(
             subsampling_conv_chunking_factor,
         )
     started = monotonic()
-    model = load_parakeet_model(model_name, prefer_gpu=prefer_gpu)
+    _report_diagnostic(diagnostic_callback, "parakeet_model_load_or_cache started")
+    with log_heartbeat(
+        "Parakeet model load/cache",
+        lambda message: _report_diagnostic(diagnostic_callback, message),
+    ):
+        model = load_parakeet_model(model_name, prefer_gpu=prefer_gpu)
     _report_timing(timing_callback, "parakeet_model_load_or_cache", monotonic() - started)
     _report_diagnostic(
         diagnostic_callback,
@@ -1167,7 +1173,12 @@ def generate_optimized_events(
 
     resolved_language = _resolve_language(model_name, language)
     started = monotonic()
-    transcript, words = _transcribe_with_timestamps(model, audio_path, language=resolved_language)
+    _report_diagnostic(diagnostic_callback, "parakeet_transcribe_with_timestamps started")
+    with log_heartbeat(
+        "Parakeet transcribe_with_timestamps",
+        lambda message: _report_diagnostic(diagnostic_callback, message),
+    ):
+        transcript, words = _transcribe_with_timestamps(model, audio_path, language=resolved_language)
     _report_timing(timing_callback, "parakeet_transcribe_with_timestamps", monotonic() - started)
     _report_progress(progress_callback, 0.65)
     if not words and transcript:

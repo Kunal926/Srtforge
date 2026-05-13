@@ -103,7 +103,7 @@ export const WatchView = () => {
   return (
     <div className="watch-pane">
       <div className="watch-stats">
-        <div className="wstat wstat-hero">
+        <div className="wstat wstat-hero coverage">
           <div className="wstat-head">
             <span className="wstat-label">Library coverage</span>
             <span className="wstat-trend">
@@ -131,7 +131,7 @@ export const WatchView = () => {
           </div>
         </div>
 
-        <div className="wstat wstat-tile">
+        <div className="wstat wstat-tile tracked">
           <div className="wstat-tile-icon">
             <I.Files size={15} />
           </div>
@@ -141,7 +141,7 @@ export const WatchView = () => {
           </div>
         </div>
 
-        <div className={`wstat wstat-tile ${totalPending ? "is-warn" : "is-ok"}`}>
+        <div className={`wstat wstat-tile pending ${totalPending ? "is-warn" : "is-ok"}`}>
           <div className="wstat-tile-icon">
             {totalPending ? <I.Clock size={15} /> : <I.Check size={15} />}
           </div>

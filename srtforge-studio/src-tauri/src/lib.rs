@@ -7,8 +7,11 @@
 
 use std::collections::HashMap;
 use std::io::Write;
-use std::path::PathBuf;
-use std::sync::Arc;
+use std::path::{Path, PathBuf};
+use std::sync::{
+    atomic::{AtomicBool, AtomicU64, Ordering},
+    Arc,
+};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use parking_lot::Mutex;
@@ -61,10 +64,16 @@ struct WorkerEvent {
 }
 
 /// Mutable shared state managed by Tauri.
+type SharedWorkerChild = Arc<Mutex<Option<CommandChild>>>;
+
 struct WorkerState {
-    child: Mutex<Option<CommandChild>>,
+    child: Mutex<Option<SharedWorkerChild>>,
     /// Channel used to push stdin lines into the worker's writer task.
     tx: Mutex<Option<mpsc::UnboundedSender<String>>>,
+    /// False when the child has exited or the writer hit a broken stdin pipe.
+    alive: Arc<AtomicBool>,
+    /// Monotonic worker generation so stale terminated events cannot poison a replacement worker.
+    generation: Arc<AtomicU64>,
     /// Active Studio debug log for the currently-running worker job.
     debug_log: Arc<Mutex<Option<ActiveDebugLog>>>,
     /// Studio-only per-job metadata used for debug-log diagnostics.
@@ -76,6 +85,8 @@ impl WorkerState {
         Self {
             child: Mutex::new(None),
             tx: Mutex::new(None),
+            alive: Arc::new(AtomicBool::new(false)),
+            generation: Arc::new(AtomicU64::new(0)),
             debug_log: Arc::new(Mutex::new(None)),
             job_meta: Arc::new(Mutex::new(HashMap::new())),
         }
@@ -94,36 +105,265 @@ struct StudioJobMeta {
     enqueued_at: u64,
 }
 
+#[derive(Debug, Clone, Serialize)]
+struct GpuTelemetry {
+    available: bool,
+    name: Option<String>,
+    utilization_pct: Option<u8>,
+    memory_used_mb: Option<u64>,
+    memory_total_mb: Option<u64>,
+    error: Option<String>,
+}
+
+impl GpuTelemetry {
+    fn unavailable(error: impl Into<String>) -> Self {
+        Self {
+            available: false,
+            name: None,
+            utilization_pct: None,
+            memory_used_mb: None,
+            memory_total_mb: None,
+            error: Some(error.into()),
+        }
+    }
+}
+
 const WEBVIEW_GPU_ACCELERATION_DISABLED: bool = true;
 
 #[cfg(target_os = "windows")]
-const SIDECAR_EXE_NAME: &str = "srtforge_worker-x86_64-pc-windows-msvc.exe";
+const SIDECAR_DIR_NAME: &str = "srtforge_worker";
+#[cfg(target_os = "windows")]
+const SIDECAR_EXE_NAME: &str = "srtforge_worker.exe";
+#[cfg(not(target_os = "windows"))]
+const SIDECAR_DIR_NAME: &str = "srtforge_worker";
 #[cfg(not(target_os = "windows"))]
 const SIDECAR_EXE_NAME: &str = "srtforge_worker";
+
+fn onedir_sidecar_path(base: &Path) -> PathBuf {
+    base.join(SIDECAR_DIR_NAME).join(SIDECAR_EXE_NAME)
+}
+
+fn dev_sidecar_binary_path(root: &Path) -> PathBuf {
+    root.join("srtforge-studio")
+        .join("src-tauri")
+        .join("binaries")
+        .join(SIDECAR_DIR_NAME)
+        .join(SIDECAR_EXE_NAME)
+}
+
+fn resolve_sidecar_binary_path(app: &AppHandle) -> anyhow::Result<PathBuf> {
+    let mut attempted: Vec<String> = Vec::new();
+
+    if let Some(root) = find_dev_project_root() {
+        let dev_path = dev_sidecar_binary_path(&root);
+        attempted.push(dev_path.display().to_string());
+        if dev_path.exists() {
+            return Ok(dev_path);
+        }
+    }
+
+    if let Ok(resource_dir) = app.path().resource_dir() {
+        let resource_path = onedir_sidecar_path(&resource_dir);
+        attempted.push(resource_path.display().to_string());
+        if resource_path.exists() {
+            return Ok(resource_path);
+        }
+    }
+
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            let adjacent_path = onedir_sidecar_path(exe_dir);
+            attempted.push(adjacent_path.display().to_string());
+            if adjacent_path.exists() {
+                return Ok(adjacent_path);
+            }
+        }
+    }
+
+    anyhow::bail!(
+        "sidecar worker executable not found; tried {}",
+        attempted.join("; ")
+    )
+}
+
+fn kill_worker_child(child: CommandChild) -> Option<u32> {
+    let pid = child.pid();
+    #[cfg(target_os = "windows")]
+    {
+        let pid_text = pid.to_string();
+        let _ = std::process::Command::new("taskkill")
+            .args(["/PID", &pid_text, "/T", "/F"])
+            .output();
+    }
+    let _ = child.kill();
+    let _ = wait_for_process_exit(pid, Duration::from_secs(8));
+    Some(pid)
+}
+
+fn kill_worker_child_handle(child: &SharedWorkerChild) -> Option<u32> {
+    let child = child.lock().take()?;
+    kill_worker_child(child)
+}
+
+#[cfg(target_os = "windows")]
+fn process_is_running(pid: u32) -> bool {
+    let filter = format!("PID eq {pid}");
+    let Ok(output) = std::process::Command::new("tasklist")
+        .args(["/FI", &filter, "/FO", "CSV", "/NH"])
+        .output()
+    else {
+        return false;
+    };
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    stdout
+        .lines()
+        .any(|line| line.contains(&format!("\"{pid}\"")) || line.contains(&format!(",{pid},")))
+}
+
+#[cfg(not(target_os = "windows"))]
+fn process_is_running(_pid: u32) -> bool {
+    false
+}
+
+fn wait_for_process_exit(pid: u32, timeout: Duration) -> bool {
+    let started = Instant::now();
+    while started.elapsed() < timeout {
+        if !process_is_running(pid) {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    !process_is_running(pid)
+}
+
+fn normalize_process_path_text(value: impl AsRef<str>) -> String {
+    value
+        .as_ref()
+        .trim()
+        .trim_matches('"')
+        .replace('/', "\\")
+        .trim_end_matches('\\')
+        .to_ascii_lowercase()
+}
+
+fn path_text_is_under_dir(candidate: &str, dir: &Path) -> bool {
+    let base = normalize_process_path_text(dir.display().to_string());
+    let candidate = normalize_process_path_text(candidate);
+    if base.is_empty() || candidate.is_empty() {
+        return false;
+    }
+    candidate == base || candidate.starts_with(&format!("{base}\\"))
+}
+
+#[cfg(target_os = "windows")]
+fn sidecar_worker_processes() -> Vec<(u32, String)> {
+    let script = format!(
+        "Get-CimInstance Win32_Process -Filter \"Name = '{SIDECAR_EXE_NAME}'\" | ForEach-Object {{ \"$($_.ProcessId)|$($_.ExecutablePath)\" }}"
+    );
+    let Ok(output) = std::process::Command::new("powershell.exe")
+        .args(["-NoProfile", "-Command", &script])
+        .output()
+    else {
+        return Vec::new();
+    };
+
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|line| {
+            let (pid, path) = line.split_once('|')?;
+            let pid = pid.trim().parse::<u32>().ok()?;
+            Some((pid, path.trim().to_string()))
+        })
+        .collect()
+}
+
+#[cfg(target_os = "windows")]
+fn sweep_stale_sidecar_workers(sidecar_dir: &Path) -> Vec<u32> {
+    let mut killed = Vec::new();
+    for (pid, path) in sidecar_worker_processes() {
+        if !path_text_is_under_dir(&path, sidecar_dir) {
+            continue;
+        }
+        let pid_text = pid.to_string();
+        let _ = std::process::Command::new("taskkill")
+            .args(["/PID", &pid_text, "/T", "/F"])
+            .output();
+        let _ = wait_for_process_exit(pid, Duration::from_secs(5));
+        killed.push(pid);
+    }
+    killed
+}
+
+#[cfg(not(target_os = "windows"))]
+fn sweep_stale_sidecar_workers(_sidecar_dir: &Path) -> Vec<u32> {
+    Vec::new()
+}
+
+fn parse_gpu_telemetry_number<T>(value: Option<&str>) -> Option<T>
+where
+    T: std::str::FromStr,
+{
+    value?.trim().parse::<T>().ok()
+}
+
+fn parse_gpu_telemetry_line(line: &str) -> Option<GpuTelemetry> {
+    let mut parts = line.split(',').map(str::trim);
+    let name = parts.next()?.to_string();
+    let utilization_pct = parse_gpu_telemetry_number::<u8>(parts.next());
+    let memory_used_mb = parse_gpu_telemetry_number::<u64>(parts.next());
+    let memory_total_mb = parse_gpu_telemetry_number::<u64>(parts.next());
+    if name.is_empty() || memory_total_mb.unwrap_or(0) == 0 {
+        return None;
+    }
+    Some(GpuTelemetry {
+        available: true,
+        name: Some(name),
+        utilization_pct,
+        memory_used_mb,
+        memory_total_mb,
+        error: None,
+    })
+}
+
+fn parse_gpu_telemetry_output(stdout: &[u8]) -> GpuTelemetry {
+    let stdout = String::from_utf8_lossy(stdout);
+    stdout
+        .lines()
+        .find_map(parse_gpu_telemetry_line)
+        .unwrap_or_else(|| GpuTelemetry::unavailable("nvidia-smi returned no GPU telemetry"))
+}
 
 /// Spawn the bundled `srtforge_worker` sidecar and start the I/O pumps.
 /// Called once at app startup; safe to call again to recover from a crash.
 fn spawn_worker(app: &AppHandle, state: &WorkerState) -> anyhow::Result<()> {
+    let generation = state.generation.fetch_add(1, Ordering::SeqCst) + 1;
+    state.alive.store(false, Ordering::SeqCst);
+    *state.tx.lock() = None;
+
     // Replace any prior child first.
     if let Some(prev) = state.child.lock().take() {
-        let _ = prev.kill();
+        let _ = kill_worker_child_handle(&prev);
     }
     state.job_meta.lock().clear();
 
+    let worker_exe = resolve_sidecar_binary_path(app)?;
+    let worker_dir = worker_exe
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("sidecar worker executable has no parent directory"))?;
     let mut sidecar = app
         .shell()
-        .sidecar("srtforge_worker")
-        .map_err(|e| anyhow::anyhow!("sidecar lookup failed: {e}"))?
+        .command(worker_exe.as_os_str())
         // The bundled exe ships `python -m srtforge` as a whole; the
         // persistent stdin/stdout JSON loop lives behind the `worker`
         // subcommand (see srtforge/cli.py). Studio sends job settings per
         // request, so startup must not preload from root srtforge.config.
-        .args(["worker", "--no-preload"]);
+        .args(["worker", "--no-preload"])
+        .current_dir(worker_dir);
 
     // Pin the worker's "project root" so it can find the `models/` folder
-    // (FV4 ckpt + config). Inside a PyInstaller one-file bundle the package
-    // resolves to `_MEI*` (a temp extraction dir) and the wrong models
-    // location is computed. We override it explicitly:
+    // (FV4 ckpt + config). The worker is a PyInstaller one-dir bundle under
+    // `srtforge_worker/`, so in release builds the project root should be the
+    // parent resource directory, not the sidecar executable directory.
     //
     //   - If the user sets SRTFORGE_PROJECT_ROOT in their environment,
     //     pass it through.
@@ -131,26 +371,33 @@ fn spawn_worker(app: &AppHandle, state: &WorkerState) -> anyhow::Result<()> {
     //     find a directory that contains a `models/` subdirectory.
     //     `pnpm tauri dev` runs from `src-tauri/`, so the search has to
     //     climb two levels (or more) to reach the Srtforge repo root.
-    //   - In release builds, leave it unset; srtforge/config.py falls back
-    //     to `<exe dir>/models`, the install convention.
+    //   - In release builds, use the parent of the sidecar folder so the
+    //     existing `<project root>/models` convention is preserved.
     if let Ok(explicit) = std::env::var("SRTFORGE_PROJECT_ROOT") {
         sidecar = sidecar.env("SRTFORGE_PROJECT_ROOT", explicit);
     } else if cfg!(debug_assertions) {
         if let Some(root) = find_dev_project_root() {
             sidecar = sidecar.env("SRTFORGE_PROJECT_ROOT", root.display().to_string());
         }
+    } else if let Some(project_root) = worker_dir.parent() {
+        sidecar = sidecar.env("SRTFORGE_PROJECT_ROOT", project_root.display().to_string());
     }
 
     let (mut rx, child) = sidecar
         .spawn()
         .map_err(|e| anyhow::anyhow!("sidecar spawn failed: {e}"))?;
+    state.alive.store(true, Ordering::SeqCst);
 
     // Outbound writer pump: anything pushed to `tx` is written + newline'd
     // to the worker's stdin.
     let (tx, mut stdin_rx) = mpsc::unbounded_channel::<String>();
     let writer_child = Arc::new(Mutex::new(Some(child)));
+    *state.child.lock() = Some(writer_child.clone());
     {
         let writer_child = writer_child.clone();
+        let writer_app_handle = app.clone();
+        let writer_alive = state.alive.clone();
+        let writer_generation = state.generation.clone();
         // tauri::async_runtime::spawn works from any context; tokio::spawn
         // would panic here because Tauri's `.setup()` callback runs before
         // a Tokio reactor is attached to the calling thread.
@@ -163,7 +410,16 @@ fn spawn_worker(app: &AppHandle, state: &WorkerState) -> anyhow::Result<()> {
                 let mut guard = writer_child.lock();
                 if let Some(child) = guard.as_mut() {
                     if let Err(e) = child.write(payload.as_bytes()) {
-                        eprintln!("worker stdin write failed: {e}");
+                        let error = format!("worker stdin write failed: {e}");
+                        eprintln!("{error}");
+                        if writer_generation.load(Ordering::SeqCst) == generation {
+                            writer_alive.store(false, Ordering::SeqCst);
+                            let _ = writer_app_handle.emit(
+                                "worker:event",
+                                worker_write_failed_payload(&payload, &error),
+                            );
+                        }
+                        break;
                     }
                 }
             }
@@ -174,6 +430,9 @@ fn spawn_worker(app: &AppHandle, state: &WorkerState) -> anyhow::Result<()> {
     let app_handle = app.clone();
     let debug_log = state.debug_log.clone();
     let job_meta = state.job_meta.clone();
+    let reader_child = writer_child.clone();
+    let worker_alive = state.alive.clone();
+    let worker_generation = state.generation.clone();
     tauri::async_runtime::spawn(async move {
         let mut live_event_filter = LiveWorkerEventFilter::default();
         while let Some(ev) = rx.recv().await {
@@ -200,7 +459,7 @@ fn spawn_worker(app: &AppHandle, state: &WorkerState) -> anyhow::Result<()> {
                                 "msg": trimmed_line
                             })
                         });
-                    enrich_worker_payload(&mut payload, &debug_log, &job_meta);
+                    enrich_worker_payload(&app_handle, &mut payload, &debug_log, &job_meta);
                     if (!is_raw_log || should_emit_live_terminal_line(trimmed_line))
                         && live_event_filter.should_emit(&payload)
                     {
@@ -219,6 +478,11 @@ fn spawn_worker(app: &AppHandle, state: &WorkerState) -> anyhow::Result<()> {
                     }
                 }
                 CommandEvent::Terminated(payload) => {
+                    if worker_generation.load(Ordering::SeqCst) != generation {
+                        break;
+                    }
+                    worker_alive.store(false, Ordering::SeqCst);
+                    let _ = reader_child.lock().take();
                     let detail = payload.code.map(|code| format!("exit code {code}"));
                     let mut event_payload = serde_json::json!({
                         "event": "terminated",
@@ -242,21 +506,67 @@ fn spawn_worker(app: &AppHandle, state: &WorkerState) -> anyhow::Result<()> {
 
     // Stash the writer half so commands can find it.
     *state.tx.lock() = Some(tx);
-    // We can't keep the same child Arc in WorkerState cheaply; instead
-    // store None here and let the writer task own it. Killing the worker
-    // happens by closing the tx + dropping the writer task on shutdown.
-    *state.child.lock() = None;
 
     Ok(())
 }
 
 fn send_to_worker(state: &WorkerState, req: &WorkerRequest) -> Result<(), String> {
+    if !state.alive.load(Ordering::SeqCst) {
+        return Err("worker not running".to_string());
+    }
     let payload = serde_json::to_string(req).map_err(|e| format!("encode failed: {e}"))?;
     let guard = state.tx.lock();
     let tx = guard.as_ref().ok_or("worker not running")?;
     tx.send(payload)
         .map_err(|e| format!("worker channel closed: {e}"))?;
     Ok(())
+}
+
+fn should_restart_worker_after_send_failure(error: &str) -> bool {
+    error.contains("worker not running") || error.contains("worker channel closed")
+}
+
+fn send_to_worker_with_restart(
+    app: &AppHandle,
+    state: &WorkerState,
+    req: &WorkerRequest,
+) -> Result<(), String> {
+    match send_to_worker(state, req) {
+        Ok(()) => Ok(()),
+        Err(first_error) if should_restart_worker_after_send_failure(&first_error) => {
+            spawn_worker(app, state).map_err(|restart_error| {
+                format!("{first_error}; restart failed: {restart_error}")
+            })?;
+            send_to_worker(state, req).map_err(|retry_error| {
+                format!("{first_error}; restart retry failed: {retry_error}")
+            })
+        }
+        Err(error) => Err(error),
+    }
+}
+
+fn request_job_id(line: &str) -> Option<String> {
+    let value = serde_json::from_str::<serde_json::Value>(line.trim()).ok()?;
+    value
+        .get("id")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string)
+}
+
+fn worker_write_failed_payload(line: &str, error: &str) -> serde_json::Value {
+    if let Some(id) = request_job_id(line) {
+        serde_json::json!({
+            "event": "job_failed",
+            "id": id,
+            "error": error,
+        })
+    } else {
+        serde_json::json!({
+            "event": "terminated",
+            "code": null,
+            "error": error,
+        })
+    }
 }
 
 /// Walk up from cwd until a directory containing `models/` is found. The
@@ -466,22 +776,6 @@ fn insert_string_field(
     map.insert(key.into(), serde_json::Value::String(value));
 }
 
-fn expected_sidecar_binary_path() -> Option<PathBuf> {
-    if let Some(root) = find_dev_project_root() {
-        let dev_path = root
-            .join("srtforge-studio")
-            .join("src-tauri")
-            .join("binaries")
-            .join(SIDECAR_EXE_NAME);
-        if dev_path.exists() {
-            return Some(dev_path);
-        }
-    }
-    std::env::current_exe()
-        .ok()
-        .and_then(|path| path.parent().map(|parent| parent.join(SIDECAR_EXE_NAME)))
-}
-
 fn file_modified_unix(path: &PathBuf) -> Option<u64> {
     std::fs::metadata(path)
         .ok()?
@@ -493,12 +787,13 @@ fn file_modified_unix(path: &PathBuf) -> Option<u64> {
 }
 
 fn append_studio_job_metadata(
+    app: &AppHandle,
     debug_log: &Arc<Mutex<Option<ActiveDebugLog>>>,
     job_id: &str,
     job_meta: &Arc<Mutex<HashMap<String, StudioJobMeta>>>,
 ) {
     let meta = job_meta.lock().get(job_id).cloned();
-    let sidecar_path = expected_sidecar_binary_path();
+    let sidecar_path = resolve_sidecar_binary_path(app).ok();
     let sidecar_path_text = sidecar_path
         .as_ref()
         .map(|path| path.display().to_string())
@@ -534,6 +829,7 @@ fn append_studio_job_metadata(
 }
 
 fn enrich_worker_payload(
+    app: &AppHandle,
     payload: &mut serde_json::Value,
     debug_log: &Arc<Mutex<Option<ActiveDebugLog>>>,
     job_meta: &Arc<Mutex<HashMap<String, StudioJobMeta>>>,
@@ -561,7 +857,7 @@ fn enrich_worker_payload(
                 if let Some(path) = start_debug_log(debug_log, id, file.as_deref()) {
                     insert_string_field(map, "debug_log_path", path);
                 }
-                append_studio_job_metadata(debug_log, id, job_meta);
+                append_studio_job_metadata(app, debug_log, id, job_meta);
             }
         }
         "log" => {
@@ -662,6 +958,7 @@ struct LiveWorkerEventFilter {
     last_progress_stage: Option<String>,
     last_progress_at: Option<Instant>,
     last_log_at: Option<Instant>,
+    last_terminal_progress_log_at: Option<Instant>,
 }
 
 impl LiveWorkerEventFilter {
@@ -720,12 +1017,26 @@ impl LiveWorkerEventFilter {
             .and_then(serde_json::Value::as_str)
             .unwrap_or_default()
             .to_ascii_lowercase();
-        if is_terminal_progress_line(msg)
-            || lvl.contains("warn")
-            || lvl.contains("err")
-            || lvl.contains("error")
-        {
+        let source = payload
+            .get("source")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default();
+        if source == "pipeline-heartbeat" || msg.contains("still running after") {
             return true;
+        }
+        if lvl.contains("warn") || lvl.contains("err") || lvl.contains("error") {
+            return true;
+        }
+        if is_terminal_progress_line(msg) {
+            let enough_time = self
+                .last_terminal_progress_log_at
+                .map(|last| last.elapsed() >= Duration::from_secs(1))
+                .unwrap_or(true);
+            if enough_time {
+                self.last_terminal_progress_log_at = Some(Instant::now());
+                return true;
+            }
+            return false;
         }
 
         let enough_time = self
@@ -742,6 +1053,7 @@ impl LiveWorkerEventFilter {
 
 #[tauri::command]
 fn enqueue(
+    app: AppHandle,
     state: State<'_, WorkerState>,
     file: String,
     id: Option<String>,
@@ -764,15 +1076,13 @@ fn enqueue(
             enqueued_at: now_unix_seconds(),
         },
     );
-    let send_result = send_to_worker(
-        &state,
-        &WorkerRequest::Transcribe {
-            id: id.clone(),
-            file,
-            output,
-            config,
-        },
-    );
+    let request = WorkerRequest::Transcribe {
+        id: id.clone(),
+        file,
+        output,
+        config,
+    };
+    let send_result = send_to_worker_with_restart(&app, &state, &request);
     if send_result.is_err() {
         state.job_meta.lock().remove(&id);
     }
@@ -791,8 +1101,95 @@ fn restart_worker(app: AppHandle, state: State<'_, WorkerState>) -> Result<(), S
 }
 
 #[tauri::command]
+fn stop_current_job(
+    app: AppHandle,
+    state: State<'_, WorkerState>,
+    free_gpu_on_stop: Option<bool>,
+) -> Result<(), String> {
+    let known_job_id = state.job_meta.lock().keys().next().cloned();
+    state.generation.fetch_add(1, Ordering::SeqCst);
+    state.alive.store(false, Ordering::SeqCst);
+    *state.tx.lock() = None;
+
+    let killed_pid = state
+        .child
+        .lock()
+        .take()
+        .and_then(|child| kill_worker_child_handle(&child));
+    let detail = killed_pid
+        .map(|pid| format!("stopped by user (pid {pid})"))
+        .unwrap_or_else(|| "stopped by user".to_string());
+
+    if let Some((id, path)) =
+        close_active_debug_log(&state.debug_log, None, "job_stopped", Some(&detail))
+    {
+        let _ = app.emit(
+            "worker:event",
+            serde_json::json!({
+                "event": "job_failed",
+                "id": id,
+                "error": "Stopped by user",
+                "debug_log_path": path,
+            }),
+        );
+    } else if let Some(id) = known_job_id {
+        let _ = app.emit(
+            "worker:event",
+            serde_json::json!({
+                "event": "job_failed",
+                "id": id,
+                "error": "Stopped by user",
+            }),
+        );
+    } else {
+        let _ = app.emit(
+            "worker:event",
+            serde_json::json!({
+                "event": "terminated",
+                "code": null,
+                "error": "Stopped by user",
+            }),
+        );
+    }
+
+    state.job_meta.lock().clear();
+    if free_gpu_on_stop.unwrap_or(true) {
+        if let Ok(worker_exe) = resolve_sidecar_binary_path(&app) {
+            if let Some(sidecar_dir) = worker_exe.parent() {
+                let _ = sweep_stale_sidecar_workers(sidecar_dir);
+            }
+        }
+    }
+    spawn_worker(&app, &state).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 fn clear_gpu_cache(state: State<'_, WorkerState>) -> Result<(), String> {
     send_to_worker(&state, &WorkerRequest::ClearGpuCache)
+}
+
+#[tauri::command]
+fn gpu_telemetry() -> GpuTelemetry {
+    let output = std::process::Command::new("nvidia-smi")
+        .args([
+            "--query-gpu=name,utilization.gpu,memory.used,memory.total",
+            "--format=csv,noheader,nounits",
+        ])
+        .output();
+
+    let Ok(output) = output else {
+        return GpuTelemetry::unavailable("nvidia-smi unavailable");
+    };
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let error = if stderr.is_empty() {
+            "nvidia-smi failed".to_string()
+        } else {
+            stderr
+        };
+        return GpuTelemetry::unavailable(error);
+    }
+    parse_gpu_telemetry_output(&output.stdout)
 }
 
 #[tauri::command]
@@ -1031,7 +1428,9 @@ pub fn run() {
             separate,
             shutdown_worker,
             restart_worker,
+            stop_current_job,
             clear_gpu_cache,
+            gpu_telemetry,
             open_path,
             reveal_in_folder,
             probe_file,
@@ -1055,9 +1454,65 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::{
-        debug_log_filename, format_debug_log_line, is_terminal_progress_line,
-        sanitize_debug_log_token, should_emit_live_terminal_line, LiveWorkerEventFilter,
+        debug_log_filename, dev_sidecar_binary_path, format_debug_log_line,
+        is_terminal_progress_line, onedir_sidecar_path, parse_gpu_telemetry_line,
+        path_text_is_under_dir, request_job_id, sanitize_debug_log_token,
+        should_emit_live_terminal_line, should_restart_worker_after_send_failure,
+        worker_write_failed_payload, LiveWorkerEventFilter, SIDECAR_DIR_NAME, SIDECAR_EXE_NAME,
     };
+
+    #[test]
+    fn sidecar_paths_use_onedir_layout() {
+        let resource_dir = std::path::Path::new("resources");
+        assert_eq!(
+            onedir_sidecar_path(resource_dir),
+            resource_dir.join(SIDECAR_DIR_NAME).join(SIDECAR_EXE_NAME)
+        );
+
+        let repo_root = std::path::Path::new("repo");
+        assert_eq!(
+            dev_sidecar_binary_path(repo_root),
+            repo_root
+                .join("srtforge-studio")
+                .join("src-tauri")
+                .join("binaries")
+                .join(SIDECAR_DIR_NAME)
+                .join(SIDECAR_EXE_NAME)
+        );
+    }
+
+    #[test]
+    fn path_text_scope_only_matches_current_sidecar_dir() {
+        let sidecar_dir = std::path::Path::new(
+            r"C:\Srtforge-lat\Srtforge\srtforge-studio\src-tauri\binaries\srtforge_worker",
+        );
+
+        assert!(path_text_is_under_dir(
+            r"C:\Srtforge-lat\Srtforge\srtforge-studio\src-tauri\binaries\srtforge_worker\srtforge_worker.exe",
+            sidecar_dir,
+        ));
+        assert!(!path_text_is_under_dir(
+            r"C:\Srtforge\srtforge_worker\srtforge_worker.exe",
+            sidecar_dir,
+        ));
+    }
+
+    #[test]
+    fn gpu_telemetry_csv_parser_reads_nvidia_smi_line() {
+        let telemetry = parse_gpu_telemetry_line("NVIDIA GeForce RTX 4090, 37, 12100, 24564")
+            .expect("valid telemetry");
+
+        assert!(telemetry.available);
+        assert_eq!(telemetry.name.as_deref(), Some("NVIDIA GeForce RTX 4090"));
+        assert_eq!(telemetry.utilization_pct, Some(37));
+        assert_eq!(telemetry.memory_used_mb, Some(12100));
+        assert_eq!(telemetry.memory_total_mb, Some(24564));
+    }
+
+    #[test]
+    fn gpu_telemetry_csv_parser_rejects_missing_memory_total() {
+        assert!(parse_gpu_telemetry_line("NVIDIA GeForce RTX 4090, 37, 12100, 0").is_none());
+    }
 
     #[test]
     fn debug_log_filename_sanitizes_job_id() {
@@ -1152,5 +1607,63 @@ mod tests {
             "lvl": "info",
             "msg": " 57%|#####7    | 102/178 [00:56<00:42,  2.15it/s]"
         })));
+        assert!(!filter.should_emit(&serde_json::json!({
+            "event": "log",
+            "lvl": "info",
+            "msg": " 58%|#####8    | 103/178 [00:57<00:41,  2.15it/s]"
+        })));
+        assert!(filter.should_emit(&serde_json::json!({
+            "event": "log",
+            "lvl": "info",
+            "source": "pipeline-heartbeat",
+            "msg": "FV4 detail: Separator model load still running after 30s"
+        })));
+    }
+
+    #[test]
+    fn request_job_id_reads_worker_request_id() {
+        assert_eq!(
+            request_job_id(r#"{"action":"transcribe","id":"job-1","file":"x.mkv"}"#),
+            Some("job-1".to_string())
+        );
+        assert_eq!(request_job_id(r#"{"action":"shutdown"}"#), None);
+        assert_eq!(request_job_id("not json"), None);
+    }
+
+    #[test]
+    fn worker_write_failed_payload_fails_known_job() {
+        let payload = worker_write_failed_payload(
+            r#"{"action":"transcribe","id":"job-2","file":"x.mkv"}"#,
+            "worker stdin write failed: broken pipe",
+        );
+
+        assert_eq!(payload["event"], "job_failed");
+        assert_eq!(payload["id"], "job-2");
+        assert_eq!(payload["error"], "worker stdin write failed: broken pipe");
+    }
+
+    #[test]
+    fn worker_write_failed_payload_reports_termination_without_job_id() {
+        let payload = worker_write_failed_payload(
+            r#"{"action":"clear_gpu_cache"}"#,
+            "worker stdin write failed",
+        );
+
+        assert_eq!(payload["event"], "terminated");
+        assert_eq!(payload["code"], serde_json::Value::Null);
+        assert_eq!(payload["error"], "worker stdin write failed");
+    }
+
+    #[test]
+    fn send_failure_restart_policy_is_limited_to_dead_worker_paths() {
+        assert!(should_restart_worker_after_send_failure(
+            "worker not running"
+        ));
+        assert!(should_restart_worker_after_send_failure(
+            "worker channel closed: receiving half dropped"
+        ));
+        assert!(!should_restart_worker_after_send_failure(
+            "encode failed: bad value"
+        ));
     }
 }

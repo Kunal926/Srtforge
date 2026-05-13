@@ -5,17 +5,16 @@
 import { useState } from "react";
 
 import { I } from "../icons";
+import {
+  SUPPORTED_ASR_MODELS,
+  asrEngineForModel,
+  normalizeAsrModel,
+} from "../lib/asrModels";
 import { pickFolder } from "../lib/tauri";
 import { useUi } from "../store";
-import type { Settings } from "../types";
 import { Group, Row, Toggle } from "./settings/Field";
 
 type Tab = "basic" | "performance" | "advanced";
-
-// Picking a model implies the engine. We auto-set `engine` so
-// buildWorkerConfig() picks the right pipeline.
-const engineForModel = (model: string): Settings["engine"] =>
-  model.includes("whisper") ? "whisper" : "parakeet";
 
 interface PathRowProps {
   value: string;
@@ -44,6 +43,117 @@ const PathRow = ({ value, onChange }: PathRowProps) => (
 );
 
 export const SettingsDrawer = () => {
+  const useQuickSettings = useUi(
+    (s) => s.settings.gpuPerformanceMode && s.files.some((f) => f.status === "processing"),
+  );
+
+  return useQuickSettings ? <QuickSettingsPanel /> : <FullSettingsDrawer />;
+};
+
+const QuickSettingsPanel = () => {
+  const open = useUi((s) => s.settingsOpen);
+  const onClose = () => useUi.getState().setSettingsOpen(false);
+  const settings = useUi((s) => s.settings);
+  const setSetting = useUi((s) => s.setSetting);
+  const theme = useUi((s) => s.theme);
+  const setTheme = useUi((s) => s.setTheme);
+
+  if (!open) return null;
+
+  return (
+    <aside className="settings-lite" aria-label="Settings">
+      <header>
+        <h3>Settings</h3>
+        <button className="btn btn-ghost" onClick={onClose}>
+          <I.X size={14} /> Close
+        </button>
+      </header>
+      <div className="settings-lite-body">
+        <div className="settings-lite-row">
+          <div className="label">Theme</div>
+          <div className="seg">
+            <button
+              className={theme === "light" ? "active" : ""}
+              onClick={() => setTheme("light")}
+            >
+              Light
+            </button>
+            <button
+              className={theme === "dark" ? "active" : ""}
+              onClick={() => setTheme("dark")}
+            >
+              Dark
+            </button>
+            <button
+              className={theme === "forge" ? "active" : ""}
+              onClick={() => setTheme("forge")}
+            >
+              Forge
+            </button>
+          </div>
+        </div>
+        <div className="settings-lite-row">
+          <div className="label">Device</div>
+          <div className="seg">
+            <button
+              className={settings.device === "auto" ? "active" : ""}
+              onClick={() => setSetting("device", "auto")}
+            >
+              Auto
+            </button>
+            <button
+              className={settings.device === "cuda" ? "active" : ""}
+              onClick={() => setSetting("device", "cuda")}
+            >
+              GPU
+            </button>
+            <button
+              className={settings.device === "cpu" ? "active" : ""}
+              onClick={() => setSetting("device", "cpu")}
+            >
+              CPU
+            </button>
+          </div>
+        </div>
+        <div className="settings-lite-row compact">
+          <div className="label">Max CUDA mode</div>
+          <Toggle
+            on={settings.gpuPerformanceMode}
+            onClick={() => {
+              setSetting("gpuPerformanceMode", !settings.gpuPerformanceMode);
+              onClose();
+            }}
+          />
+        </div>
+        <div className="settings-lite-row compact">
+          <div className="label">Save .srt next to video file</div>
+          <Toggle
+            on={settings.sidecarSrt}
+            onClick={() => setSetting("sidecarSrt", !settings.sidecarSrt)}
+          />
+        </div>
+        <div className="settings-lite-row compact">
+          <div className="label">Free GPU memory when stopping</div>
+          <Toggle
+            on={settings.freeGpuOnStop}
+            onClick={() =>
+              setSetting("freeGpuOnStop", !settings.freeGpuOnStop)
+            }
+          />
+        </div>
+        <div className="settings-lite-row compact">
+          <div className="label">Dump raw word-level timestamps</div>
+          <Toggle
+            on={settings.dumpWords}
+            onClick={() => setSetting("dumpWords", !settings.dumpWords)}
+          />
+        </div>
+      </div>
+    </aside>
+  );
+};
+
+const FullSettingsDrawer = () => {
   const open = useUi((s) => s.settingsOpen);
   const onClose = () => useUi.getState().setSettingsOpen(false);
   const settings = useUi((s) => s.settings);
@@ -54,6 +164,7 @@ export const SettingsDrawer = () => {
   const showToast = useUi((s) => s.showToast);
   const [tab, setTab] = useState<Tab>("basic");
   const embedDisabled = !settings.embed;
+  const selectedAsrModel = normalizeAsrModel(settings.asrModel);
 
   return (
     <>
@@ -116,34 +227,6 @@ export const SettingsDrawer = () => {
                       onClick={() => setTheme("forge")}
                     >
                       Forge
-                    </button>
-                  </div>
-                </Row>
-              </Group>
-
-              <Group title="Device">
-                <Row
-                  label="Inference device"
-                  desc="Auto-detected GPU. Falls back to CPU if unavailable."
-                >
-                  <div className="seg">
-                    <button
-                      className={settings.device === "auto" ? "active" : ""}
-                      onClick={() => setSetting("device", "auto")}
-                    >
-                      Auto
-                    </button>
-                    <button
-                      className={settings.device === "cuda" ? "active" : ""}
-                      onClick={() => setSetting("device", "cuda")}
-                    >
-                      GPU
-                    </button>
-                    <button
-                      className={settings.device === "cpu" ? "active" : ""}
-                      onClick={() => setSetting("device", "cpu")}
-                    >
-                      CPU
                     </button>
                   </div>
                 </Row>
@@ -267,18 +350,6 @@ export const SettingsDrawer = () => {
                   />
                 </Row>
                 <Row
-                  label="Free GPU memory when stopping"
-                  desc="Releases CUDA cache between jobs."
-                  compact
-                >
-                  <Toggle
-                    on={settings.freeGpuOnStop}
-                    onClick={() =>
-                      setSetting("freeGpuOnStop", !settings.freeGpuOnStop)
-                    }
-                  />
-                </Row>
-                <Row
                   label="Enable Gemini text correction"
                   desc="Pass transcript through Gemini for clean-up. Configure in Performance tab."
                   compact
@@ -324,7 +395,32 @@ export const SettingsDrawer = () => {
 
           {tab === "performance" && (
             <div className="set-pane">
-              <Group title="Studio performance">
+              <Group title="Hardware">
+                <Row
+                  label="Inference device"
+                  desc="Auto-detected GPU. Falls back to CPU if unavailable."
+                >
+                  <div className="seg">
+                    <button
+                      className={settings.device === "auto" ? "active" : ""}
+                      onClick={() => setSetting("device", "auto")}
+                    >
+                      Auto
+                    </button>
+                    <button
+                      className={settings.device === "cuda" ? "active" : ""}
+                      onClick={() => setSetting("device", "cuda")}
+                    >
+                      GPU
+                    </button>
+                    <button
+                      className={settings.device === "cpu" ? "active" : ""}
+                      onClick={() => setSetting("device", "cpu")}
+                    >
+                      CPU
+                    </button>
+                  </div>
+                </Row>
                 <Row
                   label="Max CUDA mode"
                   desc="Reduces foreground Studio rendering while GPU jobs run."
@@ -337,27 +433,36 @@ export const SettingsDrawer = () => {
                     }
                   />
                 </Row>
+                <Row
+                  label="Free GPU memory when stopping"
+                  desc="Kills the active worker tree and sweeps stale sidecar workers before restart."
+                  compact
+                >
+                  <Toggle
+                    on={settings.freeGpuOnStop}
+                    onClick={() =>
+                      setSetting("freeGpuOnStop", !settings.freeGpuOnStop)
+                    }
+                  />
+                </Row>
               </Group>
 
               <Group title="ASR engine">
                 <Row label="ASR model">
                   <select
                     className="input wide"
-                    value={settings.asrModel}
+                    value={selectedAsrModel}
                     onChange={(e) => {
                       const v = e.target.value;
                       setSetting("asrModel", v);
-                      setSetting("engine", engineForModel(v));
+                      setSetting("engine", asrEngineForModel(v));
                     }}
                   >
-                    <option value="nvidia/parakeet-tdt-0.6b-v2">
-                      Parakeet TDT 0.6B v2
-                    </option>
-                    <option value="nvidia/parakeet-tdt-1.1b">Parakeet TDT 1.1B</option>
-                    <option value="openai/whisper-large-v3">
-                      Whisper Large v3
-                    </option>
-                    <option value="openai/whisper-medium">Whisper Medium</option>
+                    {SUPPORTED_ASR_MODELS.map((model) => (
+                      <option key={model.value} value={model.value}>
+                        {model.label}
+                      </option>
+                    ))}
                   </select>
                 </Row>
                 <Row

@@ -1,8 +1,11 @@
 import { useEffect, useMemo, useRef } from "react";
 
 import { I } from "../icons";
+import { SUPPORTED_ASR_MODELS } from "../lib/asrModels";
 import { STAGES } from "../lib/stages";
-import type { LogLine, QueueFile } from "../types";
+import { useStageGatedWaveformProgress } from "../lib/useStageGatedWaveformProgress";
+import type { JobSettingsSummary, LogLine, QueueFile } from "../types";
+import { LowCostWaveform } from "./LowCostWaveform";
 
 interface WaveProps {
   progress: number;
@@ -10,7 +13,7 @@ interface WaveProps {
   quiet?: boolean;
 }
 
-export const WaveformBig = ({ progress, active, quiet = false }: WaveProps) => {
+const RichWaveformBig = ({ progress, active }: WaveProps) => {
   const N = 240;
   const bars = useMemo(() => {
     const arr: number[] = [];
@@ -23,22 +26,6 @@ export const WaveformBig = ({ progress, active, quiet = false }: WaveProps) => {
     }
     return arr;
   }, []);
-  if (quiet && active) {
-    return (
-      <div className="wave-canvas wave-canvas-static" role="img" aria-label="audio progress">
-        <div className="wave-static">
-          <span style={{ width: `${Math.max(0, Math.min(1, progress)) * 100}%` }} />
-        </div>
-        <div className="wave-axis">
-          <span>00:00</span>
-          <span>25%</span>
-          <span>50%</span>
-          <span>75%</span>
-          <span>100%</span>
-        </div>
-      </div>
-    );
-  }
   return (
     <div className="wave-canvas" role="img" aria-label="audio waveform">
       <svg width="100%" height="100%" preserveAspectRatio="none" viewBox={`0 0 ${N} 100`}>
@@ -81,6 +68,19 @@ export const WaveformBig = ({ progress, active, quiet = false }: WaveProps) => {
   );
 };
 
+export const WaveformBig = ({ progress, active, quiet = false }: WaveProps) =>
+  quiet ? (
+    <LowCostWaveform
+      progress={progress}
+      active={active}
+      variant="big"
+      seed={13}
+      showAxis
+    />
+  ) : (
+    <RichWaveformBig progress={progress} active={active} />
+  );
+
 interface StageListProps {
   currentStage: number;
   paused: boolean;
@@ -116,13 +116,13 @@ interface LogsPanelProps {
   quiet?: boolean;
 }
 
-export const LogsPanel = ({ logs, height = 220, quiet = false }: LogsPanelProps) => {
+export const LogsPanel = ({ logs, height, quiet = false }: LogsPanelProps) => {
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (ref.current) ref.current.scrollTop = ref.current.scrollHeight;
   }, [logs, quiet]);
   return (
-    <div className="logs" ref={ref} style={{ height }}>
+    <div className="logs" ref={ref} style={height === undefined ? undefined : { height }}>
       {logs.map((l, i) => (
         <div key={i} className={`line ${l.run ? "run" : ""}`}>
           <span className="t">{l.t}</span>
@@ -134,17 +134,69 @@ export const LogsPanel = ({ logs, height = 220, quiet = false }: LogsPanelProps)
   );
 };
 
+const valueOrUnset = (value: string | undefined) => {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : "not set";
+};
+
+const asrLabel = (model: string) =>
+  SUPPORTED_ASR_MODELS.find((option) => option.value === model)?.label ?? model;
+
+const backendLabel = (settings: JobSettingsSummary) =>
+  settings.sep === "fv4" ? "FV4 MelBand Roformer" : "off";
+
+const deviceLabel = (settings: JobSettingsSummary) => {
+  const device =
+    settings.device === "cpu"
+      ? "cpu"
+      : settings.device === "cuda"
+        ? "cuda:0"
+        : settings.preferGpu
+          ? "cuda:0"
+          : "auto";
+  const precision = settings.device === "cpu" ? "fp32" : settings.fp32 ? "fp32" : "fp16";
+  return `${device} · ${precision}`;
+};
+
+const styleLabel = (settings: JobSettingsSummary) => {
+  if (settings.style === "bbc") return "BBC";
+  if (settings.style === "custom") return "Custom";
+  return "Netflix · 42 char/line";
+};
+
+const embedLabel = (settings: JobSettingsSummary) => {
+  if (!settings.embed) return "off";
+  const outputs = [`soft (${settings.embedMethod})`];
+  if (settings.burn) outputs.push("burn");
+  if (settings.replaceOriginal) outputs.push("replace");
+  return outputs.join(" · ");
+};
+
 interface DetailProps {
   file: QueueFile;
   paused: boolean;
   logs: LogLine[];
+  fallbackRunSettings: JobSettingsSummary;
+  outputPath?: string;
   expanded?: boolean;
   quiet?: boolean;
 }
 
-export const ActiveDetail = ({ file, paused, logs, expanded, quiet = false }: DetailProps) => {
-  const progress = file.progress;
+export const ActiveDetail = ({
+  file,
+  paused,
+  logs,
+  fallbackRunSettings,
+  outputPath,
+  expanded,
+  quiet = false,
+}: DetailProps) => {
+  const active = !paused && file.status === "processing";
+  const progress = useStageGatedWaveformProgress(file, active, paused);
   const currentStage = file.stage;
+  const runSettings = file.runSettings ?? fallbackRunSettings;
+  const effectiveOutputPath =
+    file.outputPath ?? outputPath ?? file.plannedOutputPath ?? "worker default";
   return (
     <div className={`detail ${expanded ? "expanded" : ""}`}>
       <div className="detail-top">
@@ -152,7 +204,7 @@ export const ActiveDetail = ({ file, paused, logs, expanded, quiet = false }: De
           <h4>Active job · waveform &amp; vocal isolation</h4>
           <WaveformBig
             progress={progress}
-            active={!paused && file.status === "processing"}
+            active={active}
             quiet={quiet}
           />
           <div className="detail-cols">
@@ -177,13 +229,13 @@ export const ActiveDetail = ({ file, paused, logs, expanded, quiet = false }: De
               <h4>Pipeline</h4>
               <div className="kvs">
                 <div className="k">Backend</div>
-                <div className="v">FV4 MelBand Roformer</div>
+                <div className="v">{backendLabel(runSettings)}</div>
                 <div className="k">ASR</div>
-                <div className="v">parakeet-tdt-0.6b-v2</div>
+                <div className="v">{asrLabel(runSettings.asrModel)}</div>
                 <div className="k">Device</div>
-                <div className="v">cuda:0 · fp32</div>
+                <div className="v">{deviceLabel(runSettings)}</div>
                 <div className="k">Lang</div>
-                <div className="v">eng (auto)</div>
+                <div className="v">{valueOrUnset(runSettings.language)}</div>
               </div>
             </div>
             <div>
@@ -191,12 +243,12 @@ export const ActiveDetail = ({ file, paused, logs, expanded, quiet = false }: De
               <div className="kvs">
                 <div className="k">Path</div>
                 <div className="v" style={{ wordBreak: "break-all" }}>
-                  ./output/{file.name.replace(/\.[^.]+$/, ".srt")}
+                  {effectiveOutputPath}
                 </div>
                 <div className="k">Style</div>
-                <div className="v">Netflix · 42 char/line</div>
+                <div className="v">{styleLabel(runSettings)}</div>
                 <div className="k">Embed</div>
-                <div className="v">soft (mkvmerge)</div>
+                <div className="v">{embedLabel(runSettings)}</div>
               </div>
             </div>
           </div>

@@ -69,6 +69,7 @@ class DummyTools:
         config: Path,
         *,
         prefer_gpu: bool = True,
+        diagnostic_callback=None,
     ):
         self.calls.append(("isolate",))
         destination.write_bytes(b"vocals")

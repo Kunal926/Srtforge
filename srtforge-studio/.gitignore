@@ -7,6 +7,9 @@ dist-ssr/
 # Tauri build artifacts
 src-tauri/target/
 src-tauri/binaries/srtforge_worker*
+!src-tauri/binaries/srtforge_worker/
+src-tauri/binaries/srtforge_worker/*
+!src-tauri/binaries/srtforge_worker/.gitkeep
 
 # Editor / OS
 .vscode/*

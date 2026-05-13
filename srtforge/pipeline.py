@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import shutil
 import tempfile
+import traceback
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -15,7 +16,7 @@ from rich.table import Table
 from .config import DEFAULT_OUTPUT_SUFFIX, FV4_CONFIG, FV4_MODEL, MODELS_DIR
 from .ffmpeg import DEFAULT_TOOLS, AudioStream, FFmpegTooling
 from .gpu_runtime import clear_accelerator_caches
-from .logging import RunLogger, emit_progress, get_console, status
+from .logging import RunLogger, emit_log, emit_progress, get_console, status
 from .mux import (
     burn_subtitles,
     embed_subtitles_ffmpeg,
@@ -132,9 +133,9 @@ class _PipelineProgress:
     """Map local stage progress to one monotonic run-level fraction."""
 
     _RANGES = {
-        "asr": (0.55, 0.75),
-        "post": (0.75, 0.92),
-        "write": (0.92, 1.0),
+        "asr": (0.545, 0.94),
+        "post": (0.94, 0.985),
+        "write": (0.985, 1.0),
     }
 
     def __init__(self) -> None:
@@ -178,6 +179,7 @@ class Pipeline:
         tmp_kwargs: dict[str, str] = {"prefix": "srtforge_"}
         run_id: Optional[str] = None
         performance_log_path: Optional[Path] = None
+        run_logger: RunLogger | None = None
         embedded_path: Optional[Path] = None
         burned_path: Optional[Path] = None
         progress = _PipelineProgress()
@@ -193,6 +195,13 @@ class Pipeline:
                 run_id = run_logger.run_id
                 performance_log_path = run_logger.path
                 tmp_kwargs["prefix"] = f"srtforge_{run_id}_"
+
+                def _log_live_detail(message: str) -> None:
+                    run_logger.log(message)
+                    source = "pipeline-heartbeat" if "still running after" in message else "pipeline"
+                    if not emit_log(message, source=source):
+                        self.console.log(f"[dim]{message}[/dim]")
+
                 run_logger.log(f"Media: {media_path}")
                 run_logger.log(f"Output: {output_path}")
                 self.console.log(f"[cyan]Run ID[/cyan] {run_id}")
@@ -294,10 +303,11 @@ class Pipeline:
                             self.config.tools.isolate_vocals(
                                 extracted,
                                 vocals,
-                                self.config.fv4_model,
-                                self.config.fv4_config,
-                                prefer_gpu=self.config.separation_prefer_gpu,
-                            )
+                            self.config.fv4_model,
+                            self.config.fv4_config,
+                            prefer_gpu=self.config.separation_prefer_gpu,
+                            diagnostic_callback=_log_live_detail,
+                        )
                         separated_source = vocals
                     elif backend in {"none", "skip"}:
                         run_logger.log("Vocal separation skipped by configuration")
@@ -403,10 +413,10 @@ class Pipeline:
                             )
 
                             def _log_parakeet_timing(label: str, seconds: float) -> None:
-                                run_logger.log(f"ASR detail: {label} - {seconds:.2f}s")
+                                _log_live_detail(f"ASR detail: {label} - {seconds:.2f}s")
 
                             def _log_parakeet_diagnostic(message: str) -> None:
-                                run_logger.log(f"ASR detail: {message}")
+                                _log_live_detail(f"ASR detail: {message}")
 
                             events = generate_optimized_events(
                                 str(preprocessed),
@@ -522,6 +532,10 @@ class Pipeline:
                             )
 
         except Exception as exc:
+            if run_logger is not None:
+                run_logger.log("TRACEBACK:")
+                for line in traceback.format_exc(limit=40).rstrip().splitlines():
+                    run_logger.log(line)
             self.console.log(f"[bold red]Pipeline failed[/bold red] {media_path}: {exc}")
             return PipelineResult(
                 media_path,

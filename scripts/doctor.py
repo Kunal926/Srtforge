@@ -5,7 +5,7 @@ Prints what we can see about the local environment (Python version, venv,
 package import status, ruff/pytest availability, ffmpeg/ffprobe presence,
 models dir, persistent config path, Node/pnpm/cargo presence, Tauri
 sidecar status, git status). Intended for fast triage when a check fails
-and the agent (or human) wants to know what's reachable.
+and a contributor wants to know what's reachable.
 
 Never installs, downloads, deletes, or modifies anything.
 

@@ -19,8 +19,6 @@ Any change must update:
 - the contract tests in `tests/test_cli_worker.py` and
   `tests/test_worker_protocol.py`.
 
-The `protocol-change` skill walks this lockstep.
-
 ## Conventions
 
 - One JSON object per line, terminated by `\n`. No multi-line records.

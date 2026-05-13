@@ -1,5 +1,5 @@
 import { I } from "../icons";
-import { formatTotalDuration } from "../lib/format";
+import { formatDuration, formatTotalDuration } from "../lib/format";
 import { locateFile } from "../lib/locate";
 import { useUi } from "../store";
 import type { QueueFile } from "../types";
@@ -11,6 +11,17 @@ interface Props {
 }
 
 const fileExt = (n: string) => (n.split(".").pop() ?? "").toUpperCase();
+
+const historyRuntimeSeconds = (file: QueueFile) => {
+  if (typeof file.runTimeSec === "number" && Number.isFinite(file.runTimeSec) && file.runTimeSec > 0) {
+    return file.runTimeSec;
+  }
+  const durations = Object.values(file.stageDurations ?? {}).filter(
+    (seconds) => Number.isFinite(seconds) && seconds > 0,
+  );
+  if (!durations.length) return null;
+  return durations.reduce((sum, seconds) => sum + seconds, 0);
+};
 
 export const HistoryView = ({ files }: Props) => {
   if (!files.length) {
@@ -37,34 +48,54 @@ export const HistoryView = ({ files }: Props) => {
   return (
     <div className="history">
       <div className="hist-stats">
-        <div className="stat">
-          <span className="lbl">Completed</span>
-          <span className="num">{completed.length}</span>
+        <div className="stat completed">
+          <div className="hist-stat-icon">
+            <I.Check size={15} />
+          </div>
+          <div className="hist-stat-body">
+            <span className="lbl">Completed</span>
+            <span className="num">{completed.length}</span>
+          </div>
         </div>
-        <div className="stat">
-          <span className="lbl">Failed</span>
-          <span
-            className="num"
-            style={{ color: failed.length ? "var(--danger)" : undefined }}
-          >
-            {failed.length}
-          </span>
+        <div className={`stat failed${failed.length ? " has-failures" : ""}`}>
+          <div className="hist-stat-icon">
+            <I.X size={15} />
+          </div>
+          <div className="hist-stat-body">
+            <span className="lbl">Failed</span>
+            <span
+              className="num"
+              style={{ color: failed.length ? "var(--danger)" : undefined }}
+            >
+              {failed.length}
+            </span>
+          </div>
         </div>
-        <div className="stat">
-          <span className="lbl">Total duration</span>
-          <span className="num mono">
-            {formatTotalDuration(files.reduce((s, f) => s + f.durationSec, 0))}
-          </span>
+        <div className="stat duration">
+          <div className="hist-stat-icon">
+            <I.Clock size={15} />
+          </div>
+          <div className="hist-stat-body">
+            <span className="lbl">Total duration</span>
+            <span className="num mono">
+              {formatTotalDuration(files.reduce((s, f) => s + f.durationSec, 0))}
+            </span>
+          </div>
         </div>
-        <div className="stat">
-          <span className="lbl">Output</span>
-          <span
-            className="num mono"
-            style={{ fontSize: 13, wordBreak: "break-all" }}
-            title={outputLabel}
-          >
-            {outputLabel}
-          </span>
+        <div className="stat output">
+          <div className="hist-stat-icon">
+            <I.Folder size={15} />
+          </div>
+          <div className="hist-stat-body">
+            <span className="lbl">Output</span>
+            <span
+              className="num mono"
+              style={{ fontSize: 13, wordBreak: "break-all" }}
+              title={outputLabel}
+            >
+              {outputLabel}
+            </span>
+          </div>
         </div>
       </div>
 
@@ -74,6 +105,7 @@ export const HistoryView = ({ files }: Props) => {
           <span>File</span>
           <span>Result</span>
           <span>Duration</span>
+          <span>Time taken</span>
           <span>Output</span>
           <span></span>
         </div>
@@ -109,6 +141,7 @@ export const HistoryView = ({ files }: Props) => {
               {f.status === "done" ? "Completed" : "Failed"}
             </div>
             <div className="mono dim">{f.duration}</div>
+            <div className="mono dim">{formatDuration(historyRuntimeSeconds(f) ?? 0)}</div>
             <div
               className="mono dim ellipsis"
               title={f.outputPath ?? "—"}

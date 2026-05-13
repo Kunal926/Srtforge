@@ -3,13 +3,32 @@
 
 export type FileStatus = "queued" | "processing" | "done" | "error";
 
+export interface JobSettingsSummary {
+  device: "auto" | "cuda" | "cpu";
+  preferGpu: boolean;
+  fp32: boolean;
+  sep: "fv4" | "none";
+  engine: "parakeet" | "whisper";
+  asrModel: string;
+  language: string;
+  style: "netflix" | "bbc" | "custom";
+  embed: boolean;
+  burn: boolean;
+  embedMethod: "auto" | "mkvmerge" | "ffmpeg";
+  replaceOriginal: boolean;
+  sidecarSrt: boolean;
+  outputDir: string;
+}
+
 export interface QueueFile {
   id: string;
   name: string;
   path: string;            // input media file path
+  plannedOutputPath?: string; // SRT target selected when the job is dispatched
   outputPath?: string;     // SRT output path, set on srt_written
   embeddedPath?: string;   // muxed media path, set on media_written
   burnedPath?: string;     // hard-subbed media path, set on media_written
+  runSettings?: JobSettingsSummary; // secret-free settings snapshot for display
   runId?: string;          // Python RunLogger id for pipeline-backed jobs
   performanceLogPath?: string; // pipeline timing log
   debugLogPath?: string;   // Studio live/Typer debug log
@@ -21,8 +40,13 @@ export interface QueueFile {
   codec: string;
   status: FileStatus;
   progress: number;        // 0..1
-  eta: string;             // "05:11" or "—" or "✓"
+  eta: string;             // "05:11" or "-" or done marker
+  jobStartedAtMs?: number; // Date.now() timestamp when Studio sees job start
+  etaUpdatedAtMs?: number; // Date.now() timestamp for the latest ETA/progress sample
+  runTimeSec?: number;     // Final elapsed processing time shown in History
   stage: number;           // 0..6 from STAGES (highest stage seen so far)
+  currentStageName?: WorkerStage; // active worker stage for UI-only prediction
+  stageStartedAtMs?: number; // Date.now() timestamp for currentStageName
   /** Per-stage timing once a stage end event lands. Keyed by stage name. */
   stageDurations?: Record<string, number>;
   error?: string;
@@ -83,6 +107,15 @@ export interface Settings {
   sonarr: boolean;
 }
 
+export interface GpuTelemetry {
+  available: boolean;
+  name?: string | null;
+  utilization_pct?: number | null;
+  memory_used_mb?: number | null;
+  memory_total_mb?: number | null;
+  error?: string | null;
+}
+
 export type Tab =
   | "queue"
   | "active"
@@ -117,6 +150,7 @@ export type WorkerEvent =
       id: string;
       stage: WorkerStage;
       state: "start" | "end";
+      msg?: string;
       run_id?: string;
       debug_log_path?: string;
       seconds?: number;

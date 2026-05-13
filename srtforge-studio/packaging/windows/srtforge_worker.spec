@@ -1,16 +1,14 @@
-# PyInstaller spec for the headless Srtforge worker, bundled as the
-# Tauri sidecar `srtforge_worker-x86_64-pc-windows-msvc.exe`.
+# PyInstaller spec for the headless Srtforge worker, bundled as a Tauri
+# resource directory at `src-tauri/binaries/srtforge_worker/`.
 #
 # Build (from anywhere — paths are resolved relative to this spec file):
 #
 #   pyinstaller srtforge-studio\packaging\windows\srtforge_worker.spec ^
 #       --distpath srtforge-studio\src-tauri\binaries
 #
-# Then rename the produced exe to add Rust's target triple suffix that
-# Tauri's sidecar lookup expects:
-#
-#   ren srtforge-studio\src-tauri\binaries\srtforge_worker.exe ^
-#       srtforge_worker-x86_64-pc-windows-msvc.exe
+# The onedir output keeps PyInstaller's `_internal` folder beside the worker
+# exe. Do not convert this back to one-file unless worker startup extraction
+# time is acceptable again.
 #
 # Optional: bundle ffmpeg/ffprobe if you set SRTFORGE_FFMPEG_DIR before
 # invoking PyInstaller.
@@ -45,7 +43,7 @@ binaries = []
 hidden = []
 
 # Heavy ML / audio packages: hidden-imports + collect_submodules misses
-# lazily-loaded submodules and native DLLs in one-file mode (e.g.
+# lazily-loaded submodules and native DLLs in PyInstaller bundles (e.g.
 # `torch.version`, ONNX Runtime's CUDA EPs, audio_separator's adapters).
 # `collect_all` walks the package and grabs every .py + every data file +
 # every binary, so the bundle behaves like the venv. Skips silently if a
@@ -156,15 +154,14 @@ pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 exe = EXE(
     pyz,
     a.scripts,
-    a.binaries,
-    a.zipfiles,
-    a.datas,
     [],
     name="srtforge_worker",
+    exclude_binaries=True,
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
     upx=False,
+    contents_directory="_internal",
     runtime_tmpdir=None,
     console=True,            # headless worker speaks JSON on stdout
     disable_windowed_traceback=False,
@@ -172,4 +169,14 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+)
+
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.zipfiles,
+    a.datas,
+    strip=False,
+    upx=False,
+    name="srtforge_worker",
 )
