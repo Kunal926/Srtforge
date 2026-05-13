@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import shutil
 import tempfile
-import traceback
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -532,10 +531,6 @@ class Pipeline:
                             )
 
         except Exception as exc:
-            if run_logger is not None:
-                run_logger.log("TRACEBACK:")
-                for line in traceback.format_exc(limit=40).rstrip().splitlines():
-                    run_logger.log(line)
             self.console.log(f"[bold red]Pipeline failed[/bold red] {media_path}: {exc}")
             return PipelineResult(
                 media_path,
