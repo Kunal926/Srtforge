@@ -10,6 +10,7 @@ the `srtforge` CLI, a persistent JSON-line worker used by the GUIs, the current
 Tauri Studio app, and a legacy PySide6 desktop GUI.
 
 ![Active Job UI](srtforge/assets/images/Active%20Job.png)
+<img src="srtforge/assets/images/Active%20Job.png" alt="Active Job UI" width="600"/>
 ## Current Pipeline
 
 1. Probe audio streams with `ffprobe` and choose the English track.
