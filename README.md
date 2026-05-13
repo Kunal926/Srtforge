@@ -8,6 +8,7 @@ cloud calls by default.
 The Python package in `srtforge/` is the source of truth. It is exposed through
 the `srtforge` CLI, a persistent JSON-line worker used by the GUIs, the current
 Tauri Studio app, and a legacy PySide6 desktop GUI.
+
 ![Active Job UI](srtforge/assets/images/Active%20Job.png)
 ## Current Pipeline
 
