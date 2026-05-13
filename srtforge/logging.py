@@ -5,6 +5,7 @@ from __future__ import annotations
 import atexit
 import logging
 import threading
+import traceback
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeoutError
 from contextlib import contextmanager
@@ -352,6 +353,10 @@ class RunLogger:
     def __exit__(self, exc_type, exc, tb) -> None:  # type: ignore[override]
         if exc_type:
             self.log_error(str(exc))
+            self.log("TRACEBACK:")
+            for line in traceback.format_exception(exc_type, exc, tb, limit=40):
+                for part in line.rstrip().splitlines():
+                    self.log(part)
         self.close()
 
 

@@ -168,6 +168,31 @@ def test_pipeline_falls_back_when_dual_mono_requested_without_center_channel(tmp
     assert result.output_path.exists()
 
 
+def test_pipeline_failure_after_logger_start_returns_original_error(tmp_path):
+    media = tmp_path / "episode.mkv"
+    media.write_bytes(b"video")
+
+    tools = DummyTools()
+    config = PipelineConfig(
+        media_path=media,
+        tools=tools,
+        prefer_gpu=False,
+        separation_prefer_gpu=False,
+        output_path=media.with_suffix(".srt"),
+        separation_backend="unsupported",
+        asr_engine="whisper",
+    )
+
+    result = Pipeline(config).run()
+
+    assert result.skipped
+    assert result.reason == "Unsupported separation backend: unsupported"
+    assert result.performance_log_path is not None
+    log_text = result.performance_log_path.read_text(encoding="utf-8")
+    assert "TRACEBACK:" in log_text
+    assert "Unsupported separation backend: unsupported" in log_text
+
+
 def test_pipeline_parakeet_forwards_optimized_generation_fields(tmp_path, monkeypatch):
     media = tmp_path / "episode.mkv"
     media.write_bytes(b"video")
