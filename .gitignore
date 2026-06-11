@@ -51,12 +51,14 @@ srtforge-studio/dist/
 srtforge-studio/src-tauri/target/
 srtforge-studio/src-tauri/gen/
 srtforge-studio/src-tauri/output/
+release-assets/
 # Sidecar binaries are produced by PyInstaller — never check them in
 srtforge-studio/src-tauri/binaries/srtforge_worker*.exe
 srtforge-studio/src-tauri/binaries/srtforge_worker*
 !srtforge-studio/src-tauri/binaries/srtforge_worker/
 srtforge-studio/src-tauri/binaries/srtforge_worker/*
 !srtforge-studio/src-tauri/binaries/srtforge_worker/.gitkeep
+srtforge-studio/src-tauri/binaries/ffmpeg/
 
 # Vendored ffmpeg downloaded by the installer
 packaging/windows/ffmpeg/

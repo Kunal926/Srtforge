@@ -61,10 +61,34 @@ class WhisperEngineConfig:
     model: str = "large-v3-turbo"
     language: str = "en"
     prefer_gpu: bool = True
+    compute_type: Optional[str] = None
 
 
 # Process-local cache so the worker loads the model once.
 _MODEL_CACHE: Dict[Tuple[str, str, str], Any] = {}  # key=(model, device, compute_type) -> WhisperModel
+
+
+WHISPER_CUDA_COMPUTE_TYPES = {
+    "float32",
+    "float16",
+    "bfloat16",
+    "int8",
+    "int8_float16",
+    "int8_bfloat16",
+    "int8_float32",
+}
+WHISPER_CPU_COMPUTE_TYPES = {
+    "float32",
+    "int8",
+    "int8_float32",
+}
+
+WHISPER_CPU_FALLBACK_COMPUTE_TYPES = {
+    "float16": "float32",
+    "bfloat16": "float32",
+    "int8_float16": "int8",
+    "int8_bfloat16": "int8",
+}
 
 
 def _detect_cuda_available() -> bool:
@@ -83,40 +107,84 @@ def _detect_cuda_available() -> bool:
         return False
 
 
-def get_whisper_device_config(*, prefer_gpu: bool = True) -> Tuple[str, str]:
+def _normalize_whisper_compute_type(compute_type: Optional[str]) -> Optional[str]:
+    if compute_type is None:
+        return None
+    normalized = str(compute_type).strip().lower().replace("-", "_")
+    return normalized or None
+
+
+def get_whisper_device_config(
+    *,
+    prefer_gpu: bool = True,
+    compute_type: Optional[str] = None,
+) -> Tuple[str, str]:
     """Return the device/compute_type pair used by Faster-Whisper."""
     device = "cuda" if (prefer_gpu and _detect_cuda_available()) else "cpu"
-    compute_type = "float16" if device == "cuda" else "int8"
-    return device, compute_type
+    requested = _normalize_whisper_compute_type(compute_type)
+    if requested is None or requested == "auto":
+        selected = "float16" if device == "cuda" else "int8"
+    else:
+        allowed = WHISPER_CUDA_COMPUTE_TYPES if device == "cuda" else WHISPER_CPU_COMPUTE_TYPES
+        selected = requested
+        if selected not in allowed and device == "cpu":
+            selected = WHISPER_CPU_FALLBACK_COMPUTE_TYPES.get(requested, requested)
+            if selected != requested:
+                logger.warning(
+                    "Faster-Whisper compute_type=%s is unavailable on CPU; using %s.",
+                    requested,
+                    selected,
+                )
+        if selected not in allowed:
+            raise ValueError(f"Unsupported Faster-Whisper compute_type={requested!r} for device={device!r}.")
+    return device, selected
 
 
-def load_whisper_model(model_name: str, *, prefer_gpu: bool = True) -> Any:
+def load_whisper_model(
+    model_name: str,
+    *,
+    prefer_gpu: bool = True,
+    compute_type: Optional[str] = None,
+) -> Any:
     """
     Lazily load and cache a Faster-Whisper WhisperModel instance.
 
     Returns an instance of faster_whisper.WhisperModel, but we intentionally type as Any
     to avoid importing faster_whisper at module import time.
     """
-    device, compute_type = get_whisper_device_config(prefer_gpu=prefer_gpu)
-    cache_key = (model_name, device, compute_type)
+    device, selected_compute_type = get_whisper_device_config(
+        prefer_gpu=prefer_gpu,
+        compute_type=compute_type,
+    )
+    cache_key = (model_name, device, selected_compute_type)
 
-    logger.info("ASR device: %s compute: %s model: %s", device, compute_type, model_name)
+    logger.info("ASR device: %s compute: %s model: %s", device, selected_compute_type, model_name)
     if cache_key in _MODEL_CACHE:
         return _MODEL_CACHE[cache_key]
 
     # Heavy import is strictly inside this function.
     from faster_whisper import WhisperModel  # type: ignore
 
-    logger.info("ASR device: %s compute: %s model: %s", device, compute_type, model_name)
-    logger.info("Loading Faster-Whisper model '%s' (device=%s, compute_type=%s)...", model_name, device, compute_type)
-    model = WhisperModel(model_name, device=device, compute_type=compute_type)
+    logger.info("ASR device: %s compute: %s model: %s", device, selected_compute_type, model_name)
+    logger.info(
+        "Loading Faster-Whisper model '%s' (device=%s, compute_type=%s)...",
+        model_name,
+        device,
+        selected_compute_type,
+    )
+    model = WhisperModel(model_name, device=device, compute_type=selected_compute_type)
     _MODEL_CACHE[cache_key] = model
     return model
 
 
-def preload_whisper_model(model_name: str = "large-v3-turbo", *, prefer_gpu: bool = True) -> None:
+def preload_whisper_model(
+    model_name: str = "large-v3-turbo",
+    *,
+    prefer_gpu: bool = True,
+    compute_type: Optional[str] = None,
+) -> None:
     """Convenience preload hook for the CLI worker startup."""
-    _ = load_whisper_model(model_name, prefer_gpu=prefer_gpu)
+    _ = load_whisper_model(model_name, prefer_gpu=prefer_gpu, compute_type=compute_type)
 
 
 def generate_optimized_events(
@@ -129,6 +197,7 @@ def generate_optimized_events(
     max_chars: int = 84,
     max_dur_s: float = 7.0,
     word_timestamps_out: Optional[str] = None,
+    compute_type: Optional[str] = None,
     progress_callback: Optional[Callable[[float], None]] = None,
 ) -> List[Dict[str, Any]]:
     """
@@ -139,7 +208,7 @@ def generate_optimized_events(
     """
     logger.info("Generating optimized events with Faster-Whisper...")
     _report_progress(progress_callback, 0.0)
-    model = load_whisper_model(model_name, prefer_gpu=prefer_gpu)
+    model = load_whisper_model(model_name, prefer_gpu=prefer_gpu, compute_type=compute_type)
     _report_progress(progress_callback, 0.05)
 
     # The WhisperModel.transcribe API yields segments; keep the same flags as the reference.

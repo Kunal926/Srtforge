@@ -382,7 +382,9 @@ def _build_pipeline_config(
         asr_engine=str(whisper_cfg.get("engine") or settings.whisper.engine),
         whisper_model=str(whisper_cfg.get("model") or settings.whisper.model),
         whisper_language=str(whisper_cfg.get("language") or settings.whisper.language),
+        whisper_compute_type=whisper_cfg.get("compute_type", settings.whisper.compute_type),
         parakeet_force_float32=bool(whisper_cfg.get("force_float32", settings.whisper.force_float32)),
+        parakeet_precision=whisper_cfg.get("parakeet_precision") or whisper_cfg.get("precision"),
         parakeet_rel_pos_local_attn=list(
             whisper_cfg.get("rel_pos_local_attn") or settings.whisper.rel_pos_local_attn
         ),

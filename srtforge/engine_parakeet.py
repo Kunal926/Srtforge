@@ -72,9 +72,46 @@ class ParakeetEngineConfig:
     model: str = "nvidia/parakeet-tdt-0.6b-v2"
     language: str = "en"
     prefer_gpu: bool = True
+    precision: str = "auto"
 
 
-_MODEL_CACHE: Dict[Tuple[str, str], Any] = {}
+_MODEL_CACHE: Dict[Tuple[str, str, str], Any] = {}
+PARAKEET_PRECISIONS = {
+    "auto",
+    "fp32",
+    "float32",
+    "fp16",
+    "float16",
+    "bf16",
+    "bfloat16",
+    "fp8_e4m3fn",
+    "fp8_e5m2",
+    "int8_dynamic",
+}
+PARAKEET_EXPERIMENTAL_PRECISIONS = {"fp8_e4m3fn", "fp8_e5m2", "int8_dynamic"}
+
+
+def _normalize_parakeet_precision(
+    precision: Optional[str] = None,
+    *,
+    force_float32: bool = False,
+) -> str:
+    if force_float32 and (precision is None or str(precision).strip().lower() in {"", "auto"}):
+        return "fp32"
+    normalized = str(precision or "auto").strip().lower().replace("-", "_")
+    aliases = {
+        "default": "auto",
+        "mixed": "auto",
+        "float32": "fp32",
+        "float16": "fp16",
+        "bfloat16": "bf16",
+        "int8": "int8_dynamic",
+        "fp8": "fp8_e4m3fn",
+    }
+    normalized = aliases.get(normalized, normalized)
+    if normalized not in PARAKEET_PRECISIONS:
+        raise ValueError(f"Unsupported Parakeet precision={precision!r}.")
+    return normalized
 
 
 def _normalize_rel_pos_local_attn_window(value: Optional[Sequence[int]]) -> List[int]:
@@ -251,6 +288,29 @@ def _select_cuda_mixed_precision_dtype(torch_module: Any) -> Any:
     return torch_module.float16
 
 
+def _cuda_dtype_for_precision(torch_module: Any, precision: str) -> Any:
+    if precision == "auto":
+        return _select_cuda_mixed_precision_dtype(torch_module)
+    if precision == "fp32":
+        return torch_module.float32
+    if precision == "fp16":
+        return torch_module.float16
+    if precision == "bf16":
+        try:
+            bf16_supported = bool(torch_module.cuda.is_bf16_supported())
+        except Exception:
+            bf16_supported = False
+        if not bf16_supported:
+            raise RuntimeError("Parakeet bf16 precision requested, but this CUDA device does not report bf16 support.")
+        return torch_module.bfloat16
+    if precision in {"fp8_e4m3fn", "fp8_e5m2"}:
+        dtype_name = "float8_e4m3fn" if precision == "fp8_e4m3fn" else "float8_e5m2"
+        if not hasattr(torch_module, dtype_name):
+            raise RuntimeError(f"Parakeet {precision} requested, but torch.{dtype_name} is unavailable.")
+        return getattr(torch_module, dtype_name)
+    raise RuntimeError(f"Parakeet precision {precision!r} does not map to a CUDA dtype.")
+
+
 def _dtype_name(dtype: Any) -> str:
     if dtype is None:
         return "unknown"
@@ -283,7 +343,13 @@ def _describe_model_runtime_dtype(model: Any) -> str:
     return "unknown"
 
 
-def _apply_cuda_precision_policy(model: Any, *, force_float32: bool) -> str:
+def _apply_cuda_precision_policy(
+    model: Any,
+    *,
+    precision: Optional[str] = None,
+    force_float32: bool = False,
+) -> str:
+    normalized_precision = _normalize_parakeet_precision(precision, force_float32=force_float32)
     try:
         import torch  # heavy; only inside worker process paths
     except Exception:
@@ -294,11 +360,17 @@ def _apply_cuda_precision_policy(model: Any, *, force_float32: bool) -> str:
         logger.info("CUDA is not available; leaving Parakeet precision unchanged.")
         return _describe_model_runtime_dtype(model)
 
-    if force_float32:
+    if normalized_precision == "int8_dynamic":
+        raise RuntimeError(
+            "Parakeet int8_dynamic is unsupported for CUDA NeMo inference in this benchmark path."
+        )
+
+    if normalized_precision == "fp32":
         _maybe_apply_cuda_force_float32(model, force_float32=True)
+        setattr(model, "_parakeet_precision_policy", "fp32")
         return _describe_model_runtime_dtype(model)
 
-    dtype = _select_cuda_mixed_precision_dtype(torch)
+    dtype = _cuda_dtype_for_precision(torch, normalized_precision)
     try:
         torch.set_float32_matmul_precision("high")
     except Exception:
@@ -307,11 +379,18 @@ def _apply_cuda_precision_policy(model: Any, *, force_float32: bool) -> str:
     try:
         model.to(device=torch.device("cuda"), dtype=dtype)
         setattr(model, "_parakeet_force_float32", False)
-        setattr(model, "_parakeet_precision_policy", _dtype_name(dtype))
-        logger.info("Applied Parakeet CUDA mixed precision preference: %s", _dtype_name(dtype))
+        setattr(model, "_parakeet_precision_policy", normalized_precision)
+        logger.info(
+            "Applied Parakeet CUDA precision preference: %s (%s)",
+            normalized_precision,
+            _dtype_name(dtype),
+        )
     except Exception:
+        if normalized_precision in PARAKEET_EXPERIMENTAL_PRECISIONS:
+            raise RuntimeError(f"Parakeet experimental precision {normalized_precision!r} failed during dtype conversion.") from None
         logger.warning(
-            "force_float32=false requested, but moving Parakeet model to mixed precision failed; continuing with current dtype.",
+            "Requested Parakeet precision %s, but moving the model failed; continuing with current dtype.",
+            normalized_precision,
             exc_info=True,
         )
     return _describe_model_runtime_dtype(model)
@@ -326,15 +405,27 @@ def _detect_cuda_available() -> bool:
         return False
 
 
-def get_parakeet_device_config(*, prefer_gpu: bool) -> Tuple[str, str]:
+def get_parakeet_device_config(*, prefer_gpu: bool, precision: Optional[str] = None) -> Tuple[str, str]:
     device = "cuda" if (prefer_gpu and _detect_cuda_available()) else "cpu"
-    compute_type = "float16" if device == "cuda" else "float32"
+    normalized_precision = _normalize_parakeet_precision(precision)
+    if device == "cpu":
+        compute_type = "float32"
+    elif normalized_precision == "auto":
+        compute_type = "mixed"
+    else:
+        compute_type = normalized_precision
     return device, compute_type
 
 
-def load_parakeet_model(model_name: str, *, prefer_gpu: bool = True) -> Any:
-    device, _compute_type = get_parakeet_device_config(prefer_gpu=prefer_gpu)
-    cache_key = (model_name, device)
+def load_parakeet_model(
+    model_name: str,
+    *,
+    prefer_gpu: bool = True,
+    precision: Optional[str] = None,
+) -> Any:
+    normalized_precision = _normalize_parakeet_precision(precision)
+    device, _compute_type = get_parakeet_device_config(prefer_gpu=prefer_gpu, precision=normalized_precision)
+    cache_key = (model_name, device, normalized_precision)
     if cache_key in _MODEL_CACHE:
         return _MODEL_CACHE[cache_key]
 
@@ -374,8 +465,13 @@ def load_parakeet_model(model_name: str, *, prefer_gpu: bool = True) -> Any:
     return model
 
 
-def preload_parakeet_model(model_name: str = "nvidia/parakeet-tdt-0.6b-v2", *, prefer_gpu: bool = True) -> None:
-    _ = load_parakeet_model(model_name, prefer_gpu=prefer_gpu)
+def preload_parakeet_model(
+    model_name: str = "nvidia/parakeet-tdt-0.6b-v2",
+    *,
+    prefer_gpu: bool = True,
+    precision: Optional[str] = None,
+) -> None:
+    _ = load_parakeet_model(model_name, prefer_gpu=prefer_gpu, precision=precision)
 
 
 def _enable_parakeet_timestamping(model: Any) -> None:
@@ -1127,16 +1223,19 @@ def generate_optimized_events(
     max_dur_s: float = 7.0,
     word_timestamps_out: Optional[str] = None,
     force_float32: bool = False,
+    precision: Optional[str] = None,
     rel_pos_local_attn: Optional[Sequence[int]] = None,
     subsampling_conv_chunking_factor: Optional[int] = None,
     progress_callback: Optional[Callable[[float], None]] = None,
     timing_callback: Optional[Callable[[str, float], None]] = None,
     diagnostic_callback: Optional[Callable[[str], None]] = None,
 ) -> List[Dict[str, Any]]:
+    normalized_precision = _normalize_parakeet_precision(precision, force_float32=force_float32)
     logger.info("Generating optimized events with Parakeet (NeMo)... model=%s language=%s", model_name, language)
     _report_progress(progress_callback, 0.0)
     if force_float32:
         logger.info("Parakeet option enabled: force_float32=true")
+    logger.info("Parakeet precision policy: %s", normalized_precision)
     if subsampling_conv_chunking_factor is not None and subsampling_conv_chunking_factor > 1:
         logger.info(
             "Parakeet option enabled: subsampling_conv_chunking_factor=%s",
@@ -1148,7 +1247,7 @@ def generate_optimized_events(
         "Parakeet model load/cache",
         lambda message: _report_diagnostic(diagnostic_callback, message),
     ):
-        model = load_parakeet_model(model_name, prefer_gpu=prefer_gpu)
+        model = load_parakeet_model(model_name, prefer_gpu=prefer_gpu, precision=normalized_precision)
     _report_timing(timing_callback, "parakeet_model_load_or_cache", monotonic() - started)
     _report_diagnostic(
         diagnostic_callback,
@@ -1156,14 +1255,22 @@ def generate_optimized_events(
     )
     _report_progress(progress_callback, 0.05)
     started = monotonic()
-    initial_dtype = _apply_cuda_precision_policy(model, force_float32=force_float32)
+    initial_dtype = _apply_cuda_precision_policy(
+        model,
+        precision=normalized_precision,
+        force_float32=force_float32,
+    )
     _report_diagnostic(
         diagnostic_callback,
         f"Parakeet runtime dtype after precision policy: {initial_dtype}",
     )
     _maybe_apply_long_audio_settings(model, audio_path, rel_pos_local_attn=rel_pos_local_attn)
     _maybe_apply_subsampling_conv_chunking_factor(model, subsampling_conv_chunking_factor)
-    final_dtype = _apply_cuda_precision_policy(model, force_float32=force_float32)
+    final_dtype = _apply_cuda_precision_policy(
+        model,
+        precision=normalized_precision,
+        force_float32=force_float32,
+    )
     _report_diagnostic(
         diagnostic_callback,
         f"Parakeet runtime dtype after long-audio settings: {final_dtype}",

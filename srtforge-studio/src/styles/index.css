@@ -1150,7 +1150,19 @@ button { font-family: inherit; }
 }
 .drawer h3 { margin: 0; font-size: 14px; font-weight: 600; }
 .drawer header { padding: 16px 20px; border-bottom: 1px solid var(--hairline); display: flex; align-items: center; justify-content: space-between; }
-.drawer .body { overflow: auto; padding: 0 20px 18px; display: flex; flex-direction: column; gap: 0; }
+.drawer .body {
+  overflow: auto;
+  padding: 0 20px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.drawer .body::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
 .drawer footer { padding: 12px 20px; border-top: 1px solid var(--hairline); display: flex; gap: 8px; justify-content: flex-end;}
 
 /* Tabs inside settings drawer */

@@ -9,6 +9,7 @@ from srtforge.engine_parakeet import (
     _maybe_apply_cuda_force_float32,
     _maybe_apply_long_audio_settings,
     _maybe_apply_subsampling_conv_chunking_factor,
+    _normalize_parakeet_precision,
     _transcribe_with_timestamps,
 )
 
@@ -586,7 +587,7 @@ def test_apply_cuda_precision_policy_uses_bfloat16_when_available(monkeypatch: p
     dtype = _apply_cuda_precision_policy(model, force_float32=False)
 
     assert model.calls == [("cuda", "bfloat16")]
-    assert getattr(model, "_parakeet_precision_policy") == "bfloat16"
+    assert getattr(model, "_parakeet_precision_policy") == "auto"
     assert dtype == "bfloat16 on cuda"
 
 
@@ -635,5 +636,35 @@ def test_apply_cuda_precision_policy_falls_back_to_float16(monkeypatch: pytest.M
     model = Model()
     dtype = _apply_cuda_precision_policy(model, force_float32=False)
 
-    assert getattr(model, "_parakeet_precision_policy") == "float16"
+    assert model.dtype == "float16"
+    assert getattr(model, "_parakeet_precision_policy") == "auto"
     assert dtype == "float16 on cuda"
+
+
+def test_normalize_parakeet_precision_maps_force_float32_and_aliases() -> None:
+    assert _normalize_parakeet_precision(None, force_float32=True) == "fp32"
+    assert _normalize_parakeet_precision("float32") == "fp32"
+    assert _normalize_parakeet_precision("bfloat16") == "bf16"
+    assert _normalize_parakeet_precision("int8") == "int8_dynamic"
+
+
+def test_apply_cuda_precision_policy_rejects_int8_dynamic(monkeypatch: pytest.MonkeyPatch) -> None:
+    import builtins
+
+    class FakeTorch:
+        class cuda:
+            @staticmethod
+            def is_available() -> bool:
+                return True
+
+    real_import = builtins.__import__
+
+    def fake_import(name, *args, **kwargs):
+        if name == "torch":
+            return FakeTorch
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+
+    with pytest.raises(RuntimeError, match="int8_dynamic is unsupported"):
+        _apply_cuda_precision_policy(object(), precision="int8_dynamic")

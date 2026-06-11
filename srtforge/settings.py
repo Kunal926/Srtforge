@@ -150,9 +150,10 @@ class SeparationSettings:
 class WhisperSettings:
     """Configuration for Faster-Whisper transcription."""
 
-    engine: str = "parakeet"
-    model: str = "nvidia/parakeet-tdt-0.6b-v2"
+    engine: str = "whisper"
+    model: str = "large-v3-turbo"
     language: str = "en"
+    compute_type: str = "int8_float16"
     force_float32: bool = False
     rel_pos_local_attn: list[int] = field(default_factory=lambda: list(DEFAULT_REL_POS_LOCAL_ATTN))
     subsampling_conv_chunking_factor: int = 0

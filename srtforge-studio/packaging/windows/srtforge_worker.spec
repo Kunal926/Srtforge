@@ -53,6 +53,7 @@ for pkg in (
     "torchaudio",
     "onnxruntime",
     "audio_separator",
+    "av",
     "pydub",
     "librosa",
     "soundfile",
@@ -96,6 +97,38 @@ else:
         pth = os.path.join(os.path.dirname(redirector_spec.origin), "_cuda_bindings_redirector.pth")
         if os.path.isfile(pth):
             datas.append((pth, "."))
+
+# cuda-python 12.9's `cuda.bindings.runtime` imports
+# `cuda.bindings.driver` dynamically; collect_all("cuda") can miss that
+# native module in PyInstaller on Windows.
+for mod_name in (
+    "cuda.bindings.driver",
+    "cuda.bindings.cydriver",
+    "cuda.bindings.cyruntime",
+    "cuda.bindings._bindings.cydriver",
+    "cuda.bindings._bindings.cyruntime",
+    "cuda.bindings._bindings.cyruntime_ptds",
+):
+    try:
+        mod_spec = importlib.util.find_spec(mod_name)
+    except Exception as exc:
+        print(f"[srtforge spec] skip {mod_name} discovery: {exc}")
+    else:
+        if mod_spec and mod_spec.origin and os.path.isfile(mod_spec.origin):
+            module_dir = os.path.dirname(mod_name.replace(".", os.sep))
+            binaries.append((mod_spec.origin, module_dir))
+
+try:
+    audio_separator_spec = importlib.util.find_spec("audio_separator")
+except Exception as exc:
+    print(f"[srtforge spec] skip audio_separator data discovery: {exc}")
+else:
+    if audio_separator_spec and audio_separator_spec.origin:
+        audio_separator_dir = os.path.dirname(audio_separator_spec.origin)
+        for name in ("models-scores.json", "models.json", "model-data.json", "ensemble_presets.json"):
+            full = os.path.join(audio_separator_dir, name)
+            if os.path.isfile(full):
+                datas.append((full, "audio_separator"))
 
 # Optional: include nemo_toolkit if installed (only needed when the
 # Parakeet engine is selected at runtime).

@@ -93,6 +93,7 @@ def _run_with_capture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[
         model_name,
         language,
         prefer_gpu,
+        compute_type=None,
         word_timestamps_out=None,
         progress_callback=None,
     ):
