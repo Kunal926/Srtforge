@@ -21,7 +21,7 @@
         "decorations": false,
         "transparent": false,
         "backgroundColor": "#202020",
-        "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --disable-gpu",
+        "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection",
         "resizable": true,
         "center": true
       }
@@ -38,7 +38,9 @@
       "icons/icon.ico"
     ],
     "resources": {
-      "binaries/srtforge_worker/": "srtforge_worker/"
+      "binaries/srtforge_worker/": "srtforge_worker/",
+      "binaries/ffmpeg/": "ffmpeg/",
+      "../../models/": "models/"
     },
     "windows": {
       "wix": {

@@ -26,14 +26,14 @@ export const SUPPORTED_ASR_MODELS = [
 
 export type SupportedAsrModel = (typeof SUPPORTED_ASR_MODELS)[number]["value"];
 
-export const DEFAULT_ASR_MODEL: SupportedAsrModel = "nvidia/parakeet-tdt-0.6b-v2";
+export const DEFAULT_ASR_MODEL: SupportedAsrModel = "large-v3-turbo";
 
 const SUPPORTED_ASR_MODEL_VALUES = new Set<string>(
   SUPPORTED_ASR_MODELS.map((model) => model.value),
 );
 
 const LEGACY_ASR_MODEL_ALIASES: Record<string, SupportedAsrModel> = {
-  "nvidia/parakeet-tdt-1.1b": DEFAULT_ASR_MODEL,
+  "nvidia/parakeet-tdt-1.1b": "nvidia/parakeet-tdt-0.6b-v2",
   "openai/whisper-large-v3": "large-v3-turbo",
   "openai/whisper-medium": "large-v3-turbo",
 };

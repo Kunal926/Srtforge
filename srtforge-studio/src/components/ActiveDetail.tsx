@@ -154,7 +154,14 @@ const deviceLabel = (settings: JobSettingsSummary) => {
         : settings.preferGpu
           ? "cuda:0"
           : "auto";
-  const precision = settings.device === "cpu" ? "fp32" : settings.fp32 ? "fp32" : "fp16";
+  const precision =
+    settings.engine === "whisper"
+      ? (settings.whisperComputeType ?? "auto")
+      : settings.device === "cpu"
+        ? "fp32"
+        : settings.fp32
+          ? "fp32"
+          : "fp16";
   return `${device} · ${precision}`;
 };
 

@@ -137,6 +137,30 @@ def test_build_pipeline_config_preserves_zero_chunking_factor(monkeypatch, tmp_p
     assert config.parakeet_subsampling_conv_chunking_factor == 0
 
 
+def test_build_pipeline_config_accepts_asr_precision_overrides(monkeypatch, tmp_path):
+    media = tmp_path / "episode-precision.mkv"
+    media.write_text("stub")
+
+    from srtforge.settings import AppSettings
+
+    monkeypatch.setattr(cli, "load_settings", lambda: AppSettings())
+
+    config = cli._build_pipeline_config(
+        media,
+        None,
+        {
+            "whisper": {
+                "compute_type": "int8_float16",
+                "parakeet_precision": "bf16",
+            }
+        },
+        default_prefer_gpu=True,
+    )
+
+    assert config.whisper_compute_type == "int8_float16"
+    assert config.parakeet_precision == "bf16"
+
+
 def test_build_pipeline_config_disables_video_outputs_when_embed_off(monkeypatch, tmp_path):
     media = tmp_path / "episode-output.mkv"
     media.write_text("stub")

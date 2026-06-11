@@ -68,6 +68,7 @@ def test_pipeline_executes_whisper_steps(tmp_path, monkeypatch):
         model_name: str,
         language: str,
         prefer_gpu: bool,
+        compute_type: str | None = None,
         word_timestamps_out: str | None = None,
         progress_callback=None,
     ):
@@ -77,6 +78,7 @@ def test_pipeline_executes_whisper_steps(tmp_path, monkeypatch):
                 "model_name": model_name,
                 "language": language,
                 "prefer_gpu": prefer_gpu,
+                "compute_type": compute_type,
             }
         )
         return [{"start": 0.0, "end": 1.0, "text": "Hello", "words": []}]
@@ -110,6 +112,7 @@ def test_pipeline_executes_whisper_steps(tmp_path, monkeypatch):
     assert outputs and outputs[0]["model_name"] == config.whisper_model
     assert outputs[0]["language"] == config.whisper_language
     assert outputs[0]["prefer_gpu"] is False
+    assert outputs[0]["compute_type"] == config.whisper_compute_type
     isolate_call = tools.calls[1]
     assert isolate_call[-1] is False
     preprocess_call = tools.calls[-1]
@@ -135,6 +138,7 @@ def test_pipeline_falls_back_when_dual_mono_requested_without_center_channel(tmp
         model_name: str,
         language: str,
         prefer_gpu: bool,
+        compute_type: str | None = None,
         word_timestamps_out: str | None = None,
         progress_callback=None,
     ):
@@ -207,6 +211,7 @@ def test_pipeline_parakeet_forwards_optimized_generation_fields(tmp_path, monkey
         language: str,
         prefer_gpu: bool,
         force_float32: bool,
+        precision: str | None,
         rel_pos_local_attn: list[int],
         subsampling_conv_chunking_factor: int,
         word_timestamps_out: str | None = None,
@@ -225,6 +230,7 @@ def test_pipeline_parakeet_forwards_optimized_generation_fields(tmp_path, monkey
                 "language": language,
                 "prefer_gpu": prefer_gpu,
                 "force_float32": force_float32,
+                "precision": precision,
                 "rel_pos_local_attn": rel_pos_local_attn,
                 "subsampling_conv_chunking_factor": subsampling_conv_chunking_factor,
                 "word_timestamps_out": word_timestamps_out,
@@ -236,7 +242,10 @@ def test_pipeline_parakeet_forwards_optimized_generation_fields(tmp_path, monkey
         Path(srt_path).write_text("1\n00:00:00,000 --> 00:00:01,000\nHello\n\n")
 
     monkeypatch.setattr("srtforge.engine_parakeet.generate_optimized_events", fake_generate)
-    monkeypatch.setattr("srtforge.engine_parakeet.get_parakeet_device_config", lambda *, prefer_gpu: ("cpu", "float32"))
+    monkeypatch.setattr(
+        "srtforge.engine_parakeet.get_parakeet_device_config",
+        lambda *, prefer_gpu, precision=None: ("cpu", precision or "float32"),
+    )
     monkeypatch.setattr("srtforge.post.srt_utils.write_srt", fake_write_srt)
     monkeypatch.setattr("srtforge.pipeline._write_srt_with_diag", fake_write_srt)
 
@@ -266,6 +275,7 @@ def test_pipeline_parakeet_forwards_optimized_generation_fields(tmp_path, monkey
     assert captured["language"] == config.whisper_language
     assert captured["prefer_gpu"] is False
     assert captured["force_float32"] is True
+    assert captured["precision"] == "fp32"
     assert captured["rel_pos_local_attn"] == [1024, 256]
     assert captured["subsampling_conv_chunking_factor"] == 4
 
@@ -284,6 +294,7 @@ def test_pipeline_parakeet_prewarms_cuda_python_after_separation(tmp_path, monke
         language: str,
         prefer_gpu: bool,
         force_float32: bool,
+        precision: str | None,
         rel_pos_local_attn: list[int],
         subsampling_conv_chunking_factor: int,
         word_timestamps_out: str | None = None,
@@ -300,7 +311,10 @@ def test_pipeline_parakeet_prewarms_cuda_python_after_separation(tmp_path, monke
         prewarm_observations.append(list(tools.calls))
 
     monkeypatch.setattr("srtforge.engine_parakeet.generate_optimized_events", fake_generate)
-    monkeypatch.setattr("srtforge.engine_parakeet.get_parakeet_device_config", lambda *, prefer_gpu: ("cuda", "float16"))
+    monkeypatch.setattr(
+        "srtforge.engine_parakeet.get_parakeet_device_config",
+        lambda *, prefer_gpu, precision=None: ("cuda", precision or "float16"),
+    )
     monkeypatch.setattr("srtforge.asr._nemo_compat.ensure_cuda_python_available", fake_ensure_cuda_python_available)
     monkeypatch.setattr("srtforge.gpu_runtime.preload_onnxruntime_cuda_dlls", lambda *, prefer_gpu: None)
     monkeypatch.setattr("srtforge.post.srt_utils.write_srt", fake_write_srt)

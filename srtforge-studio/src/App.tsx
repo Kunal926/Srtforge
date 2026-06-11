@@ -38,7 +38,7 @@ import {
 import { useUi } from "./store";
 import type { GpuTelemetry } from "./types";
 
-const GPU_TELEMETRY_IDLE_INTERVAL_MS = 2000;
+const GPU_TELEMETRY_IDLE_INTERVAL_MS = 10000;
 
 const sameTelemetryValue = <T,>(a: T | null | undefined, b: T | null | undefined) =>
   (a ?? null) === (b ?? null);
@@ -150,11 +150,12 @@ export const App = () => {
     const poll = () => {
       if (!cancelled) pollGpuTelemetry();
     };
-    poll();
+    const firstPoll = window.setTimeout(poll, 1200);
     const interval = window.setInterval(poll, GPU_TELEMETRY_IDLE_INTERVAL_MS);
     document.addEventListener("visibilitychange", poll);
     return () => {
       cancelled = true;
+      window.clearTimeout(firstPoll);
       window.clearInterval(interval);
       document.removeEventListener("visibilitychange", poll);
     };

@@ -69,7 +69,9 @@ class PipelineConfig:
     asr_engine: str = settings.whisper.engine
     whisper_model: str = settings.whisper.model
     whisper_language: str = settings.whisper.language
+    whisper_compute_type: Optional[str] = settings.whisper.compute_type
     parakeet_force_float32: bool = settings.whisper.force_float32
+    parakeet_precision: Optional[str] = None
     parakeet_rel_pos_local_attn: list[int] = field(default_factory=lambda: list(settings.whisper.rel_pos_local_attn))
     parakeet_subsampling_conv_chunking_factor: int = settings.whisper.subsampling_conv_chunking_factor
     gemini_enabled: bool = settings.gemini.enabled
@@ -343,6 +345,10 @@ class Pipeline:
 
                             device, _compute_type = get_parakeet_device_config(
                                 prefer_gpu=self.config.prefer_gpu,
+                                precision=(
+                                    self.config.parakeet_precision
+                                    or ("fp32" if self.config.parakeet_force_float32 else None)
+                                ),
                             )
                             if device == "cuda":
                                 preload_error = preload_onnxruntime_cuda_dlls(prefer_gpu=True)
@@ -376,6 +382,7 @@ class Pipeline:
 
                             device, compute_type = get_whisper_device_config(
                                 prefer_gpu=self.config.prefer_gpu,
+                                compute_type=self.config.whisper_compute_type,
                             )
                             run_logger.log(
                                 "ASR engine: whisper "
@@ -386,6 +393,7 @@ class Pipeline:
                                 model_name=self.config.whisper_model,
                                 language=self.config.whisper_language,
                                 prefer_gpu=self.config.prefer_gpu,
+                                compute_type=self.config.whisper_compute_type,
                                 word_timestamps_out=(
                                     str(word_timestamps_path.resolve()) if word_timestamps_path else None
                                 ),
@@ -396,8 +404,13 @@ class Pipeline:
                             from .engine_parakeet import generate_optimized_events, get_parakeet_device_config
                             from .engine_whisper import correct_text_only_with_gemini
 
+                            parakeet_precision = (
+                                self.config.parakeet_precision
+                                or ("fp32" if self.config.parakeet_force_float32 else None)
+                            )
                             device, compute_type = get_parakeet_device_config(
                                 prefer_gpu=self.config.prefer_gpu,
+                                precision=parakeet_precision,
                             )
                             run_logger.log(
                                 "ASR engine: parakeet "
@@ -408,7 +421,8 @@ class Pipeline:
                                 f"rel_pos_local_attn={self.config.parakeet_rel_pos_local_attn} "
                                 "subsampling_conv_chunking_factor="
                                 f"{self.config.parakeet_subsampling_conv_chunking_factor} "
-                                f"force_float32={self.config.parakeet_force_float32}"
+                                f"force_float32={self.config.parakeet_force_float32} "
+                                f"precision={parakeet_precision or 'auto'}"
                             )
 
                             def _log_parakeet_timing(label: str, seconds: float) -> None:
@@ -423,6 +437,7 @@ class Pipeline:
                                 language=self.config.whisper_language,
                                 prefer_gpu=self.config.prefer_gpu,
                                 force_float32=self.config.parakeet_force_float32,
+                                precision=parakeet_precision,
                                 rel_pos_local_attn=self.config.parakeet_rel_pos_local_attn,
                                 subsampling_conv_chunking_factor=(
                                     self.config.parakeet_subsampling_conv_chunking_factor
@@ -531,7 +546,12 @@ class Pipeline:
                             )
 
         except Exception as exc:
-            self.console.log(f"[bold red]Pipeline failed[/bold red] {media_path}: {exc}")
+            if not emit_log(
+                f"Pipeline failed {media_path}: {exc}",
+                lvl="error",
+                source="pipeline",
+            ):
+                self.console.log(f"[bold red]Pipeline failed[/bold red] {media_path}: {exc}")
             return PipelineResult(
                 media_path,
                 None,

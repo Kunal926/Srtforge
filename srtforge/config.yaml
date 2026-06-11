@@ -13,9 +13,10 @@ separation:
     cfg: ./models/voc_gabox.yaml
     ckpt: ./models/voc_fv4.ckpt
 whisper:
-  engine: parakeet
-  model: nvidia/parakeet-tdt-0.6b-v2
+  engine: whisper
+  model: large-v3-turbo
   language: en
+  compute_type: int8_float16
   force_float32: false
   rel_pos_local_attn: [1280, 1280]
   subsampling_conv_chunking_factor: 0

@@ -128,7 +128,10 @@ impl GpuTelemetry {
     }
 }
 
-const WEBVIEW_GPU_ACCELERATION_DISABLED: bool = true;
+const WEBVIEW_GPU_ACCELERATION_DISABLED: bool = false;
+
+#[cfg(target_os = "windows")]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 #[cfg(target_os = "windows")]
 const SIDECAR_DIR_NAME: &str = "srtforge_worker";
@@ -143,12 +146,81 @@ fn onedir_sidecar_path(base: &Path) -> PathBuf {
     base.join(SIDECAR_DIR_NAME).join(SIDECAR_EXE_NAME)
 }
 
+fn hidden_command(program: &str) -> std::process::Command {
+    let mut command = std::process::Command::new(program);
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+    command
+}
+
 fn dev_sidecar_binary_path(root: &Path) -> PathBuf {
     root.join("srtforge-studio")
         .join("src-tauri")
         .join("binaries")
         .join(SIDECAR_DIR_NAME)
         .join(SIDECAR_EXE_NAME)
+}
+
+fn find_project_root_from(start: &Path) -> Option<PathBuf> {
+    let mut cur = if start.is_file() {
+        start.parent()
+    } else {
+        Some(start)
+    };
+    for _ in 0..8 {
+        let dir = cur?;
+        if dir.join("models").is_dir() {
+            return Some(dir.to_path_buf());
+        }
+        cur = dir.parent();
+    }
+    None
+}
+
+fn ffmpeg_tool_dir_is_complete(dir: &Path) -> bool {
+    #[cfg(target_os = "windows")]
+    let tools = ["ffmpeg.exe", "ffprobe.exe"];
+    #[cfg(not(target_os = "windows"))]
+    let tools = ["ffmpeg", "ffprobe"];
+
+    tools.iter().all(|tool| dir.join(tool).is_file())
+}
+
+fn resolve_bundled_ffmpeg_dir(
+    app: &AppHandle,
+    project_root: Option<&Path>,
+    worker_dir: &Path,
+) -> Option<PathBuf> {
+    let mut candidates = Vec::new();
+
+    if let Some(root) = project_root {
+        candidates.push(root.join("ffmpeg").join("bin"));
+        candidates.push(root.join("ffmpeg"));
+    }
+
+    if let Ok(resource_dir) = app.path().resource_dir() {
+        candidates.push(resource_dir.join("ffmpeg").join("bin"));
+        candidates.push(resource_dir.join("ffmpeg"));
+    }
+
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            candidates.push(exe_dir.join("ffmpeg").join("bin"));
+            candidates.push(exe_dir.join("ffmpeg"));
+        }
+    }
+
+    if let Some(parent) = worker_dir.parent() {
+        candidates.push(parent.join("ffmpeg").join("bin"));
+        candidates.push(parent.join("ffmpeg"));
+    }
+
+    candidates
+        .into_iter()
+        .find(|candidate| ffmpeg_tool_dir_is_complete(candidate))
 }
 
 fn resolve_sidecar_binary_path(app: &AppHandle) -> anyhow::Result<PathBuf> {
@@ -191,7 +263,7 @@ fn kill_worker_child(child: CommandChild) -> Option<u32> {
     #[cfg(target_os = "windows")]
     {
         let pid_text = pid.to_string();
-        let _ = std::process::Command::new("taskkill")
+        let _ = hidden_command("taskkill")
             .args(["/PID", &pid_text, "/T", "/F"])
             .output();
     }
@@ -208,7 +280,7 @@ fn kill_worker_child_handle(child: &SharedWorkerChild) -> Option<u32> {
 #[cfg(target_os = "windows")]
 fn process_is_running(pid: u32) -> bool {
     let filter = format!("PID eq {pid}");
-    let Ok(output) = std::process::Command::new("tasklist")
+    let Ok(output) = hidden_command("tasklist")
         .args(["/FI", &filter, "/FO", "CSV", "/NH"])
         .output()
     else {
@@ -260,7 +332,7 @@ fn sidecar_worker_processes() -> Vec<(u32, String)> {
     let script = format!(
         "Get-CimInstance Win32_Process -Filter \"Name = '{SIDECAR_EXE_NAME}'\" | ForEach-Object {{ \"$($_.ProcessId)|$($_.ExecutablePath)\" }}"
     );
-    let Ok(output) = std::process::Command::new("powershell.exe")
+    let Ok(output) = hidden_command("powershell.exe")
         .args(["-NoProfile", "-Command", &script])
         .output()
     else {
@@ -285,7 +357,7 @@ fn sweep_stale_sidecar_workers(sidecar_dir: &Path) -> Vec<u32> {
             continue;
         }
         let pid_text = pid.to_string();
-        let _ = std::process::Command::new("taskkill")
+        let _ = hidden_command("taskkill")
             .args(["/PID", &pid_text, "/T", "/F"])
             .output();
         let _ = wait_for_process_exit(pid, Duration::from_secs(5));
@@ -360,27 +432,42 @@ fn spawn_worker(app: &AppHandle, state: &WorkerState) -> anyhow::Result<()> {
         .args(["worker", "--no-preload"])
         .current_dir(worker_dir);
 
-    // Pin the worker's "project root" so it can find the `models/` folder
-    // (FV4 ckpt + config). The worker is a PyInstaller one-dir bundle under
-    // `srtforge_worker/`, so in release builds the project root should be the
-    // parent resource directory, not the sidecar executable directory.
-    //
-    //   - If the user sets SRTFORGE_PROJECT_ROOT in their environment,
-    //     pass it through.
-    //   - Otherwise, in dev (debug) builds, walk up from cwd until we
-    //     find a directory that contains a `models/` subdirectory.
-    //     `pnpm tauri dev` runs from `src-tauri/`, so the search has to
-    //     climb two levels (or more) to reach the Srtforge repo root.
-    //   - In release builds, use the parent of the sidecar folder so the
-    //     existing `<project root>/models` convention is preserved.
-    if let Ok(explicit) = std::env::var("SRTFORGE_PROJECT_ROOT") {
-        sidecar = sidecar.env("SRTFORGE_PROJECT_ROOT", explicit);
-    } else if cfg!(debug_assertions) {
-        if let Some(root) = find_dev_project_root() {
-            sidecar = sidecar.env("SRTFORGE_PROJECT_ROOT", root.display().to_string());
+    // Pin the worker's project root so relative FV4 paths resolve to the
+    // real `<repo>/models` folder. Release no-bundle runs keep the sidecar
+    // under `src-tauri/binaries/`, so the resource parent is not always the
+    // project root.
+    let project_root = if let Ok(explicit) = std::env::var("SRTFORGE_PROJECT_ROOT") {
+        sidecar = sidecar.env("SRTFORGE_PROJECT_ROOT", explicit.clone());
+        Some(PathBuf::from(explicit))
+    } else {
+        let discovered_root = find_project_root_from(worker_dir)
+            .or_else(|| {
+                app.path()
+                    .resource_dir()
+                    .ok()
+                    .and_then(|path| find_project_root_from(&path))
+            })
+            .or_else(|| {
+                std::env::current_exe()
+                    .ok()
+                    .and_then(|path| find_project_root_from(&path))
+            })
+            .or_else(find_dev_project_root)
+            .or_else(|| worker_dir.parent().map(Path::to_path_buf));
+        if let Some(project_root) = discovered_root.as_ref() {
+            sidecar = sidecar.env("SRTFORGE_PROJECT_ROOT", project_root.display().to_string());
         }
-    } else if let Some(project_root) = worker_dir.parent() {
-        sidecar = sidecar.env("SRTFORGE_PROJECT_ROOT", project_root.display().to_string());
+        discovered_root
+    };
+
+    if let Some(ffmpeg_dir) = resolve_bundled_ffmpeg_dir(app, project_root.as_deref(), worker_dir) {
+        let mut path_entries = vec![ffmpeg_dir];
+        if let Some(existing_path) = std::env::var_os("PATH") {
+            path_entries.extend(std::env::split_paths(&existing_path));
+        }
+        if let Ok(joined_path) = std::env::join_paths(path_entries) {
+            sidecar = sidecar.env("PATH", joined_path.to_string_lossy().to_string());
+        }
     }
 
     let (mut rx, child) = sidecar
@@ -575,15 +662,7 @@ fn worker_write_failed_payload(line: &str, error: &str) -> serde_json::Value {
 /// few ancestors so we never wander out of the repo.
 fn find_dev_project_root() -> Option<std::path::PathBuf> {
     let start = std::env::current_dir().ok()?;
-    let mut cur: Option<&std::path::Path> = Some(start.as_path());
-    for _ in 0..6 {
-        let dir = cur?;
-        if dir.join("models").is_dir() {
-            return Some(dir.to_path_buf());
-        }
-        cur = dir.parent();
-    }
-    None
+    find_project_root_from(&start)
 }
 
 fn project_root_path() -> Result<PathBuf, String> {
@@ -1168,9 +1247,8 @@ fn clear_gpu_cache(state: State<'_, WorkerState>) -> Result<(), String> {
     send_to_worker(&state, &WorkerRequest::ClearGpuCache)
 }
 
-#[tauri::command]
-fn gpu_telemetry() -> GpuTelemetry {
-    let output = std::process::Command::new("nvidia-smi")
+fn read_gpu_telemetry() -> GpuTelemetry {
+    let output = hidden_command("nvidia-smi")
         .args([
             "--query-gpu=name,utilization.gpu,memory.used,memory.total",
             "--format=csv,noheader,nounits",
@@ -1193,14 +1271,23 @@ fn gpu_telemetry() -> GpuTelemetry {
 }
 
 #[tauri::command]
+async fn gpu_telemetry() -> GpuTelemetry {
+    tauri::async_runtime::spawn_blocking(read_gpu_telemetry)
+        .await
+        .unwrap_or_else(|e| GpuTelemetry::unavailable(format!("GPU telemetry task failed: {e}")))
+}
+
+#[tauri::command]
 fn normalize(
+    app: AppHandle,
     state: State<'_, WorkerState>,
     file: String,
     id: Option<String>,
     config: serde_json::Value,
 ) -> Result<String, String> {
     let id = id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-    send_to_worker(
+    send_to_worker_with_restart(
+        &app,
         &state,
         &WorkerRequest::Normalize {
             id: id.clone(),
@@ -1213,13 +1300,15 @@ fn normalize(
 
 #[tauri::command]
 fn separate(
+    app: AppHandle,
     state: State<'_, WorkerState>,
     file: String,
     id: Option<String>,
     config: serde_json::Value,
 ) -> Result<String, String> {
     let id = id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-    send_to_worker(
+    send_to_worker_with_restart(
+        &app,
         &state,
         &WorkerRequest::Separate {
             id: id.clone(),
@@ -1238,7 +1327,7 @@ fn separate(
 fn open_path(path: String) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
-        std::process::Command::new("cmd")
+        hidden_command("cmd")
             .args(["/C", "start", "", &path])
             .spawn()
             .map(|_| ())
@@ -1285,7 +1374,7 @@ struct ProbeResult {
 
 #[tauri::command]
 fn probe_file(path: String) -> Result<ProbeResult, String> {
-    let output = std::process::Command::new("ffprobe")
+    let output = hidden_command("ffprobe")
         .args([
             "-v",
             "error",
@@ -1436,17 +1525,7 @@ pub fn run() {
             probe_file,
             get_logs_dir,
         ])
-        .setup(|app| {
-            let handle = app.handle().clone();
-            let state = app.state::<WorkerState>();
-            // Best-effort spawn; if the sidecar isn't bundled (dev mode
-            // without a built worker), the UI still loads and surfaces a
-            // friendly error from the first command call.
-            if let Err(e) = spawn_worker(&handle, &state) {
-                eprintln!("worker spawn skipped: {e}");
-            }
-            Ok(())
-        })
+        .setup(|_app| Ok(()))
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

@@ -12,6 +12,7 @@ import {
 } from "../lib/asrModels";
 import { pickFolder } from "../lib/tauri";
 import { useUi } from "../store";
+import type { WhisperComputeType } from "../types";
 import { Group, Row, Toggle } from "./settings/Field";
 
 type Tab = "basic" | "performance" | "advanced";
@@ -41,6 +42,19 @@ const PathRow = ({ value, onChange }: PathRowProps) => (
     </button>
   </div>
 );
+
+const WHISPER_COMPUTE_OPTIONS: Array<{
+  value: WhisperComputeType;
+  label: string;
+}> = [
+  { value: "auto", label: "Auto" },
+  { value: "int8_float16", label: "int8_float16 (recommended)" },
+  { value: "float16", label: "float16" },
+  { value: "bfloat16", label: "bfloat16" },
+  { value: "int8", label: "int8" },
+  { value: "int8_bfloat16", label: "int8_bfloat16" },
+  { value: "float32", label: "float32" },
+];
 
 export const SettingsDrawer = () => {
   const useQuickSettings = useUi(
@@ -165,6 +179,34 @@ const FullSettingsDrawer = () => {
   const [tab, setTab] = useState<Tab>("basic");
   const embedDisabled = !settings.embed;
   const selectedAsrModel = normalizeAsrModel(settings.asrModel);
+  const selectedAsrEngine = asrEngineForModel(selectedAsrModel);
+  const applyWhisperFv4Profile = () => {
+    setSetting("device", "cuda");
+    setSetting("preferGpu", true);
+    setSetting("sep", "fv4");
+    setSetting("preferCenter", true);
+    setSetting("sepHz", 44100);
+    setSetting("allowUntaggedEnglish", false);
+    setSetting("fv4Cfg", "./models/voc_gabox.yaml");
+    setSetting("fv4Ckpt", "./models/voc_fv4.ckpt");
+    setSetting("asrModel", "large-v3-turbo");
+    setSetting("engine", "whisper");
+    setSetting("whisperComputeType", "int8_float16");
+    setSetting("language", "en");
+    setSetting("fp32", false);
+    setSetting("attnLeft", 1280);
+    setSetting("attnRight", 1280);
+    setSetting("subsamplingChunkFactor", 0);
+    setSetting("dumpWords", false);
+    setSetting("extract", "dual_mono_center");
+    setSetting(
+      "filterChain",
+      "highpass=f=60,lowpass=f=10000,aformat=sample_fmts=flt,aresample=resampler=soxr:osf=flt:osr=16000",
+    );
+    setSetting("geminiEnabled", false);
+    setSetting("style", "netflix");
+    showToast("Applied profile: Whisper int8_float16 + FV4");
+  };
 
   return (
     <>
@@ -395,6 +437,20 @@ const FullSettingsDrawer = () => {
 
           {tab === "performance" && (
             <div className="set-pane">
+              <Group title="Profiles">
+                <Row
+                  label="Best benchmark profile"
+                  desc="Local Whisper large-v3-turbo with int8_float16 compute and FV4 vocal separation."
+                >
+                  <button
+                    className="btn btn-primary"
+                    onClick={applyWhisperFv4Profile}
+                  >
+                    Apply Whisper int8+FV4
+                  </button>
+                </Row>
+              </Group>
+
               <Group title="Hardware">
                 <Row
                   label="Inference device"
@@ -461,6 +517,28 @@ const FullSettingsDrawer = () => {
                     {SUPPORTED_ASR_MODELS.map((model) => (
                       <option key={model.value} value={model.value}>
                         {model.label}
+                      </option>
+                    ))}
+                  </select>
+                </Row>
+                <Row
+                  label="Whisper compute type"
+                  desc="Faster-Whisper precision. int8_float16 matched the best FV4 benchmark profile."
+                >
+                  <select
+                    className="input wide"
+                    value={settings.whisperComputeType}
+                    disabled={selectedAsrEngine !== "whisper"}
+                    onChange={(e) =>
+                      setSetting(
+                        "whisperComputeType",
+                        e.target.value as WhisperComputeType,
+                      )
+                    }
+                  >
+                    {WHISPER_COMPUTE_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
                       </option>
                     ))}
                   </select>

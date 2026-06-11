@@ -21,6 +21,7 @@ export const buildRunSettingsSummary = (s: Settings): JobSettingsSummary => {
     sep: s.sep,
     engine: asrEngineForModel(asrModel),
     asrModel,
+    whisperComputeType: s.whisperComputeType,
     language: s.language,
     style: s.style,
     embed: s.embed,
@@ -41,6 +42,10 @@ export const buildWorkerConfig = (s: Settings): Record<string, unknown> => {
   const embedEnabled = s.embed;
   const asrModel = normalizeAsrModel(s.asrModel);
   const asrEngine = asrEngineForModel(asrModel);
+  const whisperComputeType =
+    asrEngine === "whisper" && s.whisperComputeType !== "auto"
+      ? s.whisperComputeType
+      : null;
   return {
     studio: {
       gpu_performance_mode: s.gpuPerformanceMode,
@@ -72,6 +77,7 @@ export const buildWorkerConfig = (s: Settings): Record<string, unknown> => {
       engine: asrEngine,
       model: asrModel,
       language: s.language,
+      compute_type: whisperComputeType,
       force_float32: s.fp32,
       rel_pos_local_attn: [s.attnLeft, s.attnRight],
       subsampling_conv_chunking_factor: s.subsamplingChunkFactor,

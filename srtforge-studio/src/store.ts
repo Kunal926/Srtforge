@@ -67,7 +67,7 @@ const elapsedJobSeconds = (file: QueueFile, reported?: number | null) => {
 };
 
 const DEFAULT_SETTINGS: Settings = {
-  device: "auto",
+  device: "cuda",
   gpuPct: 100,
   fp32: false,
   preferGpu: true,
@@ -80,6 +80,7 @@ const DEFAULT_SETTINGS: Settings = {
   fv4Ckpt: "./models/voc_fv4.ckpt",
   engine: asrEngineForModel(DEFAULT_ASR_MODEL),
   asrModel: DEFAULT_ASR_MODEL,
+  whisperComputeType: "int8_float16",
   language: "en",
   attnLeft: 1280,
   attnRight: 1280,
@@ -794,6 +795,36 @@ export const useUi = create<UiState>()(
               migratedSettings = { ...migratedSettings, asrModel, engine };
             }
           }
+          if (version < 8 && !migratedSettings.whisperComputeType) {
+            migratedSettings = { ...migratedSettings, whisperComputeType: "auto" };
+          }
+          if (version < 9) {
+            migratedSettings = {
+              ...migratedSettings,
+              device: "cuda",
+              fp32: false,
+              preferGpu: true,
+              sep: "fv4",
+              preferCenter: true,
+              sepHz: 44100,
+              allowUntaggedEnglish: false,
+              fv4Cfg: "./models/voc_gabox.yaml",
+              fv4Ckpt: "./models/voc_fv4.ckpt",
+              engine: "whisper",
+              asrModel: "large-v3-turbo",
+              whisperComputeType: "int8_float16",
+              language: "en",
+              attnLeft: 1280,
+              attnRight: 1280,
+              subsamplingChunkFactor: 0,
+              dumpWords: false,
+              extract: "dual_mono_center",
+              filterChain:
+                "highpass=f=60,lowpass=f=10000,aformat=sample_fmts=flt,aresample=resampler=soxr:osf=flt:osr=16000",
+              geminiEnabled: false,
+              style: "netflix",
+            };
+          }
         }
 
         const migratedFiles =
@@ -819,7 +850,7 @@ export const useUi = create<UiState>()(
       // Bump when Settings union shapes change so old stored values that
       // would now fail the type unions (e.g. device "gpu" → "cuda",
       // style "default" → "bbc"|"custom") get discarded cleanly.
-      version: 7,
+      version: 9,
     },
   ),
 );

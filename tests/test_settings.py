@@ -51,6 +51,7 @@ whisper:
   engine: parakeet
   model: nvidia/parakeet-tdt-0.6b-v3
   language: es
+  compute_type: float16
   force_float32: true
   rel_pos_local_attn: [1200, 300]
   subsampling_conv_chunking_factor: 6
@@ -62,6 +63,7 @@ whisper:
     assert settings.whisper.engine == "parakeet"
     assert settings.whisper.model == "nvidia/parakeet-tdt-0.6b-v3"
     assert settings.whisper.language == "es"
+    assert settings.whisper.compute_type == "float16"
     assert settings.whisper.force_float32 is True
     assert settings.whisper.rel_pos_local_attn == [1200, 300]
     assert settings.whisper.subsampling_conv_chunking_factor == 6
@@ -84,6 +86,7 @@ parakeet:
     settings = load_settings(config_path)
 
     assert settings.whisper.force_float32 is False
+    assert settings.whisper.compute_type == "int8_float16"
     assert settings.whisper.rel_pos_local_attn == [1280, 1280]
     assert settings.whisper.subsampling_conv_chunking_factor == 1
 

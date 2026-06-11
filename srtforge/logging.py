@@ -281,6 +281,7 @@ class RunLogger:
         cleanup_old_logs(wait=False)
         self._handle = log_path.open("w", encoding="utf8")
         self._latest_handle = LATEST_LOG.open("w", encoding="utf8")
+        self._closed = False
         now = datetime.now(timezone.utc)
         self._log_header(f"Run {run_id} started at {now.isoformat()}Z")
         self._start = monotonic()
@@ -297,18 +298,24 @@ class RunLogger:
     def _log_header(self, message: str) -> None:
         timestamp = datetime.now(timezone.utc).isoformat()
         line = f"[{timestamp}] {message}\n"
-        self._handle.write(line)
-        self._handle.flush()
-        self._latest_handle.write(line)
-        self._latest_handle.flush()
+        self._write_line(line)
 
     def _log(self, message: str) -> None:
         timestamp = datetime.now(timezone.utc).isoformat()
         line = f"[{timestamp}] {message}\n"
-        self._handle.write(line)
-        self._handle.flush()
-        self._latest_handle.write(line)
-        self._latest_handle.flush()
+        self._write_line(line)
+
+    def _write_line(self, line: str) -> None:
+        if self._closed:
+            logger.debug("Dropped RunLogger write after close: %s", line.rstrip())
+            return
+        try:
+            self._handle.write(line)
+            self._handle.flush()
+            self._latest_handle.write(line)
+            self._latest_handle.flush()
+        except (OSError, ValueError):
+            logger.debug("RunLogger write failed", exc_info=True)
 
     def log(self, message: str) -> None:
         """Record ``message`` with the current timestamp."""
@@ -341,11 +348,16 @@ class RunLogger:
     def close(self) -> None:
         """Finalize the log with the run summary."""
 
+        if self._closed:
+            return
         total = monotonic() - self._start
         detail = f" ({self._detail})" if self._detail else ""
         self._log(f"Run {self.run_id} {self._status} in {total:.2f}s{detail}")
-        self._handle.close()
-        self._latest_handle.close()
+        self._closed = True
+        try:
+            self._handle.close()
+        finally:
+            self._latest_handle.close()
 
     def __enter__(self) -> "RunLogger":
         return self

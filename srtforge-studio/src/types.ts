@@ -3,6 +3,15 @@
 
 export type FileStatus = "queued" | "processing" | "done" | "error";
 
+export type WhisperComputeType =
+  | "auto"
+  | "float32"
+  | "float16"
+  | "bfloat16"
+  | "int8"
+  | "int8_float16"
+  | "int8_bfloat16";
+
 export interface JobSettingsSummary {
   device: "auto" | "cuda" | "cpu";
   preferGpu: boolean;
@@ -10,6 +19,7 @@ export interface JobSettingsSummary {
   sep: "fv4" | "none";
   engine: "parakeet" | "whisper";
   asrModel: string;
+  whisperComputeType: WhisperComputeType;
   language: string;
   style: "netflix" | "bbc" | "custom";
   embed: boolean;
@@ -77,6 +87,7 @@ export interface Settings {
   // ASR
   engine: "parakeet" | "whisper";
   asrModel: string;
+  whisperComputeType: WhisperComputeType;
   language: string;
   attnLeft: number;
   attnRight: number;
