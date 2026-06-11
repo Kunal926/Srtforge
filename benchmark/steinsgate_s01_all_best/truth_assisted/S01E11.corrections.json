@@ -1,0 +1,43 @@
+{
+  "episode": "S01E11",
+  "policy": "Reference and hypothesis text are canonicalized for contractions, simple numbers, and common subtitle spellings. Only short filler-token deletions agreed by both existing ASR outputs are applied to the assisted truth.",
+  "original_words": 2559,
+  "corrected_words": 2556,
+  "correction_count": 3,
+  "corrections": [
+    {
+      "start_token": 312,
+      "end_token": 313,
+      "operation": "delete",
+      "old": "oh",
+      "new": "",
+      "old_tokens": [
+        "oh"
+      ],
+      "new_tokens": []
+    },
+    {
+      "start_token": 1157,
+      "end_token": 1158,
+      "operation": "delete",
+      "old": "huh",
+      "new": "",
+      "old_tokens": [
+        "huh"
+      ],
+      "new_tokens": []
+    },
+    {
+      "start_token": 1196,
+      "end_token": 1197,
+      "operation": "delete",
+      "old": "uh",
+      "new": "",
+      "old_tokens": [
+        "uh"
+      ],
+      "new_tokens": []
+    }
+  ],
+  "source_artifacts": "omitted from publication bundle"
+}

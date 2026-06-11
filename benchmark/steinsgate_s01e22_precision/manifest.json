@@ -1,0 +1,346 @@
+{
+  "created_utc": "2026-06-09T07:54:21Z",
+  "dataset": {
+    "key": "m1",
+    "title": "Reference media asset (M-1)"
+  },
+  "media": {
+    "duration_s": 1436.937,
+    "size_bytes": 8150762375,
+    "sha256": "b26df5c082629bfda5e44e7216d193dac424323099f518bbade37ff1156e2852",
+    "availability": "source media not included"
+  },
+  "reference": {
+    "kind": "assisted_truth",
+    "word_count": 2314,
+    "sha256": "894c3c09134b31ec443258f1c02de28b0ea4b79e03067a8341c63f36ed1c7c3c",
+    "availability": "normalized reference text retained in season assisted-truth artifacts"
+  },
+  "global_policy": {
+    "gemini_enabled": false,
+    "manual_existing_srt_outputs_excluded": true,
+    "isolated_subprocess_per_variant": true
+  },
+  "variants": [
+    {
+      "name": "parakeet_v3_raw_auto",
+      "engine": "parakeet",
+      "model": "nvidia/parakeet-tdt-0.6b-v3",
+      "separation_backend": "none",
+      "parakeet_precision": "auto",
+      "whisper_compute_type": null,
+      "force_float32": false,
+      "experimental": false,
+      "continuity": false,
+      "rel_pos_local_attn": [
+        1280,
+        1280
+      ],
+      "subsampling_conv_chunking_factor": 0
+    },
+    {
+      "name": "parakeet_v3_raw_fp32",
+      "engine": "parakeet",
+      "model": "nvidia/parakeet-tdt-0.6b-v3",
+      "separation_backend": "none",
+      "parakeet_precision": "fp32",
+      "whisper_compute_type": null,
+      "force_float32": false,
+      "experimental": false,
+      "continuity": false,
+      "rel_pos_local_attn": [
+        1280,
+        1280
+      ],
+      "subsampling_conv_chunking_factor": 0
+    },
+    {
+      "name": "parakeet_v3_raw_fp16",
+      "engine": "parakeet",
+      "model": "nvidia/parakeet-tdt-0.6b-v3",
+      "separation_backend": "none",
+      "parakeet_precision": "fp16",
+      "whisper_compute_type": null,
+      "force_float32": false,
+      "experimental": false,
+      "continuity": false,
+      "rel_pos_local_attn": [
+        1280,
+        1280
+      ],
+      "subsampling_conv_chunking_factor": 0
+    },
+    {
+      "name": "parakeet_v3_raw_bf16",
+      "engine": "parakeet",
+      "model": "nvidia/parakeet-tdt-0.6b-v3",
+      "separation_backend": "none",
+      "parakeet_precision": "bf16",
+      "whisper_compute_type": null,
+      "force_float32": false,
+      "experimental": false,
+      "continuity": false,
+      "rel_pos_local_attn": [
+        1280,
+        1280
+      ],
+      "subsampling_conv_chunking_factor": 0
+    },
+    {
+      "name": "parakeet_v2_raw_auto",
+      "engine": "parakeet",
+      "model": "nvidia/parakeet-tdt-0.6b-v2",
+      "separation_backend": "none",
+      "parakeet_precision": "auto",
+      "whisper_compute_type": null,
+      "force_float32": false,
+      "experimental": false,
+      "continuity": true,
+      "rel_pos_local_attn": [
+        1280,
+        1280
+      ],
+      "subsampling_conv_chunking_factor": 0
+    },
+    {
+      "name": "parakeet_v2_raw_fp32",
+      "engine": "parakeet",
+      "model": "nvidia/parakeet-tdt-0.6b-v2",
+      "separation_backend": "none",
+      "parakeet_precision": "fp32",
+      "whisper_compute_type": null,
+      "force_float32": false,
+      "experimental": false,
+      "continuity": true,
+      "rel_pos_local_attn": [
+        1280,
+        1280
+      ],
+      "subsampling_conv_chunking_factor": 0
+    },
+    {
+      "name": "parakeet_v2_raw_fp16",
+      "engine": "parakeet",
+      "model": "nvidia/parakeet-tdt-0.6b-v2",
+      "separation_backend": "none",
+      "parakeet_precision": "fp16",
+      "whisper_compute_type": null,
+      "force_float32": false,
+      "experimental": false,
+      "continuity": true,
+      "rel_pos_local_attn": [
+        1280,
+        1280
+      ],
+      "subsampling_conv_chunking_factor": 0
+    },
+    {
+      "name": "parakeet_v2_raw_bf16",
+      "engine": "parakeet",
+      "model": "nvidia/parakeet-tdt-0.6b-v2",
+      "separation_backend": "none",
+      "parakeet_precision": "bf16",
+      "whisper_compute_type": null,
+      "force_float32": false,
+      "experimental": false,
+      "continuity": true,
+      "rel_pos_local_attn": [
+        1280,
+        1280
+      ],
+      "subsampling_conv_chunking_factor": 0
+    },
+    {
+      "name": "whisper_raw_float32",
+      "engine": "whisper",
+      "model": "large-v3-turbo",
+      "separation_backend": "none",
+      "parakeet_precision": null,
+      "whisper_compute_type": "float32",
+      "force_float32": false,
+      "experimental": false,
+      "continuity": false,
+      "rel_pos_local_attn": [
+        1280,
+        1280
+      ],
+      "subsampling_conv_chunking_factor": 0
+    },
+    {
+      "name": "whisper_raw_float16",
+      "engine": "whisper",
+      "model": "large-v3-turbo",
+      "separation_backend": "none",
+      "parakeet_precision": null,
+      "whisper_compute_type": "float16",
+      "force_float32": false,
+      "experimental": false,
+      "continuity": false,
+      "rel_pos_local_attn": [
+        1280,
+        1280
+      ],
+      "subsampling_conv_chunking_factor": 0
+    },
+    {
+      "name": "whisper_raw_bfloat16",
+      "engine": "whisper",
+      "model": "large-v3-turbo",
+      "separation_backend": "none",
+      "parakeet_precision": null,
+      "whisper_compute_type": "bfloat16",
+      "force_float32": false,
+      "experimental": false,
+      "continuity": false,
+      "rel_pos_local_attn": [
+        1280,
+        1280
+      ],
+      "subsampling_conv_chunking_factor": 0
+    },
+    {
+      "name": "whisper_raw_int8",
+      "engine": "whisper",
+      "model": "large-v3-turbo",
+      "separation_backend": "none",
+      "parakeet_precision": null,
+      "whisper_compute_type": "int8",
+      "force_float32": false,
+      "experimental": false,
+      "continuity": false,
+      "rel_pos_local_attn": [
+        1280,
+        1280
+      ],
+      "subsampling_conv_chunking_factor": 0
+    },
+    {
+      "name": "whisper_raw_int8_float16",
+      "engine": "whisper",
+      "model": "large-v3-turbo",
+      "separation_backend": "none",
+      "parakeet_precision": null,
+      "whisper_compute_type": "int8_float16",
+      "force_float32": false,
+      "experimental": false,
+      "continuity": false,
+      "rel_pos_local_attn": [
+        1280,
+        1280
+      ],
+      "subsampling_conv_chunking_factor": 0
+    },
+    {
+      "name": "srtforge_fv_whisper_float16",
+      "engine": "whisper",
+      "model": "large-v3-turbo",
+      "separation_backend": "fv4",
+      "parakeet_precision": null,
+      "whisper_compute_type": "float16",
+      "force_float32": false,
+      "experimental": false,
+      "continuity": false,
+      "rel_pos_local_attn": [
+        1280,
+        1280
+      ],
+      "subsampling_conv_chunking_factor": 0
+    },
+    {
+      "name": "srtforge_fv_whisper_bfloat16",
+      "engine": "whisper",
+      "model": "large-v3-turbo",
+      "separation_backend": "fv4",
+      "parakeet_precision": null,
+      "whisper_compute_type": "bfloat16",
+      "force_float32": false,
+      "experimental": false,
+      "continuity": false,
+      "rel_pos_local_attn": [
+        1280,
+        1280
+      ],
+      "subsampling_conv_chunking_factor": 0
+    },
+    {
+      "name": "srtforge_fv_whisper_int8_float16",
+      "engine": "whisper",
+      "model": "large-v3-turbo",
+      "separation_backend": "fv4",
+      "parakeet_precision": null,
+      "whisper_compute_type": "int8_float16",
+      "force_float32": false,
+      "experimental": false,
+      "continuity": false,
+      "rel_pos_local_attn": [
+        1280,
+        1280
+      ],
+      "subsampling_conv_chunking_factor": 0
+    },
+    {
+      "name": "srtforge_fv_parakeet_v2_fp32",
+      "engine": "parakeet",
+      "model": "nvidia/parakeet-tdt-0.6b-v2",
+      "separation_backend": "fv4",
+      "parakeet_precision": "fp32",
+      "whisper_compute_type": null,
+      "force_float32": false,
+      "experimental": false,
+      "continuity": true,
+      "rel_pos_local_attn": [
+        1280,
+        1280
+      ],
+      "subsampling_conv_chunking_factor": 0
+    },
+    {
+      "name": "srtforge_fv_parakeet_v2_fp16",
+      "engine": "parakeet",
+      "model": "nvidia/parakeet-tdt-0.6b-v2",
+      "separation_backend": "fv4",
+      "parakeet_precision": "fp16",
+      "whisper_compute_type": null,
+      "force_float32": false,
+      "experimental": false,
+      "continuity": true,
+      "rel_pos_local_attn": [
+        1280,
+        1280
+      ],
+      "subsampling_conv_chunking_factor": 0
+    },
+    {
+      "name": "srtforge_fv_parakeet_v2_bf16",
+      "engine": "parakeet",
+      "model": "nvidia/parakeet-tdt-0.6b-v2",
+      "separation_backend": "fv4",
+      "parakeet_precision": "bf16",
+      "whisper_compute_type": null,
+      "force_float32": false,
+      "experimental": false,
+      "continuity": true,
+      "rel_pos_local_attn": [
+        1280,
+        1280
+      ],
+      "subsampling_conv_chunking_factor": 0
+    },
+    {
+      "name": "srtforge_fv_parakeet_v3_fp32",
+      "engine": "parakeet",
+      "model": "nvidia/parakeet-tdt-0.6b-v3",
+      "separation_backend": "fv4",
+      "parakeet_precision": "fp32",
+      "whisper_compute_type": null,
+      "force_float32": false,
+      "experimental": false,
+      "continuity": false,
+      "rel_pos_local_attn": [
+        1280,
+        1280
+      ],
+      "subsampling_conv_chunking_factor": 0
+    }
+  ]
+}

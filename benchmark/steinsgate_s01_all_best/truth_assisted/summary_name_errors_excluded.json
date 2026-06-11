@@ -1,0 +1,11 @@
+{
+  "srtforge_fv_whisper_int8_float16_name_errors_excluded": {
+    "episodes": 24,
+    "weighted_wer_pct": 5.26,
+    "macro_wer_pct": 5.31,
+    "median_wer_pct": 5.34,
+    "reference_words": 63316,
+    "word_errors": 3331,
+    "episodes_under_6_pct": 17
+  }
+}
