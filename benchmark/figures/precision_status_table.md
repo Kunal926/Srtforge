@@ -1,0 +1,22 @@
+| Dataset | Variant | Status | Engine | Model | Precision | WER % | RTF | Error |
+| --- | --- | --- | --- | --- | --- | ---: | ---: | --- |
+| Steins;Gate S01E22 | parakeet_v2_raw_auto | completed | parakeet | parakeet_v2 | bf16 | 7.04 | 0.11470 |  |
+| Steins;Gate S01E22 | parakeet_v2_raw_bf16 | completed | parakeet | parakeet_v2 | bf16 | 6.70 | 0.11620 |  |
+| Steins;Gate S01E22 | parakeet_v2_raw_fp16 | completed | parakeet | parakeet_v2 | fp16 | 6.27 | 0.10554 |  |
+| Steins;Gate S01E22 | parakeet_v2_raw_fp32 | completed | parakeet | parakeet_v2 | fp32 | 7.22 | 0.13634 |  |
+| Steins;Gate S01E22 | parakeet_v3_raw_auto | completed | parakeet | parakeet_v3 | bf16 | 8.30 | 0.14770 |  |
+| Steins;Gate S01E22 | parakeet_v3_raw_bf16 | completed | parakeet | parakeet_v3 | bf16 | 8.56 | 0.12492 |  |
+| Steins;Gate S01E22 | parakeet_v3_raw_fp16 | completed | parakeet | parakeet_v3 | fp16 | 7.95 | 0.11447 |  |
+| Steins;Gate S01E22 | parakeet_v3_raw_fp32 | completed | parakeet | parakeet_v3 | fp32 | 8.12 | 0.15026 |  |
+| Steins;Gate S01E22 | srtforge_fv_parakeet_v2_bf16 | completed | parakeet | parakeet_v2 | bf16 | 4.97 | 0.18993 |  |
+| Steins;Gate S01E22 | srtforge_fv_parakeet_v2_fp16 | completed | parakeet | parakeet_v2 | fp16 | 4.58 | 0.16649 |  |
+| Steins;Gate S01E22 | srtforge_fv_parakeet_v2_fp32 | completed | parakeet | parakeet_v2 | fp32 | 4.49 | 0.23552 |  |
+| Steins;Gate S01E22 | srtforge_fv_parakeet_v3_fp32 | completed | parakeet | parakeet_v3 | fp32 | 4.75 | 0.22847 |  |
+| Steins;Gate S01E22 | srtforge_fv_whisper_bfloat16 | completed | whisper | large-v3-turbo | bf16 | 3.72 | 0.17585 |  |
+| Steins;Gate S01E22 | srtforge_fv_whisper_float16 | completed | whisper | large-v3-turbo | fp16 | 3.85 | 0.16152 |  |
+| Steins;Gate S01E22 | srtforge_fv_whisper_int8_float16 | completed | whisper | large-v3-turbo | int8_float16 | 3.80 | 0.15966 |  |
+| Steins;Gate S01E22 | whisper_raw_bfloat16 | completed | whisper | large-v3-turbo | bf16 | 5.32 | 0.08632 |  |
+| Steins;Gate S01E22 | whisper_raw_float16 | completed | whisper | large-v3-turbo | fp16 | 5.01 | 0.10988 |  |
+| Steins;Gate S01E22 | whisper_raw_float32 | completed | whisper | large-v3-turbo | fp32 | 5.01 | 0.08183 |  |
+| Steins;Gate S01E22 | whisper_raw_int8 | completed | whisper | large-v3-turbo | int8 | 5.49 | 0.06041 |  |
+| Steins;Gate S01E22 | whisper_raw_int8_float16 | completed | whisper | large-v3-turbo | int8_float16 | 5.49 | 0.06940 |  |

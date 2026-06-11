@@ -1,0 +1,173 @@
+{
+  "created_utc": "2026-06-08T21:01:30Z",
+  "dataset": {
+    "title": "24-episode evaluation dataset",
+    "episodes": 24
+  },
+  "source_media": "not included",
+  "reference_policy": {
+    "kind": "ass_sidecar",
+    "styles": [
+      "Default"
+    ],
+    "scoring": "word-level WER after ASS tag, punctuation, and case normalization",
+    "existing_srt_files_excluded": true
+  },
+  "global_policy": {
+    "gemini_enabled": false,
+    "isolated_subprocess_per_episode_variant": true,
+    "english_audio_selection": "first eng/en/english audio stream reported by ffprobe"
+  },
+  "episodes": [
+    {
+      "key": "S01E01",
+      "media_duration_s": 1436.937,
+      "reference_cue_count": 407,
+      "reference_words": 2386
+    },
+    {
+      "key": "S01E02",
+      "media_duration_s": 1437.062,
+      "reference_cue_count": 419,
+      "reference_words": 2704
+    },
+    {
+      "key": "S01E03",
+      "media_duration_s": 1437.02,
+      "reference_cue_count": 493,
+      "reference_words": 3037
+    },
+    {
+      "key": "S01E04",
+      "media_duration_s": 1436.981,
+      "reference_cue_count": 487,
+      "reference_words": 2978
+    },
+    {
+      "key": "S01E05",
+      "media_duration_s": 1436.978,
+      "reference_cue_count": 494,
+      "reference_words": 3046
+    },
+    {
+      "key": "S01E06",
+      "media_duration_s": 1437.062,
+      "reference_cue_count": 421,
+      "reference_words": 2848
+    },
+    {
+      "key": "S01E07",
+      "media_duration_s": 1437.02,
+      "reference_cue_count": 408,
+      "reference_words": 2474
+    },
+    {
+      "key": "S01E08",
+      "media_duration_s": 1436.981,
+      "reference_cue_count": 431,
+      "reference_words": 2699
+    },
+    {
+      "key": "S01E09",
+      "media_duration_s": 1437.02,
+      "reference_cue_count": 455,
+      "reference_words": 2912
+    },
+    {
+      "key": "S01E10",
+      "media_duration_s": 1437.02,
+      "reference_cue_count": 431,
+      "reference_words": 2738
+    },
+    {
+      "key": "S01E11",
+      "media_duration_s": 1437.103,
+      "reference_cue_count": 391,
+      "reference_words": 2511
+    },
+    {
+      "key": "S01E12",
+      "media_duration_s": 1436.981,
+      "reference_cue_count": 428,
+      "reference_words": 2822
+    },
+    {
+      "key": "S01E13",
+      "media_duration_s": 1437.062,
+      "reference_cue_count": 346,
+      "reference_words": 1990
+    },
+    {
+      "key": "S01E14",
+      "media_duration_s": 1436.979,
+      "reference_cue_count": 395,
+      "reference_words": 2575
+    },
+    {
+      "key": "S01E15",
+      "media_duration_s": 1437.02,
+      "reference_cue_count": 419,
+      "reference_words": 2829
+    },
+    {
+      "key": "S01E16",
+      "media_duration_s": 1437.103,
+      "reference_cue_count": 395,
+      "reference_words": 2679
+    },
+    {
+      "key": "S01E17",
+      "media_duration_s": 1437.02,
+      "reference_cue_count": 377,
+      "reference_words": 2383
+    },
+    {
+      "key": "S01E18",
+      "media_duration_s": 1437.062,
+      "reference_cue_count": 446,
+      "reference_words": 3041
+    },
+    {
+      "key": "S01E19",
+      "media_duration_s": 1437.022,
+      "reference_cue_count": 309,
+      "reference_words": 1842
+    },
+    {
+      "key": "S01E20",
+      "media_duration_s": 1437.062,
+      "reference_cue_count": 294,
+      "reference_words": 1882
+    },
+    {
+      "key": "S01E21",
+      "media_duration_s": 1436.979,
+      "reference_cue_count": 360,
+      "reference_words": 2492
+    },
+    {
+      "key": "S01E22",
+      "media_duration_s": 1436.937,
+      "reference_cue_count": 349,
+      "reference_words": 2284
+    },
+    {
+      "key": "S01E23",
+      "media_duration_s": 1437.02,
+      "reference_cue_count": 388,
+      "reference_words": 2724
+    },
+    {
+      "key": "S01E24",
+      "media_duration_s": 1437.023,
+      "reference_cue_count": 409,
+      "reference_words": 2396
+    }
+  ],
+  "publication_bundle": {
+    "generated_srt_files": "omitted",
+    "ass_sidecar_files": "omitted",
+    "temporary_audio": "omitted",
+    "word_timestamps": "omitted"
+  }
+}

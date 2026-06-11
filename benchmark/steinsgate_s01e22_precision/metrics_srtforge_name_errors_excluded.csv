@@ -1,0 +1,8 @@
+base_variant,dataset,deletions,excluded_name_chunks,excluded_name_deletions,excluded_name_errors,excluded_name_insertions,excluded_name_substitutions,hits,hypothesis_words,insertions,mer,reference_words,scoring_policy,substitutions,truth_reference,variant,wer,wer_pct,wil,word_errors
+srtforge_fv_parakeet_v2_bf16,steins_s01e22,48,14,1,18,0,17,2203,2287,22,,2314,steins_gate_named_entity_error_excluded,45,assisted_truth:M-1,srtforge_fv_parakeet_v2_bf16_name_errors_excluded,0.0497,4.97,,115
+srtforge_fv_parakeet_v2_fp16,steins_s01e22,35,13,0,17,0,17,2215,2303,24,,2314,steins_gate_named_entity_error_excluded,47,assisted_truth:M-1,srtforge_fv_parakeet_v2_fp16_name_errors_excluded,0.04581,4.58,,106
+srtforge_fv_parakeet_v2_fp32,steins_s01e22,33,13,0,19,0,19,2215,2305,24,,2314,steins_gate_named_entity_error_excluded,47,assisted_truth:M-1,srtforge_fv_parakeet_v2_fp32_name_errors_excluded,0.04494,4.49,,104
+srtforge_fv_parakeet_v3_fp32,steins_s01e22,39,28,8,34,0,26,2198,2295,28,,2314,steins_gate_named_entity_error_excluded,43,assisted_truth:M-1,srtforge_fv_parakeet_v3_fp32_name_errors_excluded,0.04754,4.75,,110
+srtforge_fv_whisper_bfloat16,steins_s01e22,17,15,1,19,0,18,2239,2326,30,,2314,steins_gate_named_entity_error_excluded,39,assisted_truth:M-1,srtforge_fv_whisper_bfloat16_name_errors_excluded,0.03717,3.72,,86
+srtforge_fv_whisper_float16,steins_s01e22,17,14,0,17,0,17,2242,2331,34,,2314,steins_gate_named_entity_error_excluded,38,assisted_truth:M-1,srtforge_fv_whisper_float16_name_errors_excluded,0.03846,3.85,,89
+srtforge_fv_whisper_int8_float16,steins_s01e22,17,15,0,18,0,18,2239,2328,31,,2314,steins_gate_named_entity_error_excluded,40,assisted_truth:M-1,srtforge_fv_whisper_int8_float16_name_errors_excluded,0.03803,3.8,,88

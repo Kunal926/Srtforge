@@ -1,0 +1,22 @@
+{
+  "srtforge_fv_whisper_int8_float16": {
+    "episodes": 24,
+    "weighted_wer_pct": 5.26,
+    "macro_wer_pct": 5.31,
+    "median_wer_pct": 5.34,
+    "reference_words": 63316,
+    "word_errors": 3331,
+    "episodes_under_6_pct": 17,
+    "scoring_policy": "assisted_truth_with_srtforge_name_error_exclusion"
+  },
+  "raw_whisper_int8_float16": {
+    "episodes": 24,
+    "weighted_wer_pct": 6.57,
+    "macro_wer_pct": 6.69,
+    "median_wer_pct": 6.61,
+    "reference_words": 63316,
+    "word_errors": 4163,
+    "episodes_under_6_pct": 8,
+    "scoring_policy": "assisted_truth_normal_wer"
+  }
+}
