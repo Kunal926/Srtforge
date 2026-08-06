@@ -37,11 +37,7 @@
       "icons/icon.png",
       "icons/icon.ico"
     ],
-    "resources": {
-      "binaries/srtforge_worker/": "srtforge_worker/",
-      "binaries/ffmpeg/": "ffmpeg/",
-      "../../models/": "models/"
-    },
+    "resources": {},
     "windows": {
       "wix": {
         "language": ["en-US"]

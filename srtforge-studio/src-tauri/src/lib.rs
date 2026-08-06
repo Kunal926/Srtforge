@@ -6,7 +6,8 @@
 // to talk to `python -m srtforge worker`.
 
 use std::collections::HashMap;
-use std::io::Write;
+use std::fs::{self, File};
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{
     atomic::{AtomicBool, AtomicU64, Ordering},
@@ -16,6 +17,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
@@ -130,6 +132,63 @@ impl GpuTelemetry {
 
 const WEBVIEW_GPU_ACCELERATION_DISABLED: bool = false;
 
+const RUNTIME_RELEASE_BASE_URL: &str =
+    "https://github.com/Kunal926/Srtforge/releases/download/v1.0.0";
+const RUNTIME_DIR_NAME: &str = "runtime-v1";
+const WORKER_ARCHIVE_BASENAME: &str = "srtforge-worker-cuda-win64.7z";
+
+#[derive(Debug, Clone, Copy)]
+struct RuntimeAsset {
+    name: &'static str,
+    sha256: &'static str,
+}
+
+const WORKER_ARCHIVE_PARTS: &[RuntimeAsset] = &[
+    RuntimeAsset {
+        name: "srtforge-worker-cuda-win64.7z.001",
+        sha256: "abb74637ad9e63f843738ec9ca32ac08cd87b46d23011a880185e8822c3f976a",
+    },
+    RuntimeAsset {
+        name: "srtforge-worker-cuda-win64.7z.002",
+        sha256: "9b6baaf3d28593f5b8f2d69de05cef61162345faeab61a48195c6198973eeed5",
+    },
+    RuntimeAsset {
+        name: "srtforge-worker-cuda-win64.7z.003",
+        sha256: "6d93a35a6de07dc0b0945143adb0f2de99e406afe1380c1cce229acb791bf12a",
+    },
+    RuntimeAsset {
+        name: "srtforge-worker-cuda-win64.7z.004",
+        sha256: "63512405c4dd2db77879205161af9b47557c9a2ac97115c05fa490db9bf2346c",
+    },
+];
+
+const FFMPEG_ARCHIVE: RuntimeAsset = RuntimeAsset {
+    name: "ffmpeg-win64.7z",
+    sha256: "a9d59b681edbed4ea44a93ac8adf0738715a36b0b4439ef4f5ead3168d5e8b4e",
+};
+
+const MODEL_ASSETS: &[RuntimeAsset] = &[
+    RuntimeAsset {
+        name: "voc_fv4.ckpt",
+        sha256: "1a9657de5fd3ed87ad4fd1a9d2069743ecb33424836973ad0f3288e2a64e90bc",
+    },
+    RuntimeAsset {
+        name: "voc_gabox.yaml",
+        sha256: "a4f9b0d143b5cb9d5d1d3d9414c50868107caadcac1faaf9e0f021f7bf3d1c8b",
+    },
+    RuntimeAsset {
+        name: "download_checks.json",
+        sha256: "d3622e1fa19c161d3cf704927711b453d593a3f1eb0f2e0838c3136907935151",
+    },
+];
+
+const METADATA_ASSETS: &[RuntimeAsset] = &[
+    RuntimeAsset {
+        name: "release-assets-manifest.json",
+        sha256: "888e428551a6a7b0fbe38c183b5f2d8fab33ab4ff1dd646319b84e4c3e6e69f8",
+    },
+];
+
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
@@ -154,6 +213,33 @@ fn hidden_command(program: &str) -> std::process::Command {
         command.creation_flags(CREATE_NO_WINDOW);
     }
     command
+}
+
+fn emit_runtime_log(app: &AppHandle, level: &str, message: impl Into<String>) {
+    let _ = app.emit(
+        "worker:event",
+        serde_json::json!({
+            "event": "log",
+            "source": "studio-runtime",
+            "lvl": level,
+            "msg": message.into(),
+        }),
+    );
+}
+
+fn runtime_root_path(app: &AppHandle) -> anyhow::Result<PathBuf> {
+    if let Some(local_app_data) = std::env::var_os("LOCALAPPDATA") {
+        return Ok(PathBuf::from(local_app_data)
+            .join("Srtforge Studio")
+            .join(RUNTIME_DIR_NAME));
+    }
+    Ok(app.path().app_data_dir()?.join(RUNTIME_DIR_NAME))
+}
+
+fn runtime_sidecar_path(app: &AppHandle) -> Option<PathBuf> {
+    runtime_root_path(app)
+        .ok()
+        .map(|root| onedir_sidecar_path(&root))
 }
 
 fn dev_sidecar_binary_path(root: &Path) -> PathBuf {
@@ -187,6 +273,262 @@ fn ffmpeg_tool_dir_is_complete(dir: &Path) -> bool {
     let tools = ["ffmpeg", "ffprobe"];
 
     tools.iter().all(|tool| dir.join(tool).is_file())
+}
+
+fn runtime_worker_is_complete(root: &Path) -> bool {
+    let worker_dir = root.join(SIDECAR_DIR_NAME);
+    worker_dir.join(SIDECAR_EXE_NAME).is_file()
+        && worker_dir.join("_internal").join("av").join("_core.pyd").is_file()
+}
+
+fn runtime_ffmpeg_is_complete(root: &Path) -> bool {
+    ffmpeg_tool_dir_is_complete(&root.join("ffmpeg").join("bin"))
+        || ffmpeg_tool_dir_is_complete(&root.join("ffmpeg"))
+}
+
+fn runtime_models_are_complete(root: &Path) -> bool {
+    root.join("models").join("voc_fv4.ckpt").is_file()
+        && root.join("models").join("voc_gabox.yaml").is_file()
+}
+
+fn runtime_is_complete(root: &Path) -> bool {
+    runtime_worker_is_complete(root)
+        && runtime_ffmpeg_is_complete(root)
+        && runtime_models_are_complete(root)
+}
+
+fn asset_url(asset_name: &str) -> String {
+    format!("{RUNTIME_RELEASE_BASE_URL}/{asset_name}")
+}
+
+fn sha256_file(path: &Path) -> anyhow::Result<String> {
+    let mut file = File::open(path)?;
+    let mut hasher = Sha256::new();
+    let mut buffer = [0_u8; 1024 * 1024];
+    loop {
+        let read = file.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
+fn file_matches_sha256(path: &Path, expected_sha256: &str) -> bool {
+    path.is_file()
+        && sha256_file(path)
+            .map(|actual| actual.eq_ignore_ascii_case(expected_sha256))
+            .unwrap_or(false)
+}
+
+fn powershell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "''"))
+}
+
+fn download_file_with_curl(url: &str, destination: &Path) -> anyhow::Result<()> {
+    let output = hidden_command("curl.exe")
+        .args(["-L", "--fail", "--retry", "3", "--retry-delay", "2", "-o"])
+        .arg(destination)
+        .arg(url)
+        .output()?;
+    if output.status.success() {
+        return Ok(());
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    anyhow::bail!(
+        "curl failed for {url}: {}",
+        if stderr.is_empty() {
+            format!("exit status {}", output.status)
+        } else {
+            stderr
+        }
+    )
+}
+
+fn download_file_with_powershell(url: &str, destination: &Path) -> anyhow::Result<()> {
+    let destination_text = destination.display().to_string();
+    let script = format!(
+        "$ProgressPreference='SilentlyContinue'; [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -UseBasicParsing -Uri {} -OutFile {}",
+        powershell_quote(url),
+        powershell_quote(&destination_text),
+    );
+    let output = hidden_command("powershell.exe")
+        .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", &script])
+        .output()?;
+    if output.status.success() {
+        return Ok(());
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    anyhow::bail!(
+        "PowerShell download failed for {url}: {}",
+        if stderr.is_empty() {
+            format!("exit status {}", output.status)
+        } else {
+            stderr
+        }
+    )
+}
+
+fn download_file(url: &str, destination: &Path) -> anyhow::Result<()> {
+    if let Some(parent) = destination.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let tmp = destination.with_extension("download");
+    let _ = fs::remove_file(&tmp);
+    download_file_with_curl(url, &tmp).or_else(|_| download_file_with_powershell(url, &tmp))?;
+    fs::rename(&tmp, destination)?;
+    Ok(())
+}
+
+fn ensure_asset(app: &AppHandle, asset: RuntimeAsset, destination: &Path) -> anyhow::Result<()> {
+    if file_matches_sha256(destination, asset.sha256) {
+        return Ok(());
+    }
+    let _ = fs::remove_file(destination);
+    emit_runtime_log(app, "info", format!("Downloading {}", asset.name));
+    download_file(&asset_url(asset.name), destination)?;
+    let actual = sha256_file(destination)?;
+    if !actual.eq_ignore_ascii_case(asset.sha256) {
+        let _ = fs::remove_file(destination);
+        anyhow::bail!(
+            "downloaded {} failed SHA-256 verification: expected {}, got {}",
+            asset.name,
+            asset.sha256,
+            actual
+        );
+    }
+    Ok(())
+}
+
+fn extract_7z_with_windows_tar(archive: &Path, destination: &Path) -> anyhow::Result<()> {
+    fs::create_dir_all(destination)?;
+    let output = hidden_command("tar.exe")
+        .args(["-xf"])
+        .arg(archive)
+        .arg("-C")
+        .arg(destination)
+        .output()?;
+    if output.status.success() {
+        return Ok(());
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    anyhow::bail!(
+        "tar extraction failed for {}: {}",
+        archive.display(),
+        if stderr.is_empty() {
+            format!("exit status {}", output.status)
+        } else {
+            stderr
+        }
+    )
+}
+
+fn concatenate_worker_parts(parts: &[PathBuf], archive_path: &Path) -> anyhow::Result<()> {
+    let mut archive = File::create(archive_path)?;
+    for part in parts {
+        let mut input = File::open(part)?;
+        std::io::copy(&mut input, &mut archive)?;
+    }
+    archive.flush()?;
+    Ok(())
+}
+
+fn ensure_worker_runtime(app: &AppHandle, root: &Path, downloads_dir: &Path) -> anyhow::Result<()> {
+    if runtime_worker_is_complete(root) {
+        return Ok(());
+    }
+
+    let worker_dir = root.join(SIDECAR_DIR_NAME);
+    let _ = fs::remove_dir_all(&worker_dir);
+    fs::create_dir_all(downloads_dir)?;
+
+    let mut part_paths = Vec::new();
+    for part in WORKER_ARCHIVE_PARTS {
+        let path = downloads_dir.join(part.name);
+        ensure_asset(app, *part, &path)?;
+        part_paths.push(path);
+    }
+
+    let archive_path = downloads_dir.join(WORKER_ARCHIVE_BASENAME);
+    let _ = fs::remove_file(&archive_path);
+    emit_runtime_log(app, "info", "Combining worker archive volumes");
+    concatenate_worker_parts(&part_paths, &archive_path)?;
+
+    for part_path in &part_paths {
+        let _ = fs::remove_file(part_path);
+    }
+
+    emit_runtime_log(app, "info", "Extracting Srtforge worker runtime");
+    extract_7z_with_windows_tar(&archive_path, root)?;
+    let _ = fs::remove_file(&archive_path);
+
+    if !runtime_worker_is_complete(root) {
+        anyhow::bail!("worker runtime extraction finished, but required files are missing");
+    }
+    Ok(())
+}
+
+fn ensure_ffmpeg_runtime(app: &AppHandle, root: &Path, downloads_dir: &Path) -> anyhow::Result<()> {
+    if runtime_ffmpeg_is_complete(root) {
+        return Ok(());
+    }
+
+    let ffmpeg_dir = root.join("ffmpeg");
+    let _ = fs::remove_dir_all(&ffmpeg_dir);
+    fs::create_dir_all(downloads_dir)?;
+    let archive_path = downloads_dir.join(FFMPEG_ARCHIVE.name);
+    ensure_asset(app, FFMPEG_ARCHIVE, &archive_path)?;
+
+    emit_runtime_log(app, "info", "Extracting FFmpeg runtime");
+    extract_7z_with_windows_tar(&archive_path, root)?;
+    let _ = fs::remove_file(&archive_path);
+
+    if !runtime_ffmpeg_is_complete(root) {
+        anyhow::bail!("FFmpeg extraction finished, but ffmpeg.exe/ffprobe.exe are missing");
+    }
+    Ok(())
+}
+
+fn ensure_model_runtime(app: &AppHandle, root: &Path) -> anyhow::Result<()> {
+    let models_dir = root.join("models");
+    fs::create_dir_all(&models_dir)?;
+    for asset in MODEL_ASSETS {
+        ensure_asset(app, *asset, &models_dir.join(asset.name))?;
+    }
+    for asset in METADATA_ASSETS {
+        ensure_asset(app, *asset, &root.join(asset.name))?;
+    }
+    if !runtime_models_are_complete(root) {
+        anyhow::bail!("model download finished, but FV4 model files are missing");
+    }
+    Ok(())
+}
+
+fn ensure_runtime_assets(app: &AppHandle) -> anyhow::Result<PathBuf> {
+    let root = runtime_root_path(app)?;
+    if runtime_is_complete(&root) {
+        return Ok(root);
+    }
+
+    emit_runtime_log(
+        app,
+        "info",
+        format!(
+            "Preparing Srtforge runtime in {}. This is a one-time download.",
+            root.display()
+        ),
+    );
+    fs::create_dir_all(&root)?;
+    let downloads_dir = root.join("_downloads");
+
+    ensure_model_runtime(app, &root)?;
+    ensure_ffmpeg_runtime(app, &root, &downloads_dir)?;
+    ensure_worker_runtime(app, &root, &downloads_dir)?;
+    let _ = fs::remove_dir_all(&downloads_dir);
+
+    emit_runtime_log(app, "info", "Srtforge runtime is ready");
+    Ok(root)
 }
 
 fn resolve_bundled_ffmpeg_dir(
@@ -239,6 +581,13 @@ fn resolve_sidecar_binary_path(app: &AppHandle) -> anyhow::Result<PathBuf> {
         attempted.push(resource_path.display().to_string());
         if resource_path.exists() {
             return Ok(resource_path);
+        }
+    }
+
+    if let Some(runtime_path) = runtime_sidecar_path(app) {
+        attempted.push(runtime_path.display().to_string());
+        if runtime_path.exists() {
+            return Ok(runtime_path);
         }
     }
 
@@ -418,6 +767,7 @@ fn spawn_worker(app: &AppHandle, state: &WorkerState) -> anyhow::Result<()> {
     }
     state.job_meta.lock().clear();
 
+    let runtime_root = ensure_runtime_assets(app)?;
     let worker_exe = resolve_sidecar_binary_path(app)?;
     let worker_dir = worker_exe
         .parent()
@@ -440,7 +790,9 @@ fn spawn_worker(app: &AppHandle, state: &WorkerState) -> anyhow::Result<()> {
         sidecar = sidecar.env("SRTFORGE_PROJECT_ROOT", explicit.clone());
         Some(PathBuf::from(explicit))
     } else {
-        let discovered_root = find_project_root_from(worker_dir)
+        let discovered_root = Some(runtime_root.clone())
+            .filter(|path| path.join("models").is_dir())
+            .or_else(|| find_project_root_from(worker_dir))
             .or_else(|| {
                 app.path()
                     .resource_dir()
