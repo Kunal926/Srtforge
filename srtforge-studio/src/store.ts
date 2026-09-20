@@ -154,6 +154,8 @@ interface UiState {
   theme: Theme;
   layout: Layout;
   density: Density;
+  /** Sidebar reduced to a 56px icon rail. Persisted like the other view prefs. */
+  sidebarCollapsed: boolean;
 
   settings: Settings;
 
@@ -171,6 +173,8 @@ interface UiState {
   setTheme: (t: Theme) => void;
   setLayout: (l: Layout) => void;
   setDensity: (d: Density) => void;
+  setSidebarCollapsed: (collapsed: boolean) => void;
+  toggleSidebar: () => void;
 
   setRunning: (r: boolean) => void;
   setQueuePaused: (p: boolean) => void;
@@ -243,6 +247,7 @@ export const useUi = create<UiState>()(
   theme: "dark",
   layout: "hybrid",
   density: "comfortable",
+  sidebarCollapsed: false,
 
   settings: DEFAULT_SETTINGS,
 
@@ -265,6 +270,8 @@ export const useUi = create<UiState>()(
   setTheme: (t) => set({ theme: t }),
   setLayout: (l) => set({ layout: l }),
   setDensity: (d) => set({ density: d }),
+  setSidebarCollapsed: (collapsed) => set({ sidebarCollapsed: collapsed }),
+  toggleSidebar: () => set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
 
   setRunning: (r) => set({ running: r }),
   setQueuePaused: (p) => set({ queuePaused: p }),
@@ -758,6 +765,7 @@ export const useUi = create<UiState>()(
         theme: s.theme,
         layout: s.layout,
         density: s.density,
+        sidebarCollapsed: s.sidebarCollapsed,
         settings: s.settings,
         libraries: s.libraries,
       }),

@@ -109,7 +109,7 @@ export const BGMView = () => {
     <div className="tool-pane">
       <div className="tool-header">
         <div className="tool-icon">
-          <I.Music size={20} />
+          <I.Music size={16} />
         </div>
         <div>
           <h2>BGM separation</h2>

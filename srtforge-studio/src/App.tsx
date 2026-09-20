@@ -60,6 +60,8 @@ export const App = () => {
   const theme = useUi((s) => s.theme);
   const density = useUi((s) => s.density);
   const layout = useUi((s) => s.layout);
+  const sidebarCollapsed = useUi((s) => s.sidebarCollapsed);
+  const toggleSidebar = useUi((s) => s.toggleSidebar);
 
   const active = useUi((s) => s.active);
   const setActive = useUi((s) => s.setActive);
@@ -101,6 +103,18 @@ export const App = () => {
       gpuPerformanceMode ? "active" : "idle",
     );
   }, [theme, density, gpuPerformanceMode]);
+
+  // Ctrl+B / Cmd+B toggles the sidebar rail, like most editors.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "b") {
+        e.preventDefault();
+        toggleSidebar();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [toggleSidebar]);
 
   // Subscribe to worker events for the lifetime of the app.
   useEffect(() => {
@@ -368,9 +382,13 @@ export const App = () => {
         onAddFiles();
       }}
     >
-      <TitleBar jobName={activeFile?.name ?? "Idle"} />
+      <TitleBar
+        jobName={activeFile?.name ?? "Idle"}
+        sidebarCollapsed={sidebarCollapsed}
+        onToggleSidebar={toggleSidebar}
+      />
 
-      <div className="app-layout">
+      <div className={`app-layout${sidebarCollapsed ? " sidebar-collapsed" : ""}`}>
         <Sidebar
           device={deviceLabel}
           gpuPct={vramPct}
@@ -382,9 +400,9 @@ export const App = () => {
             <div className="toolbar toolbar-rich">
               <div className="title-block title-block-rich">
                 <div className="tb-medallion" aria-hidden="true">
-                  {active === "queue" && <I.Inbox size={20} />}
-                  {active === "active" && <I.Pulse size={20} />}
-                  {active === "history" && <I.Archive size={20} />}
+                  {active === "queue" && <I.Inbox size={16} />}
+                  {active === "active" && <I.Pulse size={16} />}
+                  {active === "history" && <I.Archive size={16} />}
                   {((active === "queue" && running && !queuePaused && counts.queue > 0) ||
                     (active === "active" && counts.active > 0)) && (
                     <span className="tb-medallion-pulse" />

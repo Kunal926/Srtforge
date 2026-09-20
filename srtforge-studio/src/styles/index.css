@@ -179,7 +179,7 @@ button { font-family: inherit; }
 }
 .titlebar .tb-left {
   display: flex; align-items: center; gap: 10px;
-  padding: 0 12px;
+  padding: 0 12px 0 0;
   font-size: 12px;
   color: var(--text-2);
   letter-spacing: 0.005em;
@@ -199,12 +199,14 @@ button { font-family: inherit; }
   max-width: 380px;
   flex-shrink: 1;
 }
-.titlebar .tb-mark {
-  display: inline-flex; align-items: center; justify-content: center;
-  width: 16px; height: 16px;
-}
-.titlebar .tb-title { color: var(--text-1); font-weight: 500; }
 .titlebar .tb-sub { color: var(--text-3); font-size: 11.5px; }
+.titlebar .tb-sidebar-toggle {
+  width: 36px;
+  color: var(--text-3);
+  border-right: 1px solid var(--hairline);
+}
+.titlebar .tb-sidebar-toggle.on { color: var(--text-2); }
+.titlebar .tb-sidebar-toggle:hover { color: var(--text-1); }
 
 .titlebar .tb-center { display:flex; justify-content:center; }
 .titlebar .tb-controls {
@@ -216,6 +218,7 @@ button { font-family: inherit; }
   display: inline-flex; align-items:center; justify-content:center;
   border: 0; background: transparent; color: var(--text-2);
   cursor: default;
+  -webkit-app-region: no-drag;
 }
 .titlebar .tb-btn:hover { background: var(--bg-hover); }
 .titlebar .tb-btn.close:hover { background: oklch(58% 0.20 25); color: white; }
@@ -230,6 +233,7 @@ button { font-family: inherit; }
   min-height: 0;
   min-width: 0;
 }
+.app-layout.sidebar-collapsed { grid-template-columns: 56px 1fr; }
 
 .sidebar {
   width: 220px;
@@ -367,6 +371,70 @@ button { font-family: inherit; }
   display:block; height:100%; background: linear-gradient(90deg, var(--accent), var(--accent-hover));
   border-radius: 999px;
 }
+.sidebar-actions { padding: 0 8px 12px; display: flex; gap: 6px; }
+.sidebar-actions .btn-grow { flex: 1; }
+.sidebar-actions .btn-square { width: 32px; padding: 0; justify-content: center; }
+
+/* ── Collapsed rail (56px): icons, tooltips, corner badges ── */
+.sidebar.collapsed { width: 56px; max-width: 56px; }
+.sidebar.collapsed .brand { padding: 14px 0 10px; justify-content: center; }
+.sidebar.collapsed .brand .name { display: none; }
+.sidebar.collapsed .nav { padding: 4px 10px; }
+.sidebar.collapsed .nav .nav-section {
+  font-size: 0; line-height: 0;
+  height: 1px; padding: 0; margin: 8px 6px;
+  background: var(--hairline);
+}
+.sidebar.collapsed .nav button {
+  grid-template-columns: 1fr;
+  justify-items: center;
+  gap: 0;
+  padding: 9px 0;
+  position: relative;
+}
+.sidebar.collapsed .nav button > span:not(.count) { display: none; }
+.sidebar.collapsed .nav button .count {
+  position: absolute; top: 3px; right: 3px;
+  font-size: 9px; line-height: 1;
+  padding: 2px 4px;
+  border-radius: 999px;
+  background: var(--bg-elev-2);
+  color: var(--text-3);
+}
+.sidebar.collapsed .nav button .count:empty { display: none; }
+.sidebar.collapsed .nav button.active .count {
+  background: color-mix(in oklch, var(--accent) 22%, transparent);
+  color: var(--accent);
+}
+[data-theme="light"] .sidebar.collapsed .nav button.active .count { color: var(--forge-700); }
+.sidebar.collapsed .hook-row {
+  justify-content: center; gap: 0;
+  padding: 8px 0; position: relative;
+}
+.sidebar.collapsed .hook-row .hook-state {
+  position: absolute; top: 5px; right: 8px;
+  padding: 0; border: 0; background: transparent;
+}
+.device-mini {
+  margin: 8px;
+  padding: 8px 6px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--bg-elev-2);
+  display: flex; flex-direction: column; align-items: center; gap: 8px;
+  color: var(--text-2);
+}
+.device-mini .meter {
+  width: 100%; height: 4px; border-radius: 999px;
+  background: var(--line); overflow: hidden;
+}
+.device-mini .meter > span {
+  display: block; height: 100%;
+  background: var(--accent);
+  border-radius: 999px;
+}
+.sidebar.collapsed .sidebar-actions { flex-direction: column; align-items: center; padding: 0 8px 10px; }
+.sidebar.collapsed .sidebar-actions .btn { width: 32px; padding: 0; justify-content: center; flex: 0 0 auto; }
 
 /* ============================================================
    Main area
@@ -398,38 +466,22 @@ button { font-family: inherit; }
 }
 .toolbar .actions { display:flex; align-items:center; gap: 8px; flex-wrap: nowrap; }
 
-/* Watch view — richer title block */
-.toolbar-watch,
-.toolbar-rich {
-  background:
-    radial-gradient(80% 140% at 0% 0%,
-      color-mix(in oklch, var(--accent) 7%, transparent) 0%,
-      transparent 55%);
-}
+/* Rich title block: flat 36px icon tile (same tile as the stat cards), no wash */
 .title-block-rich {
   display: grid;
-  grid-template-columns: 48px 1fr;
-  gap: 14px;
+  grid-template-columns: 36px 1fr;
+  gap: 12px;
   align-items: center;
   min-width: 0;
 }
 .tb-medallion {
   position: relative;
-  width: 48px; height: 48px;
+  width: 36px; height: 36px;
   display: grid; place-items: center;
-  border-radius: 14px;
-  color: var(--accent);
-  background:
-    radial-gradient(120% 120% at 30% 20%,
-      color-mix(in oklch, var(--accent) 28%, transparent) 0%,
-      color-mix(in oklch, var(--accent) 12%, transparent) 50%,
-      color-mix(in oklch, var(--accent) 6%, transparent) 100%);
-  border: 1px solid color-mix(in oklch, var(--accent) 35%, var(--line));
-  box-shadow:
-    inset 0 1px 0 color-mix(in oklch, white 22%, transparent),
-    inset 0 -1px 0 color-mix(in oklch, var(--accent) 18%, transparent),
-    0 4px 12px -4px color-mix(in oklch, var(--accent) 35%, transparent),
-    0 1px 2px rgba(0,0,0,.06);
+  border-radius: 10px;
+  color: var(--text-2);
+  background: var(--bg-elev-2);
+  border: 1px solid var(--line-soft);
 }
 .tb-medallion-pulse {
   position: absolute;
@@ -846,14 +898,6 @@ button { font-family: inherit; }
 .gpu-max-mode .stage.active .dot::after,
 .gpu-max-mode .wave-playhead {
   display: none !important;
-}
-.gpu-max-mode .toolbar-rich,
-.gpu-max-mode .toolbar-watch,
-.gpu-max-mode .tb-medallion,
-.gpu-max-mode .watch-tile,
-.gpu-max-mode .wstat-card {
-  background: var(--bg-elev-1) !important;
-  box-shadow: none !important;
 }
 .gpu-max-mode .progress > span,
 .gpu-max-mode .device-card .meter > span {
@@ -1480,9 +1524,7 @@ button { font-family: inherit; }
   margin: 4px 22px 22px;
   border: 1px solid color-mix(in oklch, var(--accent) 35%, var(--line));
   border-radius: var(--r-lg);
-  background:
-    linear-gradient(180deg, color-mix(in oklch, var(--accent) 6%, transparent), transparent),
-    var(--bg-elev-1);
+  background: var(--bg-elev-1);
   padding: 14px 18px;
 }
 .run-head { display: grid; grid-template-columns: max-content minmax(0, 1fr) auto; gap: 16px; align-items: center; }
@@ -1856,9 +1898,7 @@ button { font-family: inherit; }
 .hook-banner {
   display: flex; align-items: center; gap: 14px;
   padding: 12px 16px;
-  background: linear-gradient(90deg,
-    color-mix(in oklch, var(--ok) 8%, var(--bg-elev-1)),
-    var(--bg-elev-1) 70%);
+  background: var(--bg-elev-1);
   border: 1px solid color-mix(in oklch, var(--ok) 28%, var(--line));
   border-radius: 12px;
   min-width: 0;
@@ -2087,32 +2127,19 @@ button { font-family: inherit; }
 .tool-header {
   position: relative;
   display: grid;
-  grid-template-columns: 48px 1fr;
-  gap: 14px;
+  grid-template-columns: 36px 1fr;
+  gap: 12px;
   align-items: center;
-  padding: 18px 18px 14px;
+  padding: 18px 22px 14px;
   margin: 0 -22px 4px;
-  border-bottom: 1px solid var(--line);
-  background:
-    radial-gradient(80% 140% at 0% 0%,
-      color-mix(in oklch, var(--accent) 7%, transparent) 0%,
-      transparent 55%);
+  border-bottom: 1px solid var(--hairline);
 }
 .tool-header .tool-icon {
-  width: 48px; height: 48px;
-  border-radius: 14px;
-  color: var(--accent);
-  background:
-    radial-gradient(120% 120% at 30% 20%,
-      color-mix(in oklch, var(--accent) 28%, transparent) 0%,
-      color-mix(in oklch, var(--accent) 12%, transparent) 50%,
-      color-mix(in oklch, var(--accent) 6%, transparent) 100%);
-  border: 1px solid color-mix(in oklch, var(--accent) 35%, var(--line));
-  box-shadow:
-    inset 0 1px 0 color-mix(in oklch, white 22%, transparent),
-    inset 0 -1px 0 color-mix(in oklch, var(--accent) 18%, transparent),
-    0 4px 12px -4px color-mix(in oklch, var(--accent) 35%, transparent),
-    0 1px 2px rgba(0,0,0,.06);
+  width: 36px; height: 36px;
+  border-radius: 10px;
+  color: var(--text-2);
+  background: var(--bg-elev-2);
+  border: 1px solid var(--line-soft);
   display: grid; place-items: center;
 }
 .tool-header h2 {

@@ -17,6 +17,7 @@ const REPO_URL = "https://github.com/StiensGate928/Srtforge";
 const SidebarView = ({ device, gpuPct, vram }: Props) => {
   const active = useUi((s) => s.active);
   const setActive = useUi((s) => s.setActive);
+  const collapsed = useUi((s) => s.sidebarCollapsed);
   const setSettingsOpen = useUi((s) => s.setSettingsOpen);
   const showToast = useUi((s) => s.showToast);
   const asrModel = useUi((s) => s.settings.asrModel);
@@ -31,17 +32,26 @@ const SidebarView = ({ device, gpuPct, vram }: Props) => {
   // surface just the basename so it fits the sidebar.
   const modelLabel = asrModel.split("/").pop() ?? asrModel;
 
-  const navBtn = (id: Tab, label: string, icon: JSX.Element, count?: number | string) => (
-    <button className={active === id ? "active" : ""} onClick={() => setActive(id)}>
-      {icon} <span>{label}</span>
-      <span className="count">{count}</span>
-    </button>
-  );
+  const navBtn = (id: Tab, label: string, icon: JSX.Element, count?: number | string) => {
+    // Collapsed rail: only a real, non-zero count earns a corner badge.
+    const badge = collapsed ? (typeof count === "number" && count > 0 ? count : "") : count;
+    return (
+      <button
+        className={active === id ? "active" : ""}
+        onClick={() => setActive(id)}
+        title={collapsed ? label : undefined}
+        aria-label={label}
+      >
+        {icon} <span>{label}</span>
+        <span className="count">{badge}</span>
+      </button>
+    );
+  };
 
   return (
-    <aside className="sidebar">
+    <aside className={`sidebar${collapsed ? " collapsed" : ""}`}>
       <div>
-        <div className="brand">
+        <div className="brand" title={collapsed ? "Srtforge Studio · v0.1.0" : undefined}>
           <div className="brand-mark">
             <BrandMark size={18} />
           </div>
@@ -66,12 +76,15 @@ const SidebarView = ({ device, gpuPct, vram }: Props) => {
 
           <div className="nav-section">Sources</div>
           {navBtn("watch", "Watch folders", <I.Folder size={14} />, "—")}
-          <div className="hook-row" title="Sonarr webhook status">
+          <div
+            className="hook-row"
+            title={collapsed ? "Sonarr hook · off" : "Sonarr webhook status"}
+          >
             <I.Antenna size={14} />
-            <span>Sonarr hook</span>
+            {!collapsed && <span>Sonarr hook</span>}
             <span className="hook-state off">
               <span className="hook-dot" />
-              off
+              {!collapsed && "off"}
             </span>
           </div>
         </nav>
@@ -80,34 +93,45 @@ const SidebarView = ({ device, gpuPct, vram }: Props) => {
       <div />
 
       <div>
-        <div className="device-card">
-          <div className="row">
-            <span className="label">GPU</span>
-            <span className="value" title={device}>{device}</span>
+        {collapsed ? (
+          <div
+            className="device-mini"
+            title={`GPU ${device}\nVRAM ${vram}\nModel ${modelLabel}`}
+          >
+            <I.Cpu size={14} />
+            <div className="meter">
+              <span style={{ width: `${gpuPct}%` }} />
+            </div>
           </div>
-          <div className="meter" title={`VRAM ${vram}`}>
-            <span style={{ width: `${gpuPct}%` }} />
+        ) : (
+          <div className="device-card">
+            <div className="row">
+              <span className="label">GPU</span>
+              <span className="value" title={device}>{device}</span>
+            </div>
+            <div className="meter" title={`VRAM ${vram}`}>
+              <span style={{ width: `${gpuPct}%` }} />
+            </div>
+            <div className="row">
+              <span className="label">VRAM</span>
+              <span className="value">{vram}</span>
+            </div>
+            <div className="row" style={{ marginTop: 2 }}>
+              <span className="label">Model</span>
+              <span className="value" title={asrModel}>{modelLabel}</span>
+            </div>
           </div>
-          <div className="row">
-            <span className="label">VRAM</span>
-            <span className="value">{vram}</span>
-          </div>
-          <div className="row" style={{ marginTop: 2 }}>
-            <span className="label">Model</span>
-            <span className="value" title={asrModel}>{modelLabel}</span>
-          </div>
-        </div>
-        <div style={{ padding: "0 8px 12px", display: "flex", gap: 6 }}>
+        )}
+        <div className="sidebar-actions">
           <button
-            className="btn btn-ghost"
-            style={{ flex: 1 }}
+            className="btn btn-ghost btn-grow"
+            title="Settings"
             onClick={() => setSettingsOpen(true)}
           >
-            <I.Settings size={14} /> Settings
+            <I.Settings size={14} /> {!collapsed && "Settings"}
           </button>
           <button
-            className="btn btn-ghost"
-            style={{ width: 32, padding: 0, justifyContent: "center" }}
+            className="btn btn-ghost btn-square"
             title="Help — opens the Srtforge repo on GitHub"
             onClick={() =>
               openPath(REPO_URL).catch((e) => showToast(`Open failed: ${e}`))

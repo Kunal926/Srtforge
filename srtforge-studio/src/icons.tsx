@@ -154,6 +154,12 @@ export const I = {
       <path d="M3 8h18M3 16h18M7 4v16M17 4v16" />
     </Icon>
   ),
+  PanelLeft: (p: P) => (
+    <Icon {...p}>
+      <rect x="3" y="4" width="18" height="16" rx="2" />
+      <path d="M9 4v16" />
+    </Icon>
+  ),
   Open: (p: P) => (
     <Icon {...p}>
       <path d="M14 4h6v6M20 4l-9 9" />

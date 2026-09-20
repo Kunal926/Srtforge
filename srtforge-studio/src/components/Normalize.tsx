@@ -128,7 +128,7 @@ export const NormalizeView = () => {
     <div className="tool-pane">
       <div className="tool-header">
         <div className="tool-icon">
-          <I.Sliders size={20} />
+          <I.Sliders size={16} />
         </div>
         <div>
           <h2>Normalize audio</h2>

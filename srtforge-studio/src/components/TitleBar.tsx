@@ -2,15 +2,16 @@ import type { MouseEvent as ReactMouseEvent } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
 import { I } from "../icons";
-import { BrandMark } from "./BrandMark";
 
 interface Props {
   jobName: string;
+  sidebarCollapsed: boolean;
+  onToggleSidebar: () => void;
 }
 
 const win = () => getCurrentWindow();
 
-export const TitleBar = ({ jobName }: Props) => {
+export const TitleBar = ({ jobName, sidebarCollapsed, onToggleSidebar }: Props) => {
   // Only drag when the mousedown lands on the titlebar background itself,
   // not on a child button. `startDragging()` captures the mouse and would
   // otherwise eat the click event before it reaches min/max/close.
@@ -23,11 +24,17 @@ export const TitleBar = ({ jobName }: Props) => {
   return (
     <div className="titlebar" onMouseDown={onTitlebarMouseDown}>
       <div className="tb-left">
-        <span className="tb-mark">
-          <BrandMark size={14} />
-        </span>
-        <span className="tb-title">Srtforge Studio</span>
-        <span className="tb-sub">— {jobName}</span>
+        <button
+          type="button"
+          className={`tb-btn tb-sidebar-toggle${sidebarCollapsed ? "" : " on"}`}
+          title={sidebarCollapsed ? "Show sidebar (Ctrl+B)" : "Hide sidebar (Ctrl+B)"}
+          aria-label={sidebarCollapsed ? "Show sidebar" : "Hide sidebar"}
+          aria-pressed={!sidebarCollapsed}
+          onClick={onToggleSidebar}
+        >
+          <I.PanelLeft size={14} />
+        </button>
+        <span className="tb-sub">{jobName}</span>
       </div>
       <div className="tb-center" />
       <div className="tb-controls">
