@@ -172,8 +172,7 @@ button { font-family: inherit; }
   grid-template-columns: auto 1fr auto;
   align-items: center;
   height: 36px;
-  background: var(--titlebar-bg);
-  border-bottom: 1px solid var(--hairline);
+  background: var(--bg-app);
   user-select: none;
   -webkit-app-region: drag;
 }
@@ -203,7 +202,6 @@ button { font-family: inherit; }
 .titlebar .tb-sidebar-toggle {
   width: 36px;
   color: var(--text-3);
-  border-right: 1px solid var(--hairline);
 }
 .titlebar .tb-sidebar-toggle.on { color: var(--text-2); }
 .titlebar .tb-sidebar-toggle:hover { color: var(--text-1); }
@@ -445,7 +443,6 @@ button { font-family: inherit; }
 
 .toolbar {
   padding: 14px 22px;
-  border-bottom: 1px solid var(--hairline);
   background: var(--bg-app);
   display: grid;
   grid-template-columns: 1fr auto;
@@ -1652,14 +1649,14 @@ button { font-family: inherit; }
   justify-content: center;
   text-align: center;
   padding: 32px 28px 36px;
-  border: 2px dashed var(--line-strong);
+  border: 2px dashed transparent;
   border-radius: 16px;
-  background: var(--bg-elev-1);
+  background: transparent;
   transition: border-color .18s, background .18s, transform .18s;
 }
 .q-empty.over {
   border-color: var(--accent);
-  background: color-mix(in oklch, var(--accent) 8%, var(--bg-elev-1));
+  background: color-mix(in oklch, var(--accent) 8%, var(--bg-app));
   transform: scale(1.005);
 }
 .q-empty .qe-art {
@@ -2132,7 +2129,6 @@ button { font-family: inherit; }
   align-items: center;
   padding: 18px 22px 14px;
   margin: 0 -22px 4px;
-  border-bottom: 1px solid var(--hairline);
 }
 .tool-header .tool-icon {
   width: 36px; height: 36px;
