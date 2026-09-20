@@ -107,17 +107,19 @@ export const BGMView = () => {
 
   return (
     <div className="tool-pane">
-      <div className="tool-header">
-        <div className="tool-icon">
-          <I.Music size={16} />
-        </div>
-        <div>
-          <h2>BGM separation</h2>
-          <p>
-            Pull vocals out of music or background score using FV4 (MelBand
+      <div className="toolbar toolbar-rich">
+        <div className="title-block title-block-rich">
+          <div className="tb-medallion" aria-hidden="true">
+            <I.Music size={16} />
+          </div>
+          <div className="tb-text">
+            <h1>BGM separation</h1>
+            <p>
+              Pull vocals out of music or background score using FV4 (MelBand
             Roformer). Outputs <span className="mono">.vocals.wav</span> and
             (optionally) <span className="mono">.instrumental.wav</span>.
-          </p>
+            </p>
+          </div>
         </div>
       </div>
 

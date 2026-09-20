@@ -126,16 +126,18 @@ export const NormalizeView = () => {
 
   return (
     <div className="tool-pane">
-      <div className="tool-header">
-        <div className="tool-icon">
-          <I.Sliders size={16} />
-        </div>
-        <div>
-          <h2>Normalize audio</h2>
-          <p>
-            Extract a clean WAV (or FLAC / MP3) from any video or audio file.
+      <div className="toolbar toolbar-rich">
+        <div className="title-block title-block-rich">
+          <div className="tb-medallion" aria-hidden="true">
+            <I.Sliders size={16} />
+          </div>
+          <div className="tb-text">
+            <h1>Normalize audio</h1>
+            <p>
+              Extract a clean WAV (or FLAC / MP3) from any video or audio file.
             Same FFmpeg pipeline Srtforge uses before FV4 — no transcription.
-          </p>
+            </p>
+          </div>
         </div>
       </div>
 
