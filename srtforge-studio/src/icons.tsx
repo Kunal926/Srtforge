@@ -1,6 +1,9 @@
 // Minimal stroke icon set. Ported from the original prototype.
-// Nav glyphs (List, Pulse, Archive, Sliders, Music, Folder, Antenna) sit in
-// one 14-unit band, y 5..19, so the collapsed rail shows one optical height.
+// Nav glyphs (List, Pulse, Archive, Sliders, Music, Folder, Antenna) are tuned
+// to one PIXEL height, not one bounding box: their strong strokes reach y 5 and
+// 19 of the 24 grid, and thin features (a zigzag peak, a slider knob, a note
+// head's arc) overshoot by up to 2 units so every glyph lights the same rows at
+// 14px. Check a new nav glyph against a rasterized profile, not getBBox.
 
 import type { CSSProperties, ReactNode } from "react";
 
@@ -123,7 +126,7 @@ export const I = {
       <path d="M9.5 9a2.5 2.5 0 1 1 3.5 2.3c-.7.4-1 .9-1 1.7M12 17h.01" />
     </Icon>
   ),
-  Pulse: (p: P) => <Icon {...p} d="M3 12h3l2-7 4 14 3-10 2 3h4" />,
+  Pulse: (p: P) => <Icon {...p} d="M3 12h3l2-9 4 18 3-12 2 3h4" />,
   Archive: (p: P) => (
     <Icon {...p}>
       <rect x="3" y="5" width="18" height="3.5" rx="1" />
@@ -133,17 +136,17 @@ export const I = {
   Sliders: (p: P) => (
     <Icon
       {...p}
-      d="M4 7h9M17 7h3M4 12h3M11 12h9M4 17h11M19 17h1M13 5v4M7 10v4M15 15v4"
+      d="M4 5h9M17 5h3M4 12h3M11 12h9M4 19h11M19 19h1M13 3v4M7 10v4M15 17v4"
     />
   ),
   Music: (p: P) => (
     <Icon {...p}>
-      <path d="M9 17V7l10-2v10" />
-      <circle cx="7" cy="17" r="2" />
-      <circle cx="17" cy="15" r="2" />
+      <path d="M9 18V6l10-2v12" />
+      <circle cx="7" cy="18" r="2" />
+      <circle cx="17" cy="16" r="2" />
     </Icon>
   ),
-  Antenna: (p: P) => <Icon {...p} d="M5 9a8 8 0 0 1 14 0M7.5 11a5 5 0 0 1 9 0M12 13v6M9 19h6" />,
+  Antenna: (p: P) => <Icon {...p} d="M5 8.5a8 8 0 0 1 14 0M7.5 10.5a5 5 0 0 1 9 0M12 12.5v7M9 19.5h6" />,
   Tv: (p: P) => (
     <Icon {...p}>
       <rect x="3" y="6" width="18" height="13" rx="2" />
