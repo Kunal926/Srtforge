@@ -708,8 +708,7 @@ body.is-resizing { cursor: col-resize; user-select: none; }
   padding: 0 18px 0 22px;
   height: 32px;
   flex-shrink: 0;
-  background: var(--bg-elev-1);
-  border-top: 1px solid var(--hairline);
+  background: var(--bg-app);
   font-size: 11.5px;
   color: var(--text-2);
   white-space: nowrap;

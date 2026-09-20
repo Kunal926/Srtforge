@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 
-import { ActiveDetail } from "./components/ActiveDetail";
+import {
+  ActiveDetail,
+  asrLabel,
+  deviceLabel as runDeviceLabel,
+} from "./components/ActiveDetail";
 import { BGMView } from "./components/BGM";
 import { EmptyState } from "./components/EmptyState";
 import { HistoryView } from "./components/History";
@@ -389,7 +393,7 @@ export const App = () => {
       }}
     >
       <TitleBar
-        jobName={activeFile?.name ?? "Idle"}
+        jobName={activeFile?.status === "processing" ? activeFile.name : ""}
         sidebarCollapsed={sidebarCollapsed}
         onToggleSidebar={toggleSidebar}
       />
@@ -581,12 +585,11 @@ export const App = () => {
           </div>
 
           <StatusBar
-            runId={"local"}
             queueEta={queueEta}
             doneCount={files.filter((f) => f.status === "done").length}
             totalCount={files.length}
-            ffmpeg={"6.1"}
-            model={"parakeet-tdt-0.6b-v2"}
+            modelLabel={asrLabel(settings.asrModel)}
+            deviceLabel={runDeviceLabel(currentRunSettings)}
             status={status}
           />
         </div>

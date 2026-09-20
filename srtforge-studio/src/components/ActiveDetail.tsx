@@ -139,13 +139,13 @@ const valueOrUnset = (value: string | undefined) => {
   return trimmed ? trimmed : "not set";
 };
 
-const asrLabel = (model: string) =>
+export const asrLabel = (model: string) =>
   SUPPORTED_ASR_MODELS.find((option) => option.value === model)?.label ?? model;
 
 const backendLabel = (settings: JobSettingsSummary) =>
   settings.sep === "fv4" ? "FV4 MelBand Roformer" : "off";
 
-const deviceLabel = (settings: JobSettingsSummary) => {
+export const deviceLabel = (settings: JobSettingsSummary) => {
   const device =
     settings.device === "cpu"
       ? "cpu"

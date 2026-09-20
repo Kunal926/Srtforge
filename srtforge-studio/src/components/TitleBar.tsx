@@ -36,9 +36,11 @@ export const TitleBar = ({ jobName, sidebarCollapsed, onToggleSidebar }: Props) 
         </button>
       </div>
       <div className="tb-center">
-        <span className="tb-sub" title={jobName}>
-          {jobName}
-        </span>
+        {jobName && (
+          <span className="tb-sub" title={jobName}>
+            {jobName}
+          </span>
+        )}
       </div>
       <div className="tb-controls">
         <button
