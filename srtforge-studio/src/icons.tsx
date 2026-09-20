@@ -84,7 +84,7 @@ export const I = {
     </Icon>
   ),
   Wave: (p: P) => <Icon {...p} d="M3 12h2l2-7 3 14 3-9 3 6 2-4h3" />,
-  List: (p: P) => <Icon {...p} d="M8 5.5h13M8 12h13M8 18.5h13M3 5.5h.01M3 12h.01M3 18.5h.01" />,
+  List: (p: P) => <Icon {...p} d="M8 5h13M8 12h13M8 19h13M3 5h.01M3 12h.01M3 19h.01" />,
   Grid: (p: P) => (
     <Icon {...p}>
       <rect x="3" y="3" width="7" height="7" rx="1" />
@@ -123,7 +123,7 @@ export const I = {
       <path d="M9.5 9a2.5 2.5 0 1 1 3.5 2.3c-.7.4-1 .9-1 1.7M12 17h.01" />
     </Icon>
   ),
-  Pulse: (p: P) => <Icon {...p} d="M3 12h3l2-6.5 4 13 3-9.5 2 3h4" />,
+  Pulse: (p: P) => <Icon {...p} d="M3 12h3l2-7 4 14 3-10 2 3h4" />,
   Archive: (p: P) => (
     <Icon {...p}>
       <rect x="3" y="5" width="18" height="3.5" rx="1" />
