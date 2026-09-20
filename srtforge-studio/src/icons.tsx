@@ -1,4 +1,6 @@
 // Minimal stroke icon set. Ported from the original prototype.
+// Nav glyphs (List, Pulse, Archive, Sliders, Music, Folder, Antenna) sit in
+// one 14-unit band, y 5..19, so the collapsed rail shows one optical height.
 
 import type { CSSProperties, ReactNode } from "react";
 
@@ -82,7 +84,7 @@ export const I = {
     </Icon>
   ),
   Wave: (p: P) => <Icon {...p} d="M3 12h2l2-7 3 14 3-9 3 6 2-4h3" />,
-  List: (p: P) => <Icon {...p} d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01" />,
+  List: (p: P) => <Icon {...p} d="M8 5.5h13M8 12h13M8 18.5h13M3 5.5h.01M3 12h.01M3 18.5h.01" />,
   Grid: (p: P) => (
     <Icon {...p}>
       <rect x="3" y="3" width="7" height="7" rx="1" />
@@ -121,27 +123,27 @@ export const I = {
       <path d="M9.5 9a2.5 2.5 0 1 1 3.5 2.3c-.7.4-1 .9-1 1.7M12 17h.01" />
     </Icon>
   ),
-  Pulse: (p: P) => <Icon {...p} d="M3 12h3l2-6 4 12 3-9 2 3h4" />,
+  Pulse: (p: P) => <Icon {...p} d="M3 12h3l2-6.5 4 13 3-9.5 2 3h4" />,
   Archive: (p: P) => (
     <Icon {...p}>
-      <rect x="3" y="4" width="18" height="4" rx="1" />
-      <path d="M5 8v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8M10 12h4" />
+      <rect x="3" y="5" width="18" height="3.5" rx="1" />
+      <path d="M5 8.5v9.5a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8.5M10 12.5h4" />
     </Icon>
   ),
   Sliders: (p: P) => (
     <Icon
       {...p}
-      d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0M14 4v4M10 10v4M18 16v4"
+      d="M4 7h9M17 7h3M4 12h3M11 12h9M4 17h11M19 17h1M13 5v4M7 10v4M15 15v4"
     />
   ),
   Music: (p: P) => (
     <Icon {...p}>
-      <path d="M9 18V5l11-2v13" />
-      <circle cx="6" cy="18" r="2.5" />
-      <circle cx="17" cy="16" r="2.5" />
+      <path d="M9 17V7l10-2v10" />
+      <circle cx="7" cy="17" r="2" />
+      <circle cx="17" cy="15" r="2" />
     </Icon>
   ),
-  Antenna: (p: P) => <Icon {...p} d="M5 8a8 8 0 0 1 14 0M7.5 10a5 5 0 0 1 9 0M12 12v9M9 21h6" />,
+  Antenna: (p: P) => <Icon {...p} d="M5 9a8 8 0 0 1 14 0M7.5 11a5 5 0 0 1 9 0M12 13v6M9 19h6" />,
   Tv: (p: P) => (
     <Icon {...p}>
       <rect x="3" y="6" width="18" height="13" rx="2" />

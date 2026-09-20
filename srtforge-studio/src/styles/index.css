@@ -180,18 +180,21 @@ button { font-family: inherit; }
    column runs from the top edge and the only seam is its vertical hairline. */
 .titlebar .tb-left {
   display: flex; align-items: center;
-  padding: 0 0 0 10px;
+  padding: 0 0 0 14px;
   min-width: 0;
   overflow: hidden;
   background: var(--bg-elev-1);
   border-right: 1px solid var(--hairline);
 }
-/* 36px wide at 10px from the edge, so its glyph sits on the sidebar's 28px
-   icon column in both widths; the compound selector outranks the 46px
-   window-control width below. */
+/* A 28px rounded target (not a full-height block) set 14px from the edge, so
+   its glyph sits on the sidebar's 28px icon column in both widths; the
+   compound selector outranks the 46px window-control size below. */
 .titlebar .tb-btn.tb-sidebar-toggle {
-  width: 36px;
+  width: 28px;
+  height: 28px;
   padding: 0;
+  align-self: center;
+  border-radius: var(--r-sm);
   color: var(--text-3);
   flex-shrink: 0;
 }
