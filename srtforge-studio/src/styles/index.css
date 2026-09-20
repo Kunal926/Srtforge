@@ -1442,9 +1442,6 @@ body.is-resizing { cursor: col-resize; user-select: none; }
   background: color-mix(in srgb, var(--ok) 62%, var(--line-strong));
 }
 .hist-stats .stat.failed::before {
-  background: var(--line-strong);
-}
-.hist-stats .stat.failed.has-failures::before {
   background: color-mix(in srgb, var(--danger) 70%, var(--line-strong));
 }
 .hist-stats .stat.duration::before {
@@ -1474,7 +1471,7 @@ body.is-resizing { cursor: col-resize; user-select: none; }
   color: var(--ok);
   border-color: color-mix(in srgb, var(--ok) 28%, var(--line-soft));
 }
-.hist-stats .stat.failed.has-failures .hist-stat-icon {
+.hist-stats .stat.failed .hist-stat-icon {
   background: color-mix(in srgb, var(--danger) 12%, transparent);
   color: var(--danger);
   border-color: color-mix(in srgb, var(--danger) 34%, var(--line-soft));
