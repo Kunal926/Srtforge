@@ -27,6 +27,16 @@ import {
   normalizeAsrModel,
 } from "./lib/asrModels";
 
+// Sidebar geometry. The rail is fixed; the expanded width is user-resizable
+// (drag the sidebar edge) and persisted. 264px fits a full GPU name in the
+// device card without ellipsis.
+export const SIDEBAR_RAIL_W = 56;
+export const SIDEBAR_DEFAULT_W = 264;
+export const SIDEBAR_MIN_W = 200;
+export const SIDEBAR_MAX_W = 420;
+export const clampSidebarWidth = (w: number) =>
+  Math.round(Math.max(SIDEBAR_MIN_W, Math.min(SIDEBAR_MAX_W, w)));
+
 // Map worker stage names → numeric index used by `QueueFile.stage`.
 // `mux` and `burn` are optional post-write stages and don't bump the
 // dot count; they're surfaced through `media_written` events instead.
@@ -156,6 +166,8 @@ interface UiState {
   density: Density;
   /** Sidebar reduced to a 56px icon rail. Persisted like the other view prefs. */
   sidebarCollapsed: boolean;
+  /** Expanded sidebar width in px (SIDEBAR_MIN_W..SIDEBAR_MAX_W). Persisted. */
+  sidebarWidth: number;
 
   settings: Settings;
 
@@ -175,6 +187,7 @@ interface UiState {
   setDensity: (d: Density) => void;
   setSidebarCollapsed: (collapsed: boolean) => void;
   toggleSidebar: () => void;
+  setSidebarWidth: (w: number) => void;
 
   setRunning: (r: boolean) => void;
   setQueuePaused: (p: boolean) => void;
@@ -248,6 +261,7 @@ export const useUi = create<UiState>()(
   layout: "hybrid",
   density: "comfortable",
   sidebarCollapsed: false,
+  sidebarWidth: SIDEBAR_DEFAULT_W,
 
   settings: DEFAULT_SETTINGS,
 
@@ -272,6 +286,7 @@ export const useUi = create<UiState>()(
   setDensity: (d) => set({ density: d }),
   setSidebarCollapsed: (collapsed) => set({ sidebarCollapsed: collapsed }),
   toggleSidebar: () => set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
+  setSidebarWidth: (w) => set({ sidebarWidth: clampSidebarWidth(w) }),
 
   setRunning: (r) => set({ running: r }),
   setQueuePaused: (p) => set({ queuePaused: p }),
@@ -766,6 +781,7 @@ export const useUi = create<UiState>()(
         layout: s.layout,
         density: s.density,
         sidebarCollapsed: s.sidebarCollapsed,
+        sidebarWidth: s.sidebarWidth,
         settings: s.settings,
         libraries: s.libraries,
       }),

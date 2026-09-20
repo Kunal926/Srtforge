@@ -169,44 +169,51 @@ button { font-family: inherit; }
 
 .titlebar {
   display: grid;
-  grid-template-columns: auto 1fr auto;
-  align-items: center;
+  grid-template-columns: var(--sidebar-w, 220px) minmax(0, 1fr) auto;
+  align-items: stretch;
   height: 36px;
   background: var(--bg-app);
   user-select: none;
   -webkit-app-region: drag;
 }
+/* The first cell sits over the sidebar and takes its tone, so the sidebar
+   column runs from the top edge and the only seam is its vertical hairline. */
 .titlebar .tb-left {
-  display: flex; align-items: center; gap: 10px;
-  padding: 0 12px 0 0;
+  display: flex; align-items: center;
+  padding: 0 0 0 12px;
+  min-width: 0;
+  overflow: hidden;
+  background: var(--bg-elev-1);
+  border-right: 1px solid var(--hairline);
+}
+.win-shell.sidebar-collapsed .titlebar .tb-left { padding: 0; justify-content: center; }
+/* 36px so its glyph centres on the brand tile's column (12px + 18px = 30px);
+   the compound selector outranks the 46px window-control width below. */
+.titlebar .tb-btn.tb-sidebar-toggle {
+  width: 36px;
+  padding: 0;
+  color: var(--text-3);
+  flex-shrink: 0;
+}
+.titlebar .tb-btn.tb-sidebar-toggle.on { color: var(--text-2); }
+.titlebar .tb-btn.tb-sidebar-toggle:hover { color: var(--text-1); }
+.titlebar .tb-center {
+  display: flex; align-items: center;
+  padding: 0 12px;
+  min-width: 0;
   font-size: 12px;
   color: var(--text-2);
   letter-spacing: 0.005em;
-  white-space: nowrap;
-  overflow: hidden;
-  min-width: 0;
 }
-.titlebar .tb-left > * {
-  white-space: nowrap;
-  flex-shrink: 0;
-}
-.titlebar .tb-left .tb-sub {
+.titlebar .tb-sub {
+  color: var(--text-3);
+  font-size: 11.5px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   min-width: 0;
   max-width: 380px;
-  flex-shrink: 1;
 }
-.titlebar .tb-sub { color: var(--text-3); font-size: 11.5px; }
-.titlebar .tb-sidebar-toggle {
-  width: 36px;
-  color: var(--text-3);
-}
-.titlebar .tb-sidebar-toggle.on { color: var(--text-2); }
-.titlebar .tb-sidebar-toggle:hover { color: var(--text-1); }
-
-.titlebar .tb-center { display:flex; justify-content:center; }
 .titlebar .tb-controls {
   display: flex; align-items: stretch; height: 36px;
   -webkit-app-region: no-drag;
@@ -226,16 +233,16 @@ button { font-family: inherit; }
    ============================================================ */
 .app-layout {
   display: grid;
-  grid-template-columns: 220px 1fr;
+  grid-template-columns: var(--sidebar-w, 220px) 1fr;
   height: 100%;
   min-height: 0;
   min-width: 0;
 }
-.app-layout.sidebar-collapsed { grid-template-columns: 56px 1fr; }
 
 .sidebar {
-  width: 220px;
-  max-width: 220px;
+  width: var(--sidebar-w, 220px);
+  max-width: var(--sidebar-w, 220px);
+  position: relative;
   background: var(--bg-elev-1);
   border-right: 1px solid var(--hairline);
   display: grid;
@@ -246,7 +253,8 @@ button { font-family: inherit; }
 }
 .sidebar .brand {
   display: flex; align-items: center; gap: 10px;
-  padding: 18px 16px 14px;
+  height: 64px;
+  padding: 0 16px;
   min-width: 0;
 }
 .sidebar .brand .name {
@@ -270,6 +278,7 @@ button { font-family: inherit; }
 
 .nav { padding: 4px 8px; display:flex; flex-direction:column; gap:2px; min-width: 0; overflow: hidden; }
 .nav .nav-section {
+  user-select: none;
   font-size: 10.5px;
   text-transform: uppercase;
   letter-spacing: 0.10em;
@@ -282,7 +291,8 @@ button { font-family: inherit; }
   grid-template-columns: 16px minmax(0, 1fr) auto;
   align-items: center;
   gap: 10px;
-  padding: 7px 10px;
+  height: 30px;
+  padding: 0 10px;
   border-radius: var(--r-sm);
   border: 0; background: transparent; color: var(--text-2);
   font: inherit; text-align: left; cursor: default;
@@ -317,6 +327,7 @@ button { font-family: inherit; }
 
 .sidebar .device-card {
   margin: 8px;
+  height: 104px;
   padding: 12px;
   border: 1px solid var(--line);
   border-radius: var(--r-md);
@@ -373,26 +384,37 @@ button { font-family: inherit; }
 .sidebar-actions .btn-grow { flex: 1; }
 .sidebar-actions .btn-square { width: 32px; padding: 0; justify-content: center; }
 
-/* ── Collapsed rail (56px): icons, tooltips, corner badges ── */
+/* ── Collapsed rail (56px): icons, tooltips, corner badges ──
+   Every vertical measure matches the expanded sidebar (same paddings, the
+   section label keeps its box and only its ink goes), so toggling never
+   shifts a row. ── */
 .sidebar.collapsed { width: 56px; max-width: 56px; }
-.sidebar.collapsed .brand { padding: 14px 0 10px; justify-content: center; }
+.sidebar.collapsed .brand { padding: 0; justify-content: center; }
 .sidebar.collapsed .brand .name { display: none; }
-.sidebar.collapsed .nav { padding: 4px 10px; }
+.sidebar.collapsed .nav { padding: 4px 8px; }
 .sidebar.collapsed .nav .nav-section {
-  font-size: 0; line-height: 0;
-  height: 1px; padding: 0; margin: 8px 6px;
+  color: transparent;
+  width: 0;
+  padding-left: 0; padding-right: 0;
+  position: relative;
+  pointer-events: none;
+}
+.sidebar.collapsed .nav .nav-section::after {
+  content: "";
+  position: absolute; left: -2px; width: 44px; top: 18px;
+  height: 1px;
   background: var(--hairline);
 }
 .sidebar.collapsed .nav button {
   grid-template-columns: 1fr;
   justify-items: center;
   gap: 0;
-  padding: 9px 0;
+  padding: 0;
   position: relative;
 }
 .sidebar.collapsed .nav button > span:not(.count) { display: none; }
 .sidebar.collapsed .nav button .count {
-  position: absolute; top: 3px; right: 3px;
+  position: absolute; top: 2px; right: 2px;
   font-size: 9px; line-height: 1;
   padding: 2px 4px;
   border-radius: 999px;
@@ -407,15 +429,19 @@ button { font-family: inherit; }
 [data-theme="light"] .sidebar.collapsed .nav button.active .count { color: var(--forge-700); }
 .sidebar.collapsed .hook-row {
   justify-content: center; gap: 0;
-  padding: 8px 0; position: relative;
+  padding: 0; margin: 2px 0;
+  position: relative;
 }
 .sidebar.collapsed .hook-row .hook-state {
-  position: absolute; top: 5px; right: 8px;
+  position: absolute; top: 4px; right: 8px;
   padding: 0; border: 0; background: transparent;
 }
+/* Fixed line-height so the expanded card and the mini tile share one height (104px). */
+.device-card .row { line-height: 16px; }
 .device-mini {
   margin: 8px;
-  padding: 8px 6px;
+  padding: 12px 0;
+  height: 104px;
   border: 1px solid var(--line);
   border-radius: var(--r-md);
   background: var(--bg-elev-2);
@@ -423,16 +449,29 @@ button { font-family: inherit; }
   color: var(--text-2);
 }
 .device-mini .meter {
-  width: 100%; height: 4px; border-radius: 999px;
-  background: var(--line); overflow: hidden;
+  width: 4px; flex: 1 1 auto;
+  border-radius: 999px;
+  background: var(--line);
+  position: relative; overflow: hidden;
 }
 .device-mini .meter > span {
-  display: block; height: 100%;
+  position: absolute; left: 0; right: 0; bottom: 0;
   background: var(--accent);
   border-radius: 999px;
 }
-.sidebar.collapsed .sidebar-actions { flex-direction: column; align-items: center; padding: 0 8px 10px; }
-.sidebar.collapsed .sidebar-actions .btn { width: 32px; padding: 0; justify-content: center; flex: 0 0 auto; }
+.sidebar.collapsed .sidebar-actions { padding: 0 4px 12px; gap: 4px; }
+.sidebar.collapsed .sidebar-actions .btn { width: 22px; padding: 0; justify-content: center; flex: 0 0 22px; }
+
+/* Drag handle on the sidebar's right edge (hidden on the rail) */
+.sidebar-resizer {
+  position: absolute; top: 0; right: 0; bottom: 0;
+  width: 5px;
+  cursor: col-resize;
+  z-index: 2;
+}
+.sidebar-resizer:hover,
+body.is-resizing .sidebar-resizer { background: color-mix(in oklch, var(--accent) 35%, transparent); }
+body.is-resizing { cursor: col-resize; user-select: none; }
 
 /* ============================================================
    Main area
@@ -1595,7 +1634,8 @@ button { font-family: inherit; }
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 10px 6px 12px;
+  height: 28px;
+  padding: 0 10px 0 12px;
   margin: 2px 0 2px;
   border-radius: 8px;
   font-size: 12.5px;

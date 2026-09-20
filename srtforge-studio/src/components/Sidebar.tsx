@@ -1,8 +1,8 @@
-import { memo } from "react";
+import { memo, type MouseEvent as ReactMouseEvent } from "react";
 
 import { I } from "../icons";
 import { openPath } from "../lib/tauri";
-import { useUi } from "../store";
+import { SIDEBAR_DEFAULT_W, clampSidebarWidth, useUi } from "../store";
 import type { Tab } from "../types";
 import { BrandMark } from "./BrandMark";
 
@@ -18,6 +18,8 @@ const SidebarView = ({ device, gpuPct, vram }: Props) => {
   const active = useUi((s) => s.active);
   const setActive = useUi((s) => s.setActive);
   const collapsed = useUi((s) => s.sidebarCollapsed);
+  const sidebarWidth = useUi((s) => s.sidebarWidth);
+  const setSidebarWidth = useUi((s) => s.setSidebarWidth);
   const setSettingsOpen = useUi((s) => s.setSettingsOpen);
   const showToast = useUi((s) => s.showToast);
   const asrModel = useUi((s) => s.settings.asrModel);
@@ -31,6 +33,24 @@ const SidebarView = ({ device, gpuPct, vram }: Props) => {
   // The settings store keeps the full HF id (e.g. nvidia/parakeet-tdt-0.6b-v2);
   // surface just the basename so it fits the sidebar.
   const modelLabel = asrModel.split("/").pop() ?? asrModel;
+
+  // Drag the sidebar's right edge to resize; double-click resets. The width
+  // lives in the store so the title bar's first cell can follow it.
+  const onResizeStart = (e: ReactMouseEvent<HTMLDivElement>) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    const startX = e.clientX;
+    const startW = sidebarWidth;
+    const onMove = (ev: MouseEvent) => setSidebarWidth(clampSidebarWidth(startW + ev.clientX - startX));
+    const onUp = () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+      document.body.classList.remove("is-resizing");
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    document.body.classList.add("is-resizing");
+  };
 
   const navBtn = (id: Tab, label: string, icon: JSX.Element, count?: number | string) => {
     // Collapsed rail: only a real, non-zero count earns a corner badge.
@@ -100,7 +120,7 @@ const SidebarView = ({ device, gpuPct, vram }: Props) => {
           >
             <I.Cpu size={14} />
             <div className="meter">
-              <span style={{ width: `${gpuPct}%` }} />
+              <span style={{ height: `${gpuPct}%` }} />
             </div>
           </div>
         ) : (
@@ -141,6 +161,16 @@ const SidebarView = ({ device, gpuPct, vram }: Props) => {
           </button>
         </div>
       </div>
+      {!collapsed && (
+        <div
+          className="sidebar-resizer"
+          role="separator"
+          aria-orientation="vertical"
+          title="Drag to resize · double-click to reset"
+          onMouseDown={onResizeStart}
+          onDoubleClick={() => setSidebarWidth(SIDEBAR_DEFAULT_W)}
+        />
+      )}
     </aside>
   );
 };

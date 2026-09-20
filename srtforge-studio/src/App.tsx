@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 
 import { ActiveDetail } from "./components/ActiveDetail";
 import { BGMView } from "./components/BGM";
@@ -35,7 +35,7 @@ import {
   computeOutputPath,
   computeSidecarOutputPath,
 } from "./lib/workerConfig";
-import { useUi } from "./store";
+import { SIDEBAR_RAIL_W, useUi } from "./store";
 import type { GpuTelemetry } from "./types";
 
 const GPU_TELEMETRY_IDLE_INTERVAL_MS = 10000;
@@ -61,6 +61,7 @@ export const App = () => {
   const density = useUi((s) => s.density);
   const layout = useUi((s) => s.layout);
   const sidebarCollapsed = useUi((s) => s.sidebarCollapsed);
+  const sidebarWidth = useUi((s) => s.sidebarWidth);
   const toggleSidebar = useUi((s) => s.toggleSidebar);
 
   const active = useUi((s) => s.active);
@@ -368,7 +369,12 @@ export const App = () => {
 
   return (
     <div
-      className={`win-shell ${gpuPerformanceMode ? "gpu-max-mode" : ""}`}
+      className={`win-shell ${gpuPerformanceMode ? "gpu-max-mode" : ""}${sidebarCollapsed ? " sidebar-collapsed" : ""}`}
+      style={
+        {
+          "--sidebar-w": `${sidebarCollapsed ? SIDEBAR_RAIL_W : sidebarWidth}px`,
+        } as CSSProperties
+      }
       onDragOver={(e) => {
         e.preventDefault();
         setOver(true);
@@ -388,7 +394,7 @@ export const App = () => {
         onToggleSidebar={toggleSidebar}
       />
 
-      <div className={`app-layout${sidebarCollapsed ? " sidebar-collapsed" : ""}`}>
+      <div className="app-layout">
         <Sidebar
           device={deviceLabel}
           gpuPct={vramPct}

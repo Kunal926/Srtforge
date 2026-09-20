@@ -34,9 +34,12 @@ export const TitleBar = ({ jobName, sidebarCollapsed, onToggleSidebar }: Props) 
         >
           <I.PanelLeft size={14} />
         </button>
-        <span className="tb-sub">{jobName}</span>
       </div>
-      <div className="tb-center" />
+      <div className="tb-center">
+        <span className="tb-sub" title={jobName}>
+          {jobName}
+        </span>
+      </div>
       <div className="tb-controls">
         <button
           type="button"
