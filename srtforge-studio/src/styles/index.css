@@ -563,6 +563,11 @@ body.is-resizing { cursor: col-resize; user-select: none; }
   font-weight: 600;
   letter-spacing: -0.012em;
   line-height: 1.15;
+  /* one line like the description: the text block then has one height on
+     every page, so the icon tile beside it is always at the same y */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .title-block-rich p {
   margin: 6px 0 0;
