@@ -1,6 +1,10 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 
-import { ActiveDetail } from "./components/ActiveDetail";
+import {
+  ActiveDetail,
+  asrLabel,
+  deviceLabel as runDeviceLabel,
+} from "./components/ActiveDetail";
 import { BGMView } from "./components/BGM";
 import { EmptyState } from "./components/EmptyState";
 import { HistoryView } from "./components/History";
@@ -35,7 +39,7 @@ import {
   computeOutputPath,
   computeSidecarOutputPath,
 } from "./lib/workerConfig";
-import { useUi } from "./store";
+import { SIDEBAR_RAIL_W, useUi } from "./store";
 import type { GpuTelemetry } from "./types";
 
 const GPU_TELEMETRY_IDLE_INTERVAL_MS = 10000;
@@ -60,6 +64,9 @@ export const App = () => {
   const theme = useUi((s) => s.theme);
   const density = useUi((s) => s.density);
   const layout = useUi((s) => s.layout);
+  const sidebarCollapsed = useUi((s) => s.sidebarCollapsed);
+  const sidebarWidth = useUi((s) => s.sidebarWidth);
+  const toggleSidebar = useUi((s) => s.toggleSidebar);
 
   const active = useUi((s) => s.active);
   const setActive = useUi((s) => s.setActive);
@@ -101,6 +108,18 @@ export const App = () => {
       gpuPerformanceMode ? "active" : "idle",
     );
   }, [theme, density, gpuPerformanceMode]);
+
+  // Ctrl+B / Cmd+B toggles the sidebar rail, like most editors.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "b") {
+        e.preventDefault();
+        toggleSidebar();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [toggleSidebar]);
 
   // Subscribe to worker events for the lifetime of the app.
   useEffect(() => {
@@ -354,7 +373,12 @@ export const App = () => {
 
   return (
     <div
-      className={`win-shell ${gpuPerformanceMode ? "gpu-max-mode" : ""}`}
+      className={`win-shell ${gpuPerformanceMode ? "gpu-max-mode" : ""}${sidebarCollapsed ? " sidebar-collapsed" : ""}`}
+      style={
+        {
+          "--sidebar-w": `${sidebarCollapsed ? SIDEBAR_RAIL_W : sidebarWidth}px`,
+        } as CSSProperties
+      }
       onDragOver={(e) => {
         e.preventDefault();
         setOver(true);
@@ -368,7 +392,11 @@ export const App = () => {
         onAddFiles();
       }}
     >
-      <TitleBar jobName={activeFile?.name ?? "Idle"} />
+      <TitleBar
+        jobName={activeFile?.status === "processing" ? activeFile.name : ""}
+        sidebarCollapsed={sidebarCollapsed}
+        onToggleSidebar={toggleSidebar}
+      />
 
       <div className="app-layout">
         <Sidebar
@@ -382,9 +410,9 @@ export const App = () => {
             <div className="toolbar toolbar-rich">
               <div className="title-block title-block-rich">
                 <div className="tb-medallion" aria-hidden="true">
-                  {active === "queue" && <I.Inbox size={20} />}
-                  {active === "active" && <I.Pulse size={20} />}
-                  {active === "history" && <I.Archive size={20} />}
+                  {active === "queue" && <I.Inbox size={16} />}
+                  {active === "active" && <I.Pulse size={16} />}
+                  {active === "history" && <I.Archive size={16} />}
                   {((active === "queue" && running && !queuePaused && counts.queue > 0) ||
                     (active === "active" && counts.active > 0)) && (
                     <span className="tb-medallion-pulse" />
@@ -557,12 +585,11 @@ export const App = () => {
           </div>
 
           <StatusBar
-            runId={"local"}
             queueEta={queueEta}
             doneCount={files.filter((f) => f.status === "done").length}
             totalCount={files.length}
-            ffmpeg={"6.1"}
-            model={"parakeet-tdt-0.6b-v2"}
+            modelLabel={asrLabel(settings.asrModel)}
+            deviceLabel={runDeviceLabel(currentRunSettings)}
             status={status}
           />
         </div>

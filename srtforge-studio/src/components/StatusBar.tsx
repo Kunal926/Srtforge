@@ -1,25 +1,25 @@
 import { formatTotalDuration } from "../lib/format";
 
 interface Props {
-  runId: string;
   queueEta: {
     seconds: number;
     updatedAtMs?: number;
   };
   doneCount: number;
   totalCount: number;
-  ffmpeg: string;
-  model: string;
+  /** Friendly ASR model label, from the current settings. */
+  modelLabel: string;
+  /** "cuda:0 · fp16"-style device and precision, from the current settings. */
+  deviceLabel: string;
   status: "idle" | "paused" | "running";
 }
 
 export const StatusBar = ({
-  runId,
   queueEta,
   doneCount,
   totalCount,
-  ffmpeg,
-  model,
+  modelLabel,
+  deviceLabel,
   status,
 }: Props) => {
   const queueEtaLabel = formatTotalDuration(queueEta.seconds);
@@ -45,11 +45,12 @@ export const StatusBar = ({
         </span>
       </div>
       <div className="group">
-        <span className="chip">
-          run <span style={{ color: "var(--text-1)" }}>{runId}</span>
+        <span className="chip" title="ASR model — change it in Settings › ASR">
+          {modelLabel}
         </span>
-        <span className="chip">ffmpeg {ffmpeg}</span>
-        <span className="chip">{model}</span>
+        <span className="chip" title="Device · precision">
+          {deviceLabel}
+        </span>
       </div>
     </div>
   );
